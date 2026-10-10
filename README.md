@@ -24,7 +24,7 @@ A static host (like GitHub Pages) serves the site with the AI studio off, and ea
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/gtjvv976mb-netizen/GamePlay)
 
 1. Click the button and sign in to Render with GitHub.
-2. Paste your Anthropic API key (from https://console.anthropic.com/settings/keys) when Render asks for `ANTHROPIC_API_KEY`, then click *Deploy Blueprint*.
+2. Paste your Anthropic API key (from https://console.anthropic.com/settings/keys) when Render asks for `ANTHROPIC_API_KEY`. For `GP_TREASURY`, paste the public address of a Solana wallet you control (it receives the 5% protocol fee), or leave it blank to start on the simulated ledger. Then click *Deploy Blueprint*.
 3. When the deploy finishes, open the `onrender.com` link Render shows. Build a game from one of the crypto ideas to check it works.
 4. In the service's *Logs*, find the line `Owner link (keep it private)`. Open your site with that `?admin=…` ending once, in your own browser: that browser can then settle the weekly rewards (Economy page) and delist games.
 
@@ -44,6 +44,12 @@ The server serves `dist/site`, keeps the shared gallery in `GP_DATA_DIR` (defaul
 
 The front page and the studio offer crypto game ideas (Block Miner, Rug Pull Runner, Gas Fee Dodger and more). The build instructions keep crypto make-believe inside games: tokens are points, nothing asks for a wallet or seed phrase, and there is no betting. GamePlay itself signs scores and handles collects on Solana devnet.
 
+### Real Solana payments
+
+Set `GP_SOLANA_CLUSTER` (`devnet` in `render.yaml`) and `GP_TREASURY` (a wallet address, never a secret key), and collects and tips become real Solana transfers. The player's wallet pays the creator, the remix lineage and the treasury directly in one transaction; GamePlay never holds funds and the server holds no private key. Every page checks each payment on Solana before it counts. On devnet, the Wallet page has a faucet for free test SOL. Optional: `GP_SOLANA_RPC` for your own RPC endpoint.
+
+Mainnet (real money) refuses to start unless `GP_ALLOW_MAINNET=yes` is also set. Do that only after the owner checklist in [SECURITY.md](SECURITY.md): your own fee wallet, an independent security audit, a legal opinion and moderation.
+
 ## Work on it with Claude Code
 
 Clone this repository (or unzip the project), open a terminal in the folder and run `claude`. `CLAUDE.md` tells Claude Code how the project fits together, how to build and test it, and which rules keep saved games and signatures valid.
@@ -53,6 +59,7 @@ Clone this repository (or unzip the project), open a terminal in the folder and 
 ```bash
 node build.mjs            # writes dist/
 node test/core.test.mjs   # unit tests
+node test/solana.test.mjs # Solana payment tests (npm install for the web3.js cross-checks)
 node test/server.test.mjs # AI server tests (fake Claude, no key needed)
 cd dist && python3 -m http.server 8765 --bind 127.0.0.1 &
 python3 test/e2e.py /tmp/gameplay-shots   # browser + accessibility tests (Python Playwright)

@@ -270,6 +270,23 @@
     return out;
   }
 
+  /* ---------- real-network payments ---------- */
+  /* On a real Solana network (input.chain in buildWorld), a collect or tip counts only when its
+     b.chain names a confirmed Solana transaction that the payer signed, that carries the memo
+     "gameplay:<ledger id>", and that pays every expected destination at least its share.
+     p is a lookup result: { ok, signer, transfers: [{ from, to, lamports }], memos }. */
+  function checkPayment(p, payer, expect, memo) {
+    if (!p) return 'Payment not found on Solana yet';
+    if (!p.ok) return 'Payment failed on Solana';
+    if (p.signer !== payer) return 'Payment was not signed by this wallet';
+    if (!(p.memos || []).some((m) => m === memo)) return 'Payment is not linked to this action';
+    const paid = new Map(), want = new Map();
+    for (const t of p.transfers || []) if (t.from === payer) paid.set(t.to, (paid.get(t.to) || 0) + t.lamports);
+    for (const e of expect) if (e.amt > 0) want.set(e.to, (want.get(e.to) || 0) + e.amt);
+    for (const [to, amt] of want) if ((paid.get(to) || 0) < amt) return 'Payment is short';
+    return null;
+  }
+
   /* ---------- verification with a cache ---------- */
   const sigCache = new Map();
   async function verifyTx(tx) {
@@ -308,6 +325,8 @@
 
   async function buildWorld(input) {
     const { accounts = [], protocol = {}, starters = [] } = input;
+    // chain: { treasury, lookup(sigs) -> Map(sig -> result) } when payments run on a real network.
+    const chain = input.chain || null;
     const now = input.now || Date.now();
     const config = protocol.config || null;
     const delisted = (protocol.moderation && protocol.moderation.delisted) || {};
@@ -325,6 +344,20 @@
     await Promise.all(entries.map(async (e) => {
       e.v = e.kind === 'epoch' ? await verifyEpoch(e.tx, config) : await verifyTx(e.tx);
     }));
+    let paid = new Map();
+    const usedSigs = new Set();
+    if (chain) {
+      const sigs = entries.filter((e) => (e.tx.t === 'collect' || e.tx.t === 'tip') && e.tx.b && typeof e.tx.b.chain === 'string').map((e) => e.tx.b.chain);
+      if (sigs.length) paid = (await chain.lookup([...new Set(sigs)])) || new Map();
+    }
+    const payCheck = (tx, expect) => {
+      const sig = tx.b.chain;
+      if (typeof sig !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(sig)) return 'Missing Solana payment';
+      if (usedSigs.has(sig)) return 'Payment already used';
+      const why = checkPayment(paid.get(sig), tx.from, expect.map((x) => ({ to: x.to === TREASURY ? chain.treasury : x.to, amt: x.amt })), 'gameplay:' + tx.id);
+      if (!why) usedSigs.add(sig);
+      return why;
+    };
     entries.sort((a, b) => (a.tx.ts - b.tx.ts) || (String(a.tx.id || a.tx.n) < String(b.tx.id || b.tx.n) ? -1 : 1));
 
     const wallets = new Map();
@@ -374,6 +407,7 @@
       const fail = (why) => { rec.why = why; };
       switch (tx.t) {
         case 'airdrop': {
+          if (chain) { fail('The faucet runs on Solana itself on this network'); break; }
           if (tx.ts - w.lastAirdrop < RULES.AIRDROP_EVERY_MS) { fail('Faucet used in the last 24 hours'); break; }
           w.lastAirdrop = tx.ts; w.sol += RULES.AIRDROP_LAMPORTS;
           rec.moves.push({ from: '@faucet', to: tx.from, amt: RULES.AIRDROP_LAMPORTS, unit: 'SOL' });
@@ -426,12 +460,17 @@
           if (delisted[g.gid]) { fail('Game delisted'); break; }
           if (g.cap && g.collects.length >= g.cap) { fail('Sold out'); break; }
           if (Math.floor(num(b.price)) !== g.price) { fail('Price mismatch'); break; }
-          if (w.sol < g.price) { fail('Not enough SOL'); break; }
           const splits = collectSplits(g.price, g, games);
-          w.sol -= g.price;
+          if (chain) {
+            // Balances live on Solana; the ledger records who was paid.
+            if (g.price > 0) { const why = payCheck(tx, splits); if (why) { fail(why); break; } }
+          } else {
+            if (w.sol < g.price) { fail('Not enough SOL'); break; }
+            w.sol -= g.price;
+          }
           for (const s of splits) {
-            if (s.to === TREASURY) { treasury.sol += s.amt; treasury.feesTotal += s.amt; }
-            else { const r = W(s.to); r.sol += s.amt; r.earnedSol += s.amt; }
+            if (s.to === TREASURY) { if (!chain) treasury.sol += s.amt; treasury.feesTotal += s.amt; }
+            else { const r = W(s.to); if (!chain) r.sol += s.amt; r.earnedSol += s.amt; }
             if (s.amt) rec.moves.push({ from: tx.from, to: s.to, amt: s.amt, unit: 'SOL', role: s.role });
             const tg = s.role === 'creator' ? g : null;
             if (tg) tg.revenue += s.amt;
@@ -444,9 +483,10 @@
           const g = games.get(b.gid);
           const amt = Math.floor(num(b.amt));
           if (!g || g.starter) { fail('Game not found'); break; }
-          if (!(amt > 0)) { fail('Bad amount'); break; }
-          if (w.sol < amt) { fail('Not enough SOL'); break; }
-          w.sol -= amt; const r = W(g.creator); r.sol += amt; r.earnedSol += amt; g.revenue += amt;
+          if (!(amt > 0) || amt > RULES.MAX_PRICE_LAMPORTS) { fail('Bad amount'); break; }
+          if (chain) { const why = payCheck(tx, [{ to: g.creator, amt }]); if (why) { fail(why); break; } }
+          else { if (w.sol < amt) { fail('Not enough SOL'); break; } w.sol -= amt; }
+          const r = W(g.creator); if (!chain) r.sol += amt; r.earnedSol += amt; g.revenue += amt;
           g.tips.push({ pk: tx.from, amt, ts: tx.ts });
           rec.moves.push({ from: tx.from, to: g.creator, amt, unit: 'SOL', role: 'tip' });
           rec.ok = true; break;
@@ -463,6 +503,7 @@
         }
         case 'spark_buy': {
           const packs = Math.floor(num(b.packs));
+          if (chain) { fail('Spark packs are not sold on this network yet'); break; }
           if (!(packs >= 1 && packs <= 20)) { fail('Bad pack count'); break; }
           const cost = packs * RULES.SPARK_PACK.lamports;
           if (w.sol < cost) { fail('Not enough SOL'); break; }
@@ -585,6 +626,6 @@
   root.PPCore = {
     utf8, hex, concat, randBytes, randHex, b58enc, b58dec, sha256hex, ed, canon,
     txMessage, delegationMessage, epochMessage, RULES, LAMPORTS, TREASURY, STARTER,
-    emissionFor, weekKey, collectSplits, verifyTx, verifyEpoch, buildWorld, computeEpoch,
+    emissionFor, weekKey, collectSplits, checkPayment, verifyTx, verifyEpoch, buildWorld, computeEpoch,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

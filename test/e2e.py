@@ -4,6 +4,7 @@ from playwright.async_api import async_playwright
 BASE = 'http://127.0.0.1:8765/local.html'
 SITE = 'http://127.0.0.1:8765/site/index.html'
 AI_SITE = 'http://127.0.0.1:8766/'
+CHAIN_SITE = 'http://127.0.0.1:8767/'
 OUT = sys.argv[1] if len(sys.argv) > 1 else '/tmp/shots'
 os.makedirs(OUT, exist_ok=True)
 MOCK = open(os.path.join(os.path.dirname(__file__), 'mock_claude.js')).read()
@@ -479,6 +480,62 @@ async def scenario_server(browser):
     finally:
         proc.terminate()
 
+async def scenario_chain(browser):
+    # Payments on a (fake) Solana devnet: collects and tips are real signed Solana transfers.
+    proc = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), '8767', 'chain'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    chain = lambda: json.loads(urllib.request.urlopen(CHAIN_SITE + '__chain').read())
+    try:
+        for _ in range(50):
+            try: urllib.request.urlopen(CHAIN_SITE + 'api/status', timeout=1); break
+            except Exception: time.sleep(0.1)
+        ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page.goto(CHAIN_SITE + '#create')
+        await page.wait_for_selector('#st-prompt', timeout=15000)
+        await page.fill('#st-prompt', 'Block Miner: tap to fill blocks before gas runs out.')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_selector('.toast:has-text("Built")', timeout=20000)
+        await page.wait_for_selector('#pub-price', timeout=5000)
+        await page.fill('#pub-price', '0.1')
+        await page.click('button[data-act="publish"]')
+        await page.wait_for_selector('.gp-head h1:has-text("Block Miner")', timeout=8000)
+        creator = await page.evaluate('window.__pp.wallet.from')
+        gid_url = page.url
+        check(True, 'creator published a 0.1 SOL game on the devnet site')
+        ctx2, page2, errs2 = await new_page(browser, viewport={'width': 390, 'height': 844})
+        await page2.goto(gid_url)
+        await page2.wait_for_selector('button[data-act="collect"]', timeout=15000)
+        await page2.click('button[data-act="collect"]')
+        await page2.wait_for_selector('button[data-act="airdrop-then-collect"]', timeout=5000)
+        check(True, 'collect offers devnet SOL from the faucet first')
+        await page2.click('button[data-act="airdrop-then-collect"]')
+        await page2.wait_for_selector('.toast:has-text("Collected")', timeout=20000)
+        c = chain()
+        check(c['balances'].get(creator) == 95000000 and c['balances'].get(c['treasury']) == 5000000, 'the collect paid the creator 95% and the treasury 5% on Solana: ' + json.dumps(c)[:200])
+        frame = next(f for f in page2.frames if f != page2.main_frame)
+        res = await frame.evaluate("fetch('" + CHAIN_SITE + "api/status').then(() => 'reached', () => 'blocked')")
+        check(res == 'blocked', 'a game cannot reach the network (' + res + ')')
+        await page2.click('button[data-act="tip"]')
+        await page2.click('button[data-act="confirm-tip"][data-amt="0.01"]')
+        await page2.wait_for_selector('.toast:has-text("Tipped")', timeout=20000)
+        c = chain()
+        check(c['balances'].get(creator) == 105000000 and c['sent'] == 2, 'the tip paid the creator on Solana')
+        await page2.screenshot(path=f'{OUT}/32-chain-collect.png', full_page=True)
+        # The creator's page checks the payments on Solana before counting them.
+        await page.goto(CHAIN_SITE + '#wallet')
+        await page.wait_for_timeout(5000)
+        await page.reload()
+        await page.wait_for_selector('.panel.balance', timeout=10000)
+        await page.wait_for_timeout(1500)
+        txt = await page.locator('.panel.balance').first.inner_text()
+        check('devSOL' in txt and '0.105' in txt, 'creator wallet shows the Solana balance: ' + txt.replace('\n', ' ')[:120])
+        check('Earned 0.105' in txt, 'creator earnings come from verified payments')
+        await page.screenshot(path=f'{OUT}/33-chain-wallet.png', full_page=True)
+        real = [e for e in errs + errs2 if 'fonts.g' not in e and 'ERR_FAILED' not in e and 'Content Security Policy' not in e]
+        check(not real, 'no console/page errors on the devnet site ' + str(real[:5]))
+        await ctx2.close(); await ctx.close()
+    finally:
+        proc.terminate()
+
 async def scenario_a11y(browser):
     for scheme, theme in (('light', None), ('dark', None), ('light', 'contrast')):
         ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900}, color_scheme=scheme)
@@ -499,7 +556,7 @@ async def main():
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required'])
         only = os.environ.get('E2E_ONLY', '').split(',')
-        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_a11y):
+        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
             try:
                 await sc(browser)

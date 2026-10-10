@@ -32,3 +32,11 @@ services:
       # Builds per day across the whole site, so a public link cannot run up your API bill.
       - key: GP_DAILY_TOTAL
         value: "300"
+      # Collects and tips are real Solana payments on this network. Devnet uses free test SOL.
+      # Mainnet (real money) also needs GP_ALLOW_MAINNET=yes, and only after the checklist in SECURITY.md.
+      - key: GP_SOLANA_CLUSTER
+        value: devnet
+      # The public address of a wallet you control; it receives the 5% protocol fee. Never a secret key.
+      # Left blank, the site uses the simulated ledger until you set it.
+      - key: GP_TREASURY
+        sync: false

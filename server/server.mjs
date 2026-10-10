@@ -18,6 +18,7 @@
 //   GP_TRUST_PROXY=1     read the visitor address from the first X-Forwarded-For entry (set this
 //                        behind a proxy that overwrites that entry, as Render does)
 //   GP_DATA_DIR          folder for the shared gallery (./data); put it on a persistent disk
+//   GP_SOLANA_CLUSTER, GP_SOLANA_RPC, GP_TREASURY, GP_ALLOW_MAINNET: real Solana payments, see chain.mjs
 //   GP_ADMIN_KEY         any long secret; the server prints an owner link at startup. Open it once
 //                        to settle reward epochs and delist games from that browser
 import { createServer as httpServer } from 'node:http';
@@ -25,6 +26,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openGallery } from './gallery.mjs';
+import { chainConfig, makeRpc, openChain } from './chain.mjs';
 import { createHash } from 'node:crypto';
 
 await import('../src/harness.js');
@@ -100,6 +102,8 @@ export function createServer(opts = {}) {
   const limits = limiter({ daily, total: opts.total || 0, maxActive: opts.maxActive || 4 });
   const log = opts.log || (() => {});
   const gallery = opts.gallery || null;
+  const chain = opts.chain || null;
+  const chainHits = new Map();
 
   const visitor = (req) => {
     const fwd = opts.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -119,9 +123,9 @@ export function createServer(opts = {}) {
       if (!(await stat(file)).isFile()) throw new Error('not a file');
     } catch (e) { return send(res, 404, 'Not found', 'text/plain; charset=utf-8'); }
     let body = await readFile(file);
-    if ((client || gallery) && file === join(root, 'index.html')) {
-      // Tell the page where to send AI builds and where the shared gallery lives.
-      const extra = Object.assign(client ? { ai: 'api/build' } : {}, gallery ? { gallery: 'api/db' } : {});
+    if ((client || gallery || chain) && file === join(root, 'index.html')) {
+      // Tell the page where to send AI builds, where the shared gallery lives and which Solana network pays.
+      const extra = Object.assign(client ? { ai: 'api/build' } : {}, gallery ? { gallery: 'api/db' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
       body = body.toString('utf8').replace(/window\.GP_SITE = (\{.*?\});/, (m, json) => 'window.GP_SITE = ' + JSON.stringify(Object.assign(JSON.parse(json), extra)).replace(/</g, '\\u003c') + ';');
     }
     res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
@@ -203,9 +207,20 @@ export function createServer(opts = {}) {
     try {
       const url = new URL(req.url, 'http://x');
       const path = url.pathname;
+      if (path.startsWith('/api/chain/')) {
+        if (!chain) return send(res, 404, { code: 'not_found', message: 'This server uses the simulated ledger.' });
+        const who = visitor(req), now = Date.now();
+        const h = chainHits.get(who);
+        if (!h || now - h.start > 60000) chainHits.set(who, { start: now, n: 1 }); else if (++h.n > 120) return send(res, 429, { code: 'rate_limited', message: 'Too many requests. Wait a moment.' });
+        if (chainHits.size > 100000) chainHits.clear();
+        let body = null;
+        if (req.method === 'POST') { try { body = JSON.parse(await readBody(req, 16 * 1024)); } catch (e) { return send(res, 400, { code: 'bad_request', message: 'The request was not valid JSON.' }); } }
+        const r = await chain.handle(req.method, path.slice('/api/chain/'.length), body, who);
+        return send(res, r.status, r.body);
+      }
       if (path.startsWith('/api/db/')) return gallery ? await db(req, res, url) : send(res, 404, { code: 'not_found', message: 'This server has no shared gallery.' });
       if (path === '/api/build') return req.method === 'POST' ? await build(req, res) : send(res, 405, { code: 'bad_request', message: 'Use POST.' });
-      if (path === '/api/status') return send(res, 200, { ai: !!client, gallery: !!gallery, models: client ? models : null, daily, left: limits.left(visitor(req)) });
+      if (path === '/api/status') return send(res, 200, { ai: !!client, gallery: !!gallery, chain: chain ? chain.site.cluster : null, models: client ? models : null, daily, left: limits.left(visitor(req)) });
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { code: 'bad_request', message: 'Method not allowed.' });
       return await serveFile(req, res);
     } catch (e) {
@@ -231,8 +246,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (env.GP_ADMIN_KEY && !ownerKey) console.warn('GP_ADMIN_KEY must be at least 16 characters; ignoring it.');
   const gallery = await openGallery({ dir: resolve(env.GP_DATA_DIR || join(here, '..', 'data')), adminKey: ownerKey });
   if (ownerKey) console.log('Owner link (keep it private): <your site address>/?admin=' + ownerKey);
+  const cc = chainConfig(env, (m) => console.warn(m)); // throws on a bad or unconfirmed mainnet setup, so the server never starts half-configured
+  const chain = cc ? openChain({ cluster: cc.cluster, treasury: cc.treasury, rpc: makeRpc(cc.rpcUrl) }) : null;
+  if (cc) console.log('Payments run on Solana ' + cc.cluster + '; protocol fees go to ' + cc.treasury);
   const server = createServer({
     gallery,
+    chain,
     root: env.GP_ROOT,
     client,
     models: { new: env.GP_MODEL_NEW || undefined, edit: env.GP_MODEL_EDIT || undefined },

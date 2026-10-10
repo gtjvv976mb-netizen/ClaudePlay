@@ -1,6 +1,6 @@
 # GamePlay
 
-GamePlay is a free, open alternative to Google Labs Playground with a Web3 layer on Solana. Anyone can play browser games, make one by tuning a kit (or by describing it to the AI studio), publish it as a signed, content-addressed "cartridge", and earn from collects, tips, remix royalties and weekly GPLY rewards. Today it is a **devnet prototype**: every transaction is a real Ed25519 signature replayed on a simulated ledger, and no real funds move.
+GamePlay is a free, open alternative to Google Labs Playground with a Web3 layer on Solana. Anyone can play browser games, make one by tuning a kit (or by describing it to the AI studio), publish it as a signed, content-addressed "cartridge", and earn from collects, tips, remix royalties and weekly GPLY rewards. Today it is a **devnet prototype**: every transaction is a real Ed25519 signature replayed on a simulated ledger. When the server runs with `GP_SOLANA_CLUSTER` and `GP_TREASURY`, collects and tips are real wallet-to-wallet Solana payments (devnet by default; mainnet is locked behind `GP_ALLOW_MAINNET=yes`).
 
 The whole product ships as one self-contained HTML page with no dependencies.
 
@@ -9,6 +9,7 @@ The whole product ships as one self-contained HTML page with no dependencies.
 ```bash
 node build.mjs                 # build everything into dist/
 node test/core.test.mjs        # protocol unit tests (RFC 8032 vectors, splits, epochs)
+node test/solana.test.mjs      # Solana payments: transactions vs @solana/web3.js, the relay filter, ledger payment checks
 node test/server.test.mjs      # AI server tests with a fake Claude client (no key needed)
 ANTHROPIC_API_KEY=... npm start   # serve dist/site with the AI studio on (npm install first)
 cd dist && python3 -m http.server 8765 --bind 127.0.0.1   # serve for the browser tests
@@ -26,12 +27,15 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 | `src/core.js` | Protocol: Ed25519 (WebCrypto with a pure-JS fallback), base58, SHA-256, canonical JSON, transaction signing (`GAMEPLAY/v1` domain), `buildWorld()` ledger replay, collect splits, epoch rewards, `RULES`. Exposed as `window.PPCore`. |
 | `src/kits.js` | Canvas game engine, five tunable kits (runner, flap, shooter, breaker, dodge), brand palettes, the player SDK injected into every game (`window.SP`), procedural cover art. Exposed as `window.PPKits`. |
 | `src/harness.js` | The AI build harness shared by the page and the server: `HARNESS` (system prompt, including the crypto-game rules), `harnessTask()`, `checkRequest()`, style and idea lists (`CRYPTO_IDEAS`). Exposed as `window.PPHarness`. |
+| `src/solana.js` | Builds and reads GamePlay's one Solana transaction shape (System transfers + a `gameplay:<ledger id>` memo) by hand, and the relay filter `parsePayment()`. Exposed as `window.PPSolana`; shared with the server. |
+| `server/chain.mjs` | Real-network settings (`GP_SOLANA_CLUSTER`, `GP_TREASURY`, `GP_SOLANA_RPC`, the `GP_ALLOW_MAINNET` gate) and the narrow `/api/chain/*` RPC proxy: blockhash, balance, status, payment lookups, relaying GamePlay payments only, and a devnet faucet. Holds no keys. |
+| `SECURITY.md` | Security review of everything that moves value, open items, and the owner's checklist before mainnet. |
 | `src/app.js` | The app: routes (`home`, `explore`, `game-<id>`, `create`, `wallet`, `ledger`, `economy`, `business`), wallet, storage, sandboxed game players, AI studio (`aiBuild()` picks Claude's `sample` or the server), accessibility settings. |
 | `server/server.mjs` | Zero-config Node server: serves `dist/site`, injects `GP_SITE.ai` / `GP_SITE.gallery`, serves the shared gallery at `/api/db/*`, and streams `POST /api/build` from the Claude API (Sonnet 5.5 for new games, Haiku 5.5 for edits) with per-visitor daily limits. The only file that uses an npm package (`@anthropic-ai/sdk`). |
 | `server/gallery.mjs` | Shared gallery for the hosted website: the same `accounts/`, `blobs/`, `protocol/` documents as Claude's `db`, saved to `GP_DATA_DIR`. A browser's uid is derived from its random gallery key (`pp.gallery.v1`); blobs must match their SHA-256; only the owner (`GP_ADMIN_KEY`) writes `protocol/`. |
 | `src/index.html` | Styles (design tokens, light/dark/high-contrast themes) and the page shell. `<!--INLINE-SCRIPTS-->` is replaced by the three scripts at build time. |
 | `build.mjs` | Writes `dist/playpark.html` (body published as a claude.ai artifact), `dist/local.html` (test page) and `dist/site/` (the standalone website + README). |
-| `test/` | `core.test.mjs` unit tests, `server.test.mjs` server tests, `e2e.py` browser scenarios and a11y audit, `mock_claude.js` fake artifact runtime, `fake_ai_server.mjs` the server with a fake Claude for the browser tests. |
+| `test/` | `core.test.mjs` unit tests, `solana.test.mjs` payment tests, `server.test.mjs` server tests, `e2e.py` browser scenarios and a11y audit, `mock_claude.js` fake artifact runtime, `fake_ai_server.mjs` the server with a fake Claude (and, with `chain`, a fake Solana from `fake_rpc.mjs`) for the browser tests. |
 | `render.yaml` | Render blueprint behind the README's Deploy to Render button: runs the server, prompts for `ANTHROPIC_API_KEY`, sets per-visitor and site-wide daily build caps. |
 | `.github/workflows/pages.yml` | Builds, tests and deploys `dist/site` to GitHub Pages on every push to `main`. |
 
@@ -52,6 +56,7 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 ## Guardrails
 
 - Keep everything on devnet. Real money (USDC collects, payouts) waits for a security audit; the GPLY token waits for a legal opinion. The Philippine SEC's CASP Rules (in force since 5 July 2025) cover anyone offering crypto services to people in the Philippines, and the BSP has kept new VASP licenses frozen since 2025, so do not build custody, token sales or a peso-to-crypto exchange.
+- Real Solana payments are non-custodial: players pay recipients directly, the treasury is only an address, and the server must never hold a private key. Do not switch production to mainnet or move real funds until the owner has finished the checklist in `SECURITY.md` and said go. Payment checks live in `checkPayment()` / `buildWorld({ chain })`; keep them strict (signer, memo with the ledger id, amount per recipient, each signature used once).
 - Never put secrets in the shared `db` or in the page. AI keys belong on the server (`ANTHROPIC_API_KEY` for `server/server.mjs`), and `/api/build` only accepts structured requests checked by `checkRequest()`, never a raw prompt, so it cannot be used as an open Claude proxy.
 
 ## Next engineering steps

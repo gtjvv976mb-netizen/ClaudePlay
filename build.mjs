@@ -11,7 +11,7 @@ const read = (f) => readFileSync(here('./src/' + f), 'utf8');
 // to show a contact button on the Business page.
 const SITE = { contact: process.env.GP_CONTACT || '' };
 
-const js = ['core.js', 'kits.js', 'harness.js', 'app.js'].map((f) => {
+const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'app.js'].map((f) => {
   const s = read(f);
   for (const bad of ['</script', '<!--', '<script']) if (s.toLowerCase().includes(bad)) throw new Error(f + ' contains ' + bad);
   return s;

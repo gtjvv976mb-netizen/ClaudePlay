@@ -544,10 +544,14 @@
     window.addEventListener('unhandledrejection', function (e) { post({ t: 'error', v: 'Unhandled promise rejection: ' + String((e.reason && e.reason.message) || e.reason) }); });
     window.addEventListener('pointerdown', function () { try { window.focus(); } catch (e) {} });
   }
+  /* Games run offline: this policy blocks every network request a game could make (fetch, images,
+     fonts, form posts), so a game cannot send anything a player types or does to another site. */
+  const GAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:; connect-src 'none'; form-action 'none'";
   function withSDK(code, seed, opts) {
     const o = opts || {};
     const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute });
-    const tag = SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + SCRIPT_CLOSE;
+    const tag = '<meta http-equiv="Content-Security-Policy" content="' + GAME_CSP + '">'
+      + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + SCRIPT_CLOSE;
     const head = code.match(/<head[^>]*>/i);
     if (head) return code.replace(head[0], head[0] + tag);
     const dt = code.match(/<!doctype[^>]*>/i);
