@@ -47,7 +47,7 @@ const H = globalThis.PPHarness;
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
-const MAX_BODY = 256 * 1024;
+const MAX_BODY = 512 * 1024;
 const MAX_TOKENS = 64000;
 // Models that accept server-side refusal fallbacks ("default" routes by refusal category).
 const FALLBACK_OK = /^claude-(sonnet-5-5|opus-5|fable-5)/;
@@ -59,13 +59,23 @@ export function pickModel(req, models, plan = 'pro') {
 }
 const KEY_OK = /^[A-Za-z0-9_-]{32,128}$/;
 
+/* The creator's text, after their pictures (if any) so Claude can see what each one shows. */
+function userContent(req) {
+  const pics = (req.pics || []).filter((p) => p.data);
+  if (!pics.length) return H.harnessTask(req.kind, req);
+  const out = [];
+  for (const p of pics) out.push({ type: 'text', text: "Creator's picture '" + p.name + "':" }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: p.data } });
+  out.push({ type: 'text', text: H.harnessTask(req.kind, req) });
+  return out;
+}
+
 /* The Messages API request for one build. HARNESS is the system prompt, so it caches across builds. */
 export function buildParams(req, model) {
   const params = {
     model,
     max_tokens: MAX_TOKENS,
     system: [{ type: 'text', text: H.HARNESS, cache_control: { type: 'ephemeral' } }],
-    messages: [{ role: 'user', content: H.harnessTask(req.kind, req) }],
+    messages: [{ role: 'user', content: userContent(req) }],
   };
   if (FALLBACK_OK.test(model)) { params.betas = ['server-side-fallback-2026-07-01']; params.fallbacks = 'default'; }
   return params;

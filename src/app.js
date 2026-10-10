@@ -690,11 +690,128 @@
   const STYLES = H.STYLES, IDEAS = H.IDEAS, CRYPTO_IDEAS = H.CRYPTO_IDEAS, GENRES = H.GENRES;
   const ideaName = (t) => t.split(':')[0];
 
+  /* ---------------- the creator's pictures ----------------
+     An uploaded picture becomes a small sprite in the browser: scaled to fit PIC_SIDE, a plain
+     background made transparent, empty edges cropped. At build time it is restyled to the chosen art
+     style and added to the game file as a block the AI never sees (H.withPictures). */
+  const PIC_SIDE = 128;
+  const loadImg = (src) => new Promise((ok, no) => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => no(new Error('That file is not a picture this browser can read.')); im.src = src; });
+  const readFile = (file) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(new Error('Could not read that file.')); r.readAsDataURL(file); });
+  function canvasOf(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, w); c.height = Math.max(1, h); return c; }
+  function picName(raw, taken) {
+    let n = String(raw || '').toLowerCase().replace(/\.[a-z0-9]+$/, '').replace(/[^a-z0-9]+/g, '_').replace(/^[^a-z]+/, '').replace(/_+$/, '').slice(0, 14) || 'pic';
+    let out = n, i = 2;
+    while (taken.includes(out)) out = n.slice(0, 13) + i++;
+    return out;
+  }
+  /* Makes a plain, even background transparent by flooding in from the edges. */
+  function clearBackground(d) {
+    const { width: w, height: h, data: px } = d;
+    const edge = [];
+    for (let x = 0; x < w; x++) edge.push(x, (h - 1) * w + x);
+    for (let y = 1; y < h - 1; y++) edge.push(y * w, y * w + w - 1);
+    const opaque = edge.filter((i) => px[i * 4 + 3] > 200);
+    if (opaque.length < edge.length * 0.6) return;
+    const avg = [0, 1, 2].map((c) => opaque.reduce((a, i) => a + px[i * 4 + c], 0) / opaque.length);
+    const near = (i, tol) => Math.abs(px[i * 4] - avg[0]) + Math.abs(px[i * 4 + 1] - avg[1]) + Math.abs(px[i * 4 + 2] - avg[2]) <= tol;
+    if (opaque.filter((i) => near(i, 60)).length < edge.length * 0.6) return;
+    const seen = new Uint8Array(w * h), stack = edge.filter((i) => near(i, 70));
+    stack.forEach((i) => { seen[i] = 1; });
+    while (stack.length) {
+      const i = stack.pop();
+      px[i * 4 + 3] = 0;
+      const x = i % w, y = (i - x) / w;
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) {
+        if (j >= 0 && !seen[j]) { seen[j] = 1; if (px[j * 4 + 3] > 0 && near(j, 70)) stack.push(j); }
+      }
+    }
+  }
+  function cropBox(d) {
+    const { width: w, height: h, data: px } = d;
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (px[(y * w + x) * 4 + 3] > 16) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return x1 < 0 ? { x: 0, y: 0, w, h } : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  }
+  async function picFromFile(file) {
+    if (!file || !/^image\//.test(file.type)) throw new Error('Pick a picture file (PNG, JPG, GIF or WebP).');
+    if (file.size > 15e6) throw new Error('That picture is too large. Pick one under 15 MB.');
+    const im = await loadImg(await readFile(file));
+    const k = Math.min(1, PIC_SIDE / Math.max(im.naturalWidth, im.naturalHeight));
+    const w = Math.max(1, Math.round(im.naturalWidth * k)), h = Math.max(1, Math.round(im.naturalHeight * k));
+    const c = canvasOf(w, h), x = c.getContext('2d');
+    x.drawImage(im, 0, 0, w, h);
+    const d = x.getImageData(0, 0, w, h);
+    clearBackground(d);
+    x.putImageData(d, 0, 0);
+    const b = cropBox(d);
+    const out = canvasOf(b.w, b.h);
+    out.getContext('2d').drawImage(c, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
+    return out.toDataURL('image/png');
+  }
+  /* Draws `src` with an outline of `color` (radius r) behind it, on a canvas padded by r. */
+  function outlined(src, r, color, shadow) {
+    const c = canvasOf(src.width + r * 2 + (shadow ? 2 : 0), src.height + r * 2 + (shadow ? 2 : 0)), x = c.getContext('2d');
+    const sil = canvasOf(src.width, src.height), sx = sil.getContext('2d');
+    sx.drawImage(src, 0, 0); sx.globalCompositeOperation = 'source-in'; sx.fillStyle = color; sx.fillRect(0, 0, sil.width, sil.height);
+    if (shadow) { x.globalAlpha = 0.3; const dark = canvasOf(src.width, src.height), dx = dark.getContext('2d'); dx.drawImage(src, 0, 0); dx.globalCompositeOperation = 'source-in'; dx.fillStyle = '#000'; dx.fillRect(0, 0, dark.width, dark.height); x.drawImage(dark, r + 2, r + 2); x.globalAlpha = 1; }
+    for (let a = 0; a < 16; a++) x.drawImage(sil, r + Math.round(Math.cos(a / 8 * Math.PI) * r), r + Math.round(Math.sin(a / 8 * Math.PI) * r));
+    x.drawImage(src, r, r);
+    return c;
+  }
+  /* The picture restyled for an art style, as { w, h, data } (PNG base64), small enough to send. */
+  async function stylePic(raw, style) {
+    const im = await loadImg(raw);
+    let side = Math.max(im.naturalWidth, im.naturalHeight);
+    if (style === 'Pixel art') side = Math.min(side, 32);
+    for (;;) {
+      const k = Math.min(1, side / Math.max(im.naturalWidth, im.naturalHeight));
+      let c = canvasOf(Math.round(im.naturalWidth * k), Math.round(im.naturalHeight * k));
+      const x = c.getContext('2d');
+      x.drawImage(im, 0, 0, c.width, c.height);
+      const d = x.getImageData(0, 0, c.width, c.height), px = d.data;
+      for (let i = 0; i < px.length; i += 4) {
+        let r = px[i], g = px[i + 1], b = px[i + 2];
+        const l = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (style === 'Pixel art') { const q = (v) => Math.round(v / 51) * 51; r = q(r); g = q(g); b = q(b); px[i + 3] = px[i + 3] < 128 ? 0 : 255; }
+        else if (style === 'Monochrome ink') { r = g = b = l < 85 ? 17 : l < 170 ? 110 : 236; }
+        else if (style === 'Neon arcade') { const s = 1.7; r = l + (r - l) * s + 20; g = l + (g - l) * s + 20; b = l + (b - l) * s + 20; }
+        else if (style === 'Pastel cozy') { r = r * 0.6 + 102; g = g * 0.6 + 102; b = b * 0.6 + 102; }
+        px[i] = Math.max(0, Math.min(255, r)); px[i + 1] = Math.max(0, Math.min(255, g)); px[i + 2] = Math.max(0, Math.min(255, b));
+      }
+      x.putImageData(d, 0, 0);
+      if (style === 'Neon arcade') c = outlined(c, 2, '#3ff6ff');
+      else if (style === 'Paper cutout') c = outlined(c, 3, '#ffffff', true);
+      else if (style === 'Monochrome ink') c = outlined(c, 1, '#111111');
+      const data = c.toDataURL('image/png').split(',')[1];
+      if (data.length <= H.PICS.data && c.width <= H.PICS.side && c.height <= H.PICS.side) return { w: c.width, h: c.height, data };
+      side = Math.floor(side * 0.8);
+      if (side < 8) throw new Error('A picture is too detailed to use. Try a simpler one.');
+    }
+  }
+  const stylePics = (pics, style) => Promise.all((pics || []).map(async (p) => Object.assign({ name: p.name }, await stylePic(p.raw, style))));
+  function picsHTML() {
+    const st = S.studio, pics = st.pics || [];
+    return '<div class="stack" style="gap:8px"><p class="eyebrow" id="pics-label">Your pictures</p>'
+      + (pics.length ? '<div class="pics" role="group" aria-labelledby="pics-label">' + pics.map((p, i) => '<div class="pic"><img src="' + esc(p.raw) + '" alt=""><label class="sr" for="pic-' + i + '">Name of picture ' + (i + 1) + '</label><input id="pic-' + i + '" type="text" maxlength="16" data-in="pic-name" data-i="' + i + '" value="' + esc(p.name) + '" spellcheck="false"><button class="btn small ghost" type="button" data-act="pic-del" data-i="' + i + '" aria-label="Remove picture ' + esc(p.name) + '">Remove</button></div>').join('') + '</div>' : '')
+      + '<div class="row">' + (pics.length < H.PICS.max ? '<button class="btn small" type="button" data-act="pic-add">Add a picture</button>' : '') + '<span class="muted" style="font-size:0.875rem">' + (pics.length ? 'Use the names in your idea, like “the hero is ' + esc(pics[0].name) + '”.' : 'Turn a drawing or photo into a character or item.') + ' Plain backgrounds are removed and pictures match the art style.</span></div></div>';
+  }
+  async function addPicture(file) {
+    const st = S.studio;
+    st.pics = st.pics || [];
+    if (st.pics.length >= H.PICS.max) return;
+    try {
+      const raw = await picFromFile(file);
+      st.pics.push({ name: picName(file.name, st.pics.map((p) => p.name)), raw });
+      saveStudio(); rerenderStudioLeft();
+      toast('Added the picture. Mention it by name in your idea.');
+    } catch (e) { toast(e.message || 'Could not use that picture.', 'bad'); }
+  }
+
   /* ---------------- studio state ---------------- */
   function newStudio() {
     return {
       mode: aiReady() ? 'ai' : 'kit', kit: 'runner', params: K.normalizeParams('runner', { title: 'My Runner', palette: 'neon', shape: 'block' }),
-      versions: [], vi: -1, chat: [], prompt: '', style: '', quality: 'default', brand: null,
+      versions: [], vi: -1, chat: [], prompt: '', style: '', pics: [], quality: 'default', brand: null,
       parent: null, title: '', desc: '', price: 0.05, cap: 0, busy: false, stream: null, error: null, lastRun: null,
     };
   }
@@ -709,9 +826,12 @@
     clearTimeout(studioSaveTimer);
     studioSaveTimer = setTimeout(() => {
       const st = S.studio;
-      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, dim: st.dim, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
+      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
       if (st.versions.length > 6) keep.vi = Math.max(-1, st.vi - (st.versions.length - 6));
-      LS.set(KEY.studio, keep);
+      if (!LS.set(KEY.studio, keep) && keep.versions.length > 2) {
+        keep.vi = Math.max(-1, keep.vi - (keep.versions.length - 2)); keep.versions = keep.versions.slice(-2);
+        LS.set(KEY.studio, keep);
+      }
     }, 300);
   }
   function studioCode() {
@@ -1173,6 +1293,7 @@
           + '<div class="row" role="group" aria-label="Game type"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + ((st.dim || '2d') === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
           + '<label class="sr" for="st-genre">Genre</label><select id="st-genre" data-in="genre" style="width:auto"><option value="">Any genre</option>' + GENRES.map((g) => '<option' + (st.genre === g ? ' selected' : '') + '>' + esc(g) + '</option>').join('') + '</select></div>'
           + '<div class="row" role="group" aria-label="Art style">' + STYLES.map((s) => '<button class="chip" type="button" data-act="style" data-style="' + esc(s) + '" aria-pressed="' + (st.style === s) + '">' + esc(s) + '</button>').join('') + '</div>'
+          + picsHTML()
           + '<div class="row" id="st-gen">' + genButtons() + '</div><div id="st-plan">' + planHTML() + '</div>'
           + '<details><summary class="muted" style="cursor:pointer">Starter ideas to remix</summary><div class="stack" style="margin-top:10px">' + IDEAS.map((t) => '<button class="btn small ghost" type="button" data-act="idea" style="white-space:normal;text-align:left;justify-content:flex-start">' + esc(t) + '</button>').join('') + '</div></details>'
           + '</div>';
@@ -1306,7 +1427,8 @@
     const ctl = new AbortController();
     S.ctl = ctl;
     try {
-      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', code: kind === 'new' ? '' : base || '', error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
+      const pics = await stylePics(st.pics, st.style);
+      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', pics, code: kind === 'new' ? '' : H.stripPictures(base || ''), error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
       const res = await aiBuild(req, {
         signal: ctl.signal,
         onText: ({ text }) => {
@@ -1315,7 +1437,7 @@
           renderStream();
         },
       });
-      const code = extractHTML(res.text);
+      const code = H.withPictures(extractHTML(res.text), pics);
       const meta = readMeta(code);
       if (R.GEN_COST[kind]) await signAndAppend('gen', { kind, bytes: code.length });
       st.versions.push({ code, meta, kind, ts: Date.now() });
@@ -1739,6 +1861,13 @@
     'gen-edit': () => generate('edit'),
     'gen-fix': () => generate('fix'),
     'stop': () => { if (S.ctl) S.ctl.abort(); },
+    'pic-add': () => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/gif,image/webp';
+      inp.addEventListener('change', () => { if (inp.files && inp.files[0]) addPicture(inp.files[0]); });
+      inp.click();
+    },
+    'pic-del': (el) => { const st = S.studio; st.pics.splice(+el.dataset.i, 1); saveStudio(); rerenderStudioLeft(); const b = $('[data-act="pic-add"]'); if (b) b.focus(); },
     'version': (el) => { S.studio.vi = Number(el.dataset.i); saveStudio(); rerenderStudioLeft(); loadPreview(); },
     'clear-parent': () => { S.studio.parent = null; saveStudio(); rerenderStudioLeft(); },
     'publish': async () => { await publish(); },
@@ -1858,12 +1987,18 @@
     else if (k === 'pub-cap') st.cap = t.value;
     else if (k === 'quality') st.quality = t.value;
     else if (k === 'genre') st.genre = t.value;
+    else if (k === 'pic-name') {
+      const i = +t.dataset.i, p = st.pics && st.pics[i];
+      if (!p) return;
+      p.name = picName(t.value, st.pics.filter((q, j) => j !== i).map((q) => q.name));
+    }
     saveStudio();
   });
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.type === 'radio' && t.name && t.name.indexOf('pref-') === 0) { setPref(t.name.slice(5), t.value); return; }
     if (t.dataset && (t.dataset.in === 'knob' || t.dataset.in === 'quality' || t.dataset.in === 'genre')) t.dispatchEvent(new Event('input', { bubbles: true }));
+    if (t.dataset && t.dataset.in === 'pic-name' && S.studio.pics[+t.dataset.i]) t.value = S.studio.pics[+t.dataset.i].name;
   });
   document.addEventListener('focusout', () => {
     setTimeout(() => {

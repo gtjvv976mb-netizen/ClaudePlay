@@ -540,6 +540,14 @@
       ready: function () { post({ t: 'ready' }); },
       input: function (code) { n++; code = String(code); for (var i = 0; i < code.length; i++) { ih ^= code.charCodeAt(i); ih = Math.imul(ih, 16777619) >>> 0; } },
     };
+    /* The creator's pictures (window.SP_PICTURES, a block in the game file): one Image per name, or an
+       empty Image that draws nothing when the name is unknown. */
+    var pics = {};
+    window.SP.image = function (name) {
+      name = String(name);
+      if (!pics[name]) { var im = new Image(), src = window.SP_PICTURES && Object.prototype.hasOwnProperty.call(window.SP_PICTURES, name) ? window.SP_PICTURES[name] : ''; if (/^data:image\/png;base64,/.test(src)) im.src = src; pics[name] = im; }
+      return pics[name];
+    };
     window.addEventListener('error', function (e) { post({ t: 'error', v: String(e.message || 'Script error') + (e.lineno ? ' (line ' + e.lineno + ')' : '') }); });
     window.addEventListener('unhandledrejection', function (e) { post({ t: 'error', v: 'Unhandled promise rejection: ' + String((e.reason && e.reason.message) || e.reason) }); });
     window.addEventListener('pointerdown', function () { try { window.focus(); } catch (e) {} });

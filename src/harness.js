@@ -24,6 +24,7 @@
     '  * SP.gameOver(n) exactly once when a run ends, with the final score.',
     '  * SP.ready() once when the title screen first shows.',
     '  * SP.input(code) for each player action (for example "jump" or "left"), used for replay logs.',
+    "- Creator's pictures: when the request lists CREATOR'S PICTURES, they are already in the page. SP.image('name') returns an Image of that picture (it may still be loading: draw it only when img.complete && img.naturalWidth, else a simple shape). Use them for the parts the creator asked for, drawn with ctx.drawImage at any size (set ctx.imageSmoothingEnabled = false for pixel art). Never write out or recreate the picture data yourself. In 3D games, draw pictures on the HUD or as billboards at g.project() positions.",
     '- Keep the document under 120 KB, with all JavaScript in one inline script at the end of the body, and no console errors. Use the room: real levels, enemy variety, power-ups and progression beat a thin prototype.',
     '',
     '3D GAMES WITH SP3D',
@@ -52,17 +53,36 @@
   const STYLES = ['Neon arcade', 'Pixel art', 'Paper cutout', 'Pastel cozy', 'Monochrome ink'];
   const LIMITS = { prompt: 2000, style: 40, genre: 40, mode: 2, code: 160000, error: 1000 };
   const MODES = ['2d', '3d'];
+  /* Pictures the creator uploads: at most PICS.max, each a small PNG (base64, no data: prefix). */
+  const PICS = { max: 4, name: /^[a-z][a-z0-9_]{0,15}$/, side: 256, data: 48000 };
+  const PIC_BLOCK = new RegExp('<scr' + 'ipt id="sp-pictures">[\\s\\S]*?</scr' + 'ipt>\\s*');
   const GENRES = ['Arcade', 'Platformer', 'Racing', 'Shooter', 'Puzzle', 'Trivia', 'Tower defense', 'Rhythm', 'Adventure', 'Sports'];
 
   /* The creator's part of a request, kept apart from HARNESS so a server can send HARNESS as a
-     cacheable system prompt. o: { prompt, style, code, error }. */
+     cacheable system prompt. o: { prompt, style, mode, genre, pics, code, error }. */
   function harnessTask(kind, o) {
-    const style = (o.style ? '\nArt style: ' + o.style : '') + (o.mode ? '\nGame type: ' + (o.mode === '3d' ? '3D (use SP3D)' : '2D') : '') + (o.genre ? '\nGenre: ' + o.genre : '');
+    const pics = o.pics && o.pics.length ? "\n\nCREATOR'S PICTURES (use with SP.image(name)):\n" + o.pics.map((p) => "- '" + p.name + "': " + p.w + 'x' + p.h + ' px').join('\n') : '';
+    const style = (o.style ? '\nArt style: ' + o.style : '') + (o.mode ? '\nGame type: ' + (o.mode === '3d' ? '3D (use SP3D)' : '2D') : '') + (o.genre ? '\nGenre: ' + o.genre : '') + pics;
     if (kind === 'new') return 'GAME IDEA FROM THE CREATOR:\n' + o.prompt + style;
     if (kind === 'edit') return 'You are editing an existing ClaudePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
     return 'The current game crashed with this error:\n' + o.error + '\nFind the cause, fix it, and return the COMPLETE corrected document under the same rules. Change nothing else.\n\nCURRENT GAME:\n' + o.code;
   }
   function harnessPrompt(kind, o) { return HARNESS + '\n\n' + harnessTask(kind, o); }
+
+  /* A game's pictures live in one script block that defines window.SP_PICTURES; the AI never sees or
+     writes it. withPictures() puts the block (or none) into a document, replacing any old one. */
+  function stripPictures(code) { return String(code || '').replace(PIC_BLOCK, ''); }
+  function withPictures(code, pics) {
+    code = stripPictures(code);
+    if (!pics || !pics.length) return code;
+    const map = {};
+    for (const p of pics) map[p.name] = 'data:image/png;base64,' + p.data;
+    const block = '<scr' + 'ipt id="sp-pictures">window.SP_PICTURES=' + JSON.stringify(map) + ';</scr' + 'ipt>';
+    const head = code.match(/<head[^>]*>/i);
+    if (head) return code.replace(head[0], head[0] + block);
+    const dt = code.match(/<!doctype[^>]*>/i);
+    return dt ? code.replace(dt[0], dt[0] + block) : block + code;
+  }
 
   /* Checks a build request from an untrusted client. Returns { ok, req } or { ok: false, error }. */
   function checkRequest(body) {
@@ -76,6 +96,16 @@
     if (kind !== 'new' && !/<html|<!doctype/i.test(req.code)) return { ok: false, error: 'edit and fix need the current game' };
     if (kind === 'fix' && !req.error) return { ok: false, error: 'fix needs the error message' };
     if (kind === 'new') req.code = '';
+    const pics = Array.isArray(b.pics) ? b.pics : [];
+    if (pics.length > PICS.max) return { ok: false, error: 'at most ' + PICS.max + ' pictures' };
+    req.pics = [];
+    for (const p of pics) {
+      const q = { name: str(p && p.name), w: Math.floor(+(p && p.w)), h: Math.floor(+(p && p.h)), data: str(p && p.data) };
+      if (!PICS.name.test(q.name) || req.pics.some((x) => x.name === q.name)) return { ok: false, error: 'bad picture name' };
+      if (!(q.w >= 1 && q.w <= PICS.side && q.h >= 1 && q.h <= PICS.side)) return { ok: false, error: 'bad picture size' };
+      if (q.data && (q.data.length > PICS.data || !/^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(q.data))) return { ok: false, error: 'pictures must be small PNG files' };
+      req.pics.push(q);
+    }
     return { ok: true, req };
   }
 
@@ -97,5 +127,5 @@
     'Whale Watch: a fishing game where you hook coins of different sizes, but snagging a whale shakes the whole market.',
   ];
 
-  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, harnessTask, harnessPrompt, checkRequest };
+  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, PICS, harnessTask, harnessPrompt, checkRequest, stripPictures, withPictures };
 })(typeof window !== 'undefined' ? window : globalThis);
