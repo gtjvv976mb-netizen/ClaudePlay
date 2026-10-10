@@ -914,16 +914,23 @@
 
   /* ---------------- rendering ---------------- */
   function renderHeader() {
+    document.documentElement.dataset.route = S.route;
     $$('.nav a').forEach((a) => { if (a.dataset.nav === S.route || (S.route === 'game' && a.dataset.nav === 'explore')) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     const chip = $('#wchip');
     if (!S.wallet) { chip.innerHTML = '<span class="dot off"></span><span>Get a wallet</span>'; return; }
     const w = myWallet();
     chip.innerHTML = '<span class="dot"></span><span class="addr">' + esc(short(S.wallet.from)) + '</span><span class="bal"><span title="' + UNIT + '">' + I.sol + fmtSOL(solOf(w)) + '</span><span title="Sparks">' + I.spark + fmtInt(w ? w.sparks : 0) + '</span><span title="GPLY">' + I.park + fmtInt(w ? w.park : 0) + '</span></span>';
   }
-  function footHTML() {
+  // compact: the front page's one-line footer, with the same facts in fewer words.
+  function footHTML(compact) {
     const where = S.mode === 'shared' ? 'Connected to the shared gallery'
       : S.hasDb ? 'View-only on the shared gallery; your activity stays on this device'
       : 'Running on this device only: your key, games and scores stay in this browser';
+    if (compact) {
+      return '<footer class="foot foot-mini"><p>ClaudePlay is an unofficial fan project, not affiliated with or endorsed by Anthropic or Google. Claude is a trademark of Anthropic.</p>'
+        + '<p>' + (MAINNET ? 'Collects and tips are real SOL on Solana mainnet, paid from your own wallet.' : CHAIN ? 'Devnet: payments use free test SOL, so no real funds move.' : 'Devnet preview: no real funds move.') + ' ' + esc(S.mode === 'shared' ? 'Connected to the shared gallery.' : S.hasDb ? 'View-only on the shared gallery.' : 'Your games stay in this browser.') + '</p>'
+        + '<nav class="foot-links" aria-label="Footer"><a href="#business" data-nav="business">For business</a><a href="#economy" data-nav="economy">Economy</a><button class="linkish" type="button" data-act="settings">Accessibility</button></nav></footer>';
+    }
     return '<footer class="foot"><div class="foot-main"><b class="foot-mark">ClaudePlay</b>'
       + '<p>An unofficial fan project on Solana. Not affiliated with or endorsed by Anthropic, Google or Google Labs Playground. Claude is a trademark of Anthropic.</p>'
       + '<p>' + (MAINNET ? 'Collects and tips are real SOL on Solana mainnet, paid from your own wallet app straight to creators. ClaudePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.'
@@ -1012,42 +1019,6 @@
   }
 
   /* ---------- home: the public front door ---------- */
-  const PLAYGROUND_SOURCES = [
-    ['Gizmodo', 'https://gizmodo.com/googles-new-playground-aims-to-make-it-easy-to-vibe-code-a-game-right-in-your-browser-2000822955'],
-    ['Nerdzap', 'https://nerdzap.com/news/google-playground-ai-game-maker-uk-roblox-build/'],
-  ];
-  const ROADMAP = [
-    { name: 'Validate', now: true, what: 'This preview, creator interviews and tuning the AI studio', gate: '40% of testers publish a game' },
-    { name: 'Devnet alpha', what: 'Solana programs and passkey wallets, still with no real money', gate: 'Security audit passed and reports handled within 24 hours' },
-    { name: 'Mainnet beta', what: 'USDC collects, royalties and tips, plus free tournaments', gate: 'A legal opinion on GPLY' },
-    { name: 'Economy', what: 'Points convert to GPLY, weekly rewards and human checks against bots', gate: 'Fees cover rewards four weeks running' },
-    { name: 'Scale', what: 'A developer SDK and export, a mobile app and a multiplayer kit' },
-  ];
-  const FAQ = [
-    ['Is ClaudePlay free?', 'Yes. Playing, making and publishing are free. Every week you get ' + R.WEEKLY_SPARKS + ' Sparks for AI builds, and you earn ' + R.SPARKS_PER_PLAYER + ' more for each new player who tries one of your games.'],
-    ['Do I need a crypto wallet?', 'No. The first time you score or publish, ClaudePlay creates a wallet key in your browser. You can connect Phantom, Solflare or Backpack later, or export the key from Wallet.'],
-    MAINNET ? ['Is this real money?', 'Yes. Collects and tips are paid in real SOL from your own wallet app, straight to the creator, the remix creators and a 5% protocol fee. ClaudePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.']
-      : ['Is this real money?', 'Not yet. This preview runs on Solana devnet, so SOL balances are test tokens. GPLY is the working name of a future reward token. Nothing is for sale and there is no presale.'],
-    ['Who can use it?', 'Anyone with a modern browser, in any country. When real-money features arrive they will follow local rules, including age checks where the law requires them.'],
-    ['Is ClaudePlay made by Anthropic or Google?', 'No. ClaudePlay is an unofficial fan project. It is not affiliated with or endorsed by Anthropic, Google or Google Labs Playground. Claude is a trademark of Anthropic.'],
-    ['Can I keep my game?', 'Yes. Every game is one HTML file. Download it from its page and it plays offline in any browser, with no ClaudePlay account.'],
-    ['How are leaderboards kept fair?', 'Each score is signed by the player’s key and tied to the exact game file, with a seed and an input log so a suspicious run can be checked. Runs in assist mode stay off ranked boards.'],
-    ['Where is my data stored?', 'In this preview your wallet key, games and scores stay in your browser on this device. Clearing site data removes them, so export your key from Wallet if you want to keep it.'],
-    ['How do I report a game?', 'Open the game and press Report. Moderators can delist it, and the signed record stays on the ledger.'],
-  ];
-  function specTable() {
-    const rows = [
-      ['Who can use it', 'US only, 18+, with a Google sign-in', 'Anyone, anywhere, with no sign-up to play or make'],
-      ['Cost of making', 'Weekly token allowance; more with Google One', R.WEEKLY_SPARKS + ' free Sparks a week, plus ' + R.SPARKS_PER_PLAYER + ' for every new player you bring'],
-      ['Ownership', 'Hosted on Google’s platform', 'A signed game file you can download and host anywhere'],
-      ['Creator earnings', 'None announced', 'Collects, tips, remix royalties and weekly rewards'],
-      ['Leaderboards', 'Play Games profile, in select genres', 'Wallet-signed scores tied to the exact game file'],
-      ['Sharing', 'No outside links; built-in Social Links only', 'Share a link anywhere or download the file'],
-    ];
-    return '<div class="spec"><table><caption class="sr">ClaudePlay compared with Google Labs Playground</caption><thead><tr><th scope="col"><span class="sr">Feature</span></th><th scope="col">Google Labs Playground</th><th scope="col">ClaudePlay</th></tr></thead><tbody>'
-      + rows.map(([k, a, b]) => '<tr><th scope="row">' + esc(k) + '</th><td class="them">' + esc(a) + '</td><td class="us">' + esc(b) + '</td></tr>').join('')
-      + '</tbody></table></div>';
-  }
   function startersList() {
     const w = S.world;
     return S.starters.map((s) => (w && w.games.get(s.gid)) || Object.assign({ creator: C.STARTER, starter: true, players: new Set(), collects: [] }, s));
@@ -1057,83 +1028,35 @@
     const community = w ? [...w.games.values()].filter((g) => !g.starter && !g.delisted).sort((a, b) => (b.players.size - a.players.size) || (b.ts - a.ts)).slice(0, 3) : [];
     return community.concat(startersList()).slice(0, 8).map(cartHTML).join('');
   }
+  // The front page is one screen: the pack card holds the prompt, the playable game and a strip of stickers.
   function homeHTML() {
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
-    const creatorBps = 10000 - R.FEE_BPS - R.PARENT_BPS - R.GRAND_BPS;
-    const seg = [['you', 'You, the remixer', creatorBps], ['parent', 'Creator of the game you remixed', R.PARENT_BPS], ['grand', 'Creator one step further back', R.GRAND_BPS], ['fee', 'ClaudePlay protocol fee', R.FEE_BPS]];
-    const solOf = (bps) => (bps / 10000).toFixed(2);
     const st = S.studio || {};
     const dim = st.dim || '2d';
     const peeks = S.starters.filter((x) => x.gid !== 'kit-neon-dash').slice(0, 3);
-    return '<section class="hero hero-home pack" aria-labelledby="hero-title"><div class="hero-copy">'
+    const tags = [['GG', 'ta'], ['+1 SOL', 'tb'], ['New best!', 'tc']];
+    return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy">'
       + '<h1 class="hero-title" id="hero-title"><span>Make it.</span> <span>Play it.</span> <span class="hl">Own it.</span></h1>'
-      + '<p class="lede">Describe a game in one sentence and Claude builds it. Share the link, and earn when people collect or remix it.</p>'
+      + '<p class="lede">Describe a game and Claude builds it. Share the link and earn when people collect it.</p>'
       + '<form class="maker" data-form="home-build"><label class="sr" for="home-prompt">Describe your game</label>'
       + '<div class="maker-box"><textarea id="home-prompt" rows="2" maxlength="600" placeholder="A cat on a skateboard dodging gas fees across neon rooftops">' + esc(st.versions && st.versions.length ? '' : (st.prompt || '')) + '</textarea>'
       + '<div class="maker-bar"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + (dim === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
       + '<button class="btn primary" type="submit">' + I.spark + (aiReady() ? ' Build it' : ' Open the studio') + '</button></div></div>'
-      + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or start from a crypto idea</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form>'
-      + '<p class="fine"><a href="#explore" data-nav="explore">Play a game first</a>, or <a href="#create" data-act="home-kit">tune a kit with no AI</a>. Free, with no sign-up.</p></div>'
+      + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or try</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form></div>'
       + '<div class="stage3d">' + peeks.map((x, i) => '<span class="sticker peek peek-' + 'abc'[i] + '" aria-hidden="true"><img src="' + K.cover(Object.assign({ creator: C.STARTER }, x)) + '" alt="" width="480" height="300"></span>').join('')
+      + tags.map(([t, k]) => '<span class="tag-sticker ' + k + '" aria-hidden="true">' + t + '</span>').join('')
       + '<figure class="console" id="home-console">'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
       + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure>'
-      + '<img class="mascot" id="home-mascot" src="' + MASCOT + '" alt="" width="370" height="403" decoding="async"></div></section>'
-
-      + '<section class="section" aria-labelledby="h-carts"><div class="section-head"><h2 id="h-carts">Peel one off and play</h2><a href="#explore" data-nav="explore">See every game</a></div>'
-      + '<div class="sheet"><div class="shelf" id="home-shelf">' + homeShelf() + '</div></div></section>'
-
-      + '<section class="section flow" aria-labelledby="h-steps"><div class="flow-intro"><h2 class="h2" id="h-steps">From one sentence to a game your friends can play</h2>'
-      + '<p class="lede">Every game is free to play and free to remix, and the file is yours to keep.</p><a class="btn primary" href="#create" data-nav="create">' + I.spark + ' Open the maker</a></div>'
-      + '<ol class="flow-list">'
-      + '<li><b>Describe</b><p>Tell the AI studio what to build, in 2D or 3D, with your own pictures if you like. Or pick Runner, Flapper, Shooter, Breaker or Dodger and tune it by hand.</p></li>'
-      + '<li><b>Play-test</b><p>The preview restarts with every change. Each game works with touch, mouse and keyboard, and with a friend in the same room.</p></li>'
-      + '<li><b>Publish</b><p>Your wallet signs the game’s fingerprint, so anyone can check it was not changed. You set the collect price and the number of editions.</p></li>'
-      + '<li><b>Earn</b><p>New players bring you Sparks, collectors pay you SOL, and every remix of your game pays you a share.</p></li>'
-      + '<li><b>For crowds</b><p>Running a brand, a community or a class? <a href="#business" data-nav="business">ClaudePlay for business</a> makes branded games with leaderboards you can check.</p></li>'
-      + '</ol></section>'
-
-      + '<section class="section" aria-labelledby="h-earn"><div class="section-head"><h2 id="h-earn">How creators earn</h2><a href="#economy" data-nav="economy">Full economy</a></div><div class="earn">'
-      + '<div class="panel stack"><p class="eyebrow">Someone collects a remix of a remix for 1 SOL</p>'
-      + '<div class="splitbar" role="img" aria-label="' + esc(seg.map(([, l, b]) => l + ' ' + pct(b)).join(', ')) + '">' + seg.map(([k, , b]) => '<i class="seg-' + k + '" style="flex:' + b + '"></i>').join('') + '</div>'
-      + '<ul class="legend">' + seg.map(([k, l, b]) => '<li><i class="seg-' + k + '" aria-hidden="true"></i><span>' + esc(l) + '</span><b class="num">' + solOf(b) + ' SOL</b></li>').join('') + '</ul>'
-      + '<p class="muted">An original game keeps ' + pct(10000 - R.FEE_BPS) + '. Tips go 100% to the creator.</p></div>'
-      + '<ul class="earn-list">'
-      + '<li><b>Collects</b><span>Fans pay to own a numbered edition. The game stays free to play for everyone.</span></li>'
-      + '<li><b>Tips</b><span>Players can tip any creator, and the whole tip goes to them.</span></li>'
-      + '<li><b>Remix royalties</b><span>' + pct(R.PARENT_BPS) + ' of a remix’s collects goes to the original creator and ' + pct(R.GRAND_BPS) + ' to the one before.</span></li>'
-      + '<li><b>Weekly rewards</b><span>' + Math.round(R.CREATOR_SHARE * 100) + '% of each week’s GPLY goes to creators, by unique players. ' + Math.round(R.PLAYER_SHARE * 100) + '% goes to players, by leaderboard places.</span></li>'
-      + '<li><b>Sparks</b><span>' + R.SPARKS_PER_PLAYER + ' Sparks for each new player of your game, up to ' + R.SPARKS_PLAYER_CAP + ' players per game.</span></li>'
-      + '</ul></div><p class="fine">' + (MAINNET ? 'Collects, tips and royalties are paid in real SOL straight to your wallet. GPLY rewards are points with no cash value.' : 'On devnet these are test balances. Real payouts start at mainnet beta, after a security audit.') + '</p></section>'
-
-      + '<section class="section" aria-labelledby="h-compare"><div class="section-head"><h2 id="h-compare">ClaudePlay and Google Labs Playground</h2>'
-      + '<p class="muted">Google Labs launched Playground on October 7, 2026. Here is how the two compare.</p></div>'
-      + '<div class="table-scroll">' + specTable() + '</div>'
-      + '<p class="fine">Playground details as reported in October 2026: ' + PLAYGROUND_SOURCES.map(([n, u]) => '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(n) + '</a>').join(', ') + '.</p></section>'
-
-      + '<section class="section access" aria-labelledby="h-access"><div class="access-intro"><h2 class="h2" id="h-access">Built for every player</h2>'
-      + '<p class="muted">These settings work across the site and inside every game.</p><button class="btn" type="button" data-act="settings">Open accessibility settings</button></div><ul class="feature-grid">'
-      + '<li><b>Assist mode</b><span>Slow any game to 75% or 50% speed. Assisted runs count as personal results and stay off ranked leaderboards.</span></li>'
-      + '<li><b>One-button friendly</b><span>Runner and Flapper play with a single key or tap. Every kit works with keyboard, touch or mouse.</span></li>'
-      + '<li><b>Calm motion</b><span>Turn off screen shake and page animations, or follow your device’s reduced-motion setting.</span></li>'
-      + '<li><b>High contrast, larger text</b><span>A black-and-yellow high-contrast theme and three text sizes.</span></li>'
-      + '<li><b>Screen reader support</b><span>Labeled controls, focus that moves to each new page, and a spoken score when a run ends.</span></li>'
-      + '<li><b>Light on data</b><span>One small page with no tracking scripts. Games are single files you can download and play offline.</span></li>'
-      + '</ul></section>'
-
-      + '<section class="section" aria-labelledby="h-road"><div class="section-head"><h2 id="h-road">Roadmap</h2>'
-      + '<p class="muted">Fun first, money second, the token last. Each stage opens when the checkpoint before it is met, not on a date.</p></div><ol class="road">'
-      + ROADMAP.map((s) => '<li class="stage' + (s.now ? ' now' : '') + '"><div class="stage-top">' + (s.now ? '<span class="chip accent">We are here</span>' : '') + '</div><b>' + esc(s.name) + '</b><p>' + esc(s.what) + '</p>' + (s.gate ? '<p class="gate"><span>Checkpoint</span>' + esc(s.gate) + '</p>' : '') + '</li>').join('')
-      + '</ol></section>'
-
-      + '<section class="section" aria-labelledby="h-faq"><div class="section-head"><h2 id="h-faq">Questions</h2></div><div class="faq">'
-      + FAQ.map(([q, a]) => '<details><summary>' + esc(q) + '</summary><p>' + esc(a) + '</p></details>').join('')
-      + '</div></section>';
+      + '<img class="mascot" id="home-mascot" src="' + MASCOT + '" alt="" width="370" height="403" decoding="async"></div>'
+      + '<div class="pack-shelf"><div class="pack-shelf-head"><h2 id="h-carts">Peel one off and play</h2><a href="#explore" data-nav="explore">See every game</a></div>'
+      + '<div class="shelf" id="home-shelf">' + homeShelf() + '</div></div></section>';
   }
   function mountHome() {
     unmountPlayer('home-screen');
-    $('#view').innerHTML = homeHTML() + footHTML();
+    $('#view').innerHTML = homeHTML() + footHTML(true);
     wakeMascot($('#home-mascot'));
+    packDepth($('#home-pack'));
     revealShelf($('#home-shelf'));
     const host = $('#home-screen');
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
@@ -1152,6 +1075,19 @@
     const anim = new Image();
     anim.onload = () => { if (img.isConnected && !calmNow()) img.src = anim.src; };
     anim.src = SITE.mascot;
+  }
+  // The pack follows the pointer: each layer moves by its own depth (--d), so the stickers read as a 3D stack.
+  function packDepth(pack) {
+    if (!pack || !window.matchMedia || !window.matchMedia('(pointer: fine)').matches) return;
+    let raf = 0, x = 0, y = 0;
+    const put = () => { raf = 0; pack.style.setProperty('--px', x.toFixed(3)); pack.style.setProperty('--py', y.toFixed(3)); };
+    pack.addEventListener('pointermove', (e) => {
+      if (calmNow()) return;
+      const r = pack.getBoundingClientRect();
+      x = (e.clientX - r.left) / r.width - 0.5; y = (e.clientY - r.top) / r.height - 0.5;
+      if (!raf) raf = requestAnimationFrame(put);
+    });
+    pack.addEventListener('pointerleave', () => { x = y = 0; if (!raf) raf = requestAnimationFrame(put); });
   }
   // Stickers on a sheet slap down in turn the first time they scroll into view.
   function revealShelf(root) {

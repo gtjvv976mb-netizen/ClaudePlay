@@ -23,6 +23,9 @@ ClaudePlay looks like a sticker pack. The page is the liner sheet, games are die
 
 ## Motion
 
+- **One screen**: on screens wider than 960px the front page is the header, the pack and a one-line footer, sized from the window height (`:root[data-route="home"]`). Phones scroll.
+- **Depth**: the pack follows the pointer (`packDepth()` sets `--px`/`--py`). The console tilts in 3D, and the peeking stickers, tag stickers (GG, +1 SOL, New best!) and Cart shift by their own depth `--d`. Loose stickers bob on their own clocks.
+
 - **Slap**: stickers, the console, Cart and toasts land with a short overshoot (`@keyframes slap`).
 - **Peel**: on hover or focus a sticker lifts and its bottom-right corner peels back, showing the sticker's back and the sheet under it (`.sticker::after`).
 - Calm motion and `prefers-reduced-motion` switch every animation and transition off; content is visible without them.
