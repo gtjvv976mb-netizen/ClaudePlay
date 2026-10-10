@@ -924,7 +924,7 @@
     const where = S.mode === 'shared' ? 'Connected to the shared gallery'
       : S.hasDb ? 'View-only on the shared gallery; your activity stays on this device'
       : 'Running on this device only: your key, games and scores stay in this browser';
-    return '<footer class="foot"><div class="foot-main"><b class="foot-mark">CLAUDEPLAY</b>'
+    return '<footer class="foot"><div class="foot-main"><b class="foot-mark">ClaudePlay</b>'
       + '<p>An unofficial fan project on Solana. Not affiliated with or endorsed by Anthropic, Google or Google Labs Playground. Claude is a trademark of Anthropic.</p>'
       + '<p>' + (MAINNET ? 'Collects and tips are real SOL on Solana mainnet, paid from your own wallet app straight to creators. ClaudePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.'
         : CHAIN ? 'Devnet: collects and tips are real Solana devnet transactions paid with free test SOL, so no real funds move. GPLY is a working name and is not for sale.'
@@ -962,7 +962,6 @@
 
   /* ---------- explore ---------- */
   function cartHTML(g) {
-    const players = g.players ? g.players.size : 0;
     const tags = [];
     if (g.starter) tags.push('<span class="chip">Starter kit</span>');
     if (g.parent) tags.push('<span class="chip accent">Remix</span>');
@@ -971,14 +970,13 @@
     if (g.local) tags.push('<span class="chip">This device</span>');
     if (g.ratingCount) tags.push('<span class="chip" title="Rated ' + g.rating.toFixed(1) + ' out of 5 by ' + plural(g.ratingCount, 'player') + '"><span aria-hidden="true">★</span> ' + g.rating.toFixed(1) + '<span class="sr"> out of 5 stars</span> (' + fmtInt(g.ratingCount) + ')</span>');
     const price = g.starter ? 'Free' : g.price ? fmtSOL(g.price) + ' SOL' : 'Free collect';
-    return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '">'
-      + '<div class="cart-body"><div class="cart-label">'
-      + '<img src="' + K.cover(g) + '" alt="" width="480" height="300">'
-      + '<div class="cart-title">' + esc(g.title) + '</div>'
-      + '<div class="cart-by"><span>by <b>' + esc(nameOf(g.creator)) + '</b></span><span>' + esc(price) + '</span></div>'
-      + '<div class="cart-tags">' + tags.join('') + '</div>'
-      + '<div class="cart-serial"><span>' + serial(g.hash) + '</span><span>' + plural(players, 'player') + '</span></div>'
-      + '</div><div class="cart-grip"></div></div></a>';
+    // Each sticker sits a few degrees off straight, the same way every time for the same game.
+    const tilt = ((parseInt(String(g.hash || g.gid).slice(-2), 16) || 0) % 7 - 3) * 0.6;
+    return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '" style="--r:' + tilt.toFixed(1) + 'deg">'
+      + '<span class="sticker"><img src="' + K.cover(g) + '" alt="" width="480" height="300"></span>'
+      + '<span class="cart-title">' + esc(g.title) + '</span>'
+      + '<span class="cart-by"><span>by <b>' + esc(nameOf(g.creator)) + '</b></span><span>' + esc(price) + '</span></span>'
+      + '<span class="cart-tags">' + tags.join('') + '</span></a>';
   }
   const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['rated', 'Top rated'], ['boosted', 'Boosted']];
   /* Ranks by rating, pulled toward 3 stars until a game has a few ratings, so one 5-star vote does not top the list. */
@@ -999,7 +997,7 @@
     const totalPlayers = w ? new Set([].concat(...[...w.games.values()].map((g) => [...g.players]))).size : 0;
     const sigs = w ? w.log.filter((r) => r.ok).length : 0;
     return '<section class="page-head"><div class="stack">'
-      + '<p class="eyebrow">Arcade</p><h1>Play any game free</h1>'
+      + '<h1>Play any game free</h1>'
       + '<p class="lede">Open a cartridge and play in your browser. Your best runs are signed to the leaderboard. Slower game speed, sound and contrast are in <button class="linkish" type="button" data-act="settings">Accessibility settings</button>.</p></div>'
       + '<div class="facts"><div class="fact"><b>' + fmtInt(w ? [...w.games.values()].filter((g) => !g.starter).length : 0) + '</b><span>community cartridges</span></div><div class="fact"><b>' + fmtInt(totalPlayers) + '</b><span>' + (totalPlayers === 1 ? 'unique player' : 'unique players') + '</span></div><div class="fact"><b>' + fmtInt(sigs) + '</b><span>signed transactions</span></div></div>'
       + '</section>'
@@ -1066,35 +1064,33 @@
     const solOf = (bps) => (bps / 10000).toFixed(2);
     const st = S.studio || {};
     const dim = st.dim || '2d';
-    return '<section class="hero hero-home" aria-labelledby="hero-title"><canvas class="hero-3d" id="hero-3d" aria-hidden="true"></canvas><div class="hero-copy">'
+    const peeks = S.starters.filter((x) => x.gid !== 'kit-neon-dash').slice(0, 3);
+    return '<section class="hero hero-home pack" aria-labelledby="hero-title"><div class="hero-copy">'
       + '<h1 class="hero-title" id="hero-title"><span>Make it.</span> <span>Play it.</span> <span class="hl">Own it.</span></h1>'
-      + '<p class="lede">Describe a game in one sentence and Claude builds it, ready to play on any phone. Share it with a link, and earn when people play, collect or remix it.</p>'
+      + '<p class="lede">Describe a game in one sentence and Claude builds it. Share the link, and earn when people collect or remix it.</p>'
       + '<form class="maker" data-form="home-build"><label class="sr" for="home-prompt">Describe your game</label>'
       + '<div class="maker-box"><textarea id="home-prompt" rows="2" maxlength="600" placeholder="A cat on a skateboard dodging gas fees across neon rooftops">' + esc(st.versions && st.versions.length ? '' : (st.prompt || '')) + '</textarea>'
       + '<div class="maker-bar"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + (dim === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
       + '<button class="btn primary" type="submit">' + I.spark + (aiReady() ? ' Build it' : ' Open the studio') + '</button></div></div>'
       + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or start from a crypto idea</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form>'
-      + '<div class="row cta"><a class="btn" href="#explore" data-nav="explore">' + I.play + ' Play a game</a><a class="btn ghost" href="#create" data-act="home-kit">Tune a kit, no AI</a></div>'
-      + '<p class="fine">Free to play and make, with no sign-up or wallet needed. ' + (MAINNET ? 'Collects and tips are paid in real SOL from your own wallet.' : 'Preview on Solana devnet: balances are test tokens and nothing is for sale.') + '</p></div>'
-      + '<div class="stage3d"><figure class="console" id="home-console"><div class="console-bar"><span class="led" aria-hidden="true"></span><span>Now playing</span><span class="serial">' + serial(hero ? hero.hash : '') + '</span></div>'
+      + '<p class="fine"><a href="#explore" data-nav="explore">Play a game first</a>, or <a href="#create" data-act="home-kit">tune a kit with no AI</a>. Free, with no sign-up.</p></div>'
+      + '<div class="stage3d">' + peeks.map((x, i) => '<span class="sticker peek peek-' + 'abc'[i] + '" aria-hidden="true"><img src="' + K.cover(Object.assign({ creator: C.STARTER }, x)) + '" alt="" width="480" height="300"></span>').join('')
+      + '<figure class="console" id="home-console">'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
       + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure>'
-      + '<img class="mascot" id="home-mascot" src="' + MASCOT + '" alt="" width="348" height="381" decoding="async"></div></section>'
+      + '<img class="mascot" id="home-mascot" src="' + MASCOT + '" alt="" width="370" height="403" decoding="async"></div></section>'
 
-      + '<section class="section" aria-labelledby="h-carts"><div class="section-head"><h2 id="h-carts">Pick a cartridge</h2><a href="#explore" data-nav="explore">See the whole arcade</a></div>'
-      + '<p class="muted">Every game here is free to play and free to remix.</p><div class="shelf" id="home-shelf">' + homeShelf() + '</div></section>'
+      + '<section class="section" aria-labelledby="h-carts"><div class="section-head"><h2 id="h-carts">Peel one off and play</h2><a href="#explore" data-nav="explore">See every game</a></div>'
+      + '<div class="sheet"><div class="shelf" id="home-shelf">' + homeShelf() + '</div></div></section>'
 
-      + '<section class="section" aria-labelledby="h-ways"><div class="section-head"><h2 id="h-ways">Three ways in</h2></div><div class="ways">'
-      + '<article class="way"><p class="eyebrow">Players</p><h3>Play</h3><p>Play any game free. Your best scores are signed to a public leaderboard, and top players share the weekly reward pool.</p><a class="btn" href="#explore" data-nav="explore">Browse the arcade</a></article>'
-      + '<article class="way"><p class="eyebrow">Creators</p><h3>Make</h3><p>Tune one of five game kits in a minute, or describe a new game to the AI studio. Publishing is free, and the result is one file you own.</p><a class="btn" href="#create" data-nav="create">Open the maker</a></article>'
-      + '<article class="way"><p class="eyebrow">Brands, communities, schools</p><h3>Bring it to your crowd</h3><p>Branded mini-games, playable quests with checkable winners, and game-making workshops.</p><a class="btn" href="#business" data-nav="business">ClaudePlay for business</a></article>'
-      + '</div></section>'
-
-      + '<section class="section" aria-labelledby="h-steps"><div class="section-head"><h2 id="h-steps">From idea to published game</h2></div><ol class="steps">'
-      + '<li><b>Start from a kit or a sentence</b><p>Pick Runner, Flapper, Shooter, Breaker or Dodger and tune speed, gravity and colors. Or describe a new game to the AI studio.</p></li>'
-      + '<li><b>Play-test as you go</b><p>The preview restarts with every change. Each game works with touch, mouse and keyboard.</p></li>'
-      + '<li><b>Publish and sign</b><p>Your wallet signs the game’s fingerprint, so anyone can check it was not changed. You set the collect price and the number of editions.</p></li>'
-      + '<li><b>Earn as it spreads</b><p>New players bring you Sparks, collectors pay you SOL, and every remix of your game pays you a share.</p></li>'
+      + '<section class="section flow" aria-labelledby="h-steps"><div class="flow-intro"><h2 class="h2" id="h-steps">From one sentence to a game your friends can play</h2>'
+      + '<p class="lede">Every game is free to play and free to remix, and the file is yours to keep.</p><a class="btn primary" href="#create" data-nav="create">' + I.spark + ' Open the maker</a></div>'
+      + '<ol class="flow-list">'
+      + '<li><b>Describe</b><p>Tell the AI studio what to build, in 2D or 3D, with your own pictures if you like. Or pick Runner, Flapper, Shooter, Breaker or Dodger and tune it by hand.</p></li>'
+      + '<li><b>Play-test</b><p>The preview restarts with every change. Each game works with touch, mouse and keyboard, and with a friend in the same room.</p></li>'
+      + '<li><b>Publish</b><p>Your wallet signs the game’s fingerprint, so anyone can check it was not changed. You set the collect price and the number of editions.</p></li>'
+      + '<li><b>Earn</b><p>New players bring you Sparks, collectors pay you SOL, and every remix of your game pays you a share.</p></li>'
+      + '<li><b>For crowds</b><p>Running a brand, a community or a class? <a href="#business" data-nav="business">ClaudePlay for business</a> makes branded games with leaderboards you can check.</p></li>'
       + '</ol></section>'
 
       + '<section class="section" aria-labelledby="h-earn"><div class="section-head"><h2 id="h-earn">How creators earn</h2><a href="#economy" data-nav="economy">Full economy</a></div><div class="earn">'
@@ -1110,13 +1106,13 @@
       + '<li><b>Sparks</b><span>' + R.SPARKS_PER_PLAYER + ' Sparks for each new player of your game, up to ' + R.SPARKS_PLAYER_CAP + ' players per game.</span></li>'
       + '</ul></div><p class="fine">' + (MAINNET ? 'Collects, tips and royalties are paid in real SOL straight to your wallet. GPLY rewards are points with no cash value.' : 'On devnet these are test balances. Real payouts start at mainnet beta, after a security audit.') + '</p></section>'
 
-      + '<section class="section" aria-labelledby="h-compare"><div class="section-head"><h2 id="h-compare">ClaudePlay and Google Labs Playground</h2></div>'
-      + '<p class="muted">Google Labs launched Playground on October 7, 2026. Here is how the two compare.</p>'
+      + '<section class="section" aria-labelledby="h-compare"><div class="section-head"><h2 id="h-compare">ClaudePlay and Google Labs Playground</h2>'
+      + '<p class="muted">Google Labs launched Playground on October 7, 2026. Here is how the two compare.</p></div>'
       + '<div class="table-scroll">' + specTable() + '</div>'
       + '<p class="fine">Playground details as reported in October 2026: ' + PLAYGROUND_SOURCES.map(([n, u]) => '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(n) + '</a>').join(', ') + '.</p></section>'
 
-      + '<section class="section access" aria-labelledby="h-access"><div class="section-head"><h2 id="h-access">Built for every player</h2><button class="btn" type="button" data-act="settings">Open accessibility settings</button></div>'
-      + '<p class="muted">These settings work across the site and inside every game.</p><ul class="feature-grid">'
+      + '<section class="section access" aria-labelledby="h-access"><div class="access-intro"><h2 class="h2" id="h-access">Built for every player</h2>'
+      + '<p class="muted">These settings work across the site and inside every game.</p><button class="btn" type="button" data-act="settings">Open accessibility settings</button></div><ul class="feature-grid">'
       + '<li><b>Assist mode</b><span>Slow any game to 75% or 50% speed. Assisted runs count as personal results and stay off ranked leaderboards.</span></li>'
       + '<li><b>One-button friendly</b><span>Runner and Flapper play with a single key or tap. Every kit works with keyboard, touch or mouse.</span></li>'
       + '<li><b>Calm motion</b><span>Turn off screen shake and page animations, or follow your device’s reduced-motion setting.</span></li>'
@@ -1125,9 +1121,9 @@
       + '<li><b>Light on data</b><span>One small page with no tracking scripts. Games are single files you can download and play offline.</span></li>'
       + '</ul></section>'
 
-      + '<section class="section" aria-labelledby="h-road"><div class="section-head"><h2 id="h-road">Roadmap</h2></div>'
-      + '<p class="muted">Fun first, money second, the token last. Each stage opens when the checkpoint before it is met, not on a date.</p><ol class="road">'
-      + ROADMAP.map((s, i) => '<li class="stage' + (s.now ? ' now' : '') + '"><div class="stage-top"><span class="stage-n">Stage ' + (i + 1) + '</span>' + (s.now ? '<span class="chip accent">We are here</span>' : '') + '</div><b>' + esc(s.name) + '</b><p>' + esc(s.what) + '</p>' + (s.gate ? '<p class="gate"><span>Checkpoint</span>' + esc(s.gate) + '</p>' : '') + '</li>').join('')
+      + '<section class="section" aria-labelledby="h-road"><div class="section-head"><h2 id="h-road">Roadmap</h2>'
+      + '<p class="muted">Fun first, money second, the token last. Each stage opens when the checkpoint before it is met, not on a date.</p></div><ol class="road">'
+      + ROADMAP.map((s) => '<li class="stage' + (s.now ? ' now' : '') + '"><div class="stage-top">' + (s.now ? '<span class="chip accent">We are here</span>' : '') + '</div><b>' + esc(s.name) + '</b><p>' + esc(s.what) + '</p>' + (s.gate ? '<p class="gate"><span>Checkpoint</span>' + esc(s.gate) + '</p>' : '') + '</li>').join('')
       + '</ol></section>'
 
       + '<section class="section" aria-labelledby="h-faq"><div class="section-head"><h2 id="h-faq">Questions</h2></div><div class="faq">'
@@ -1137,7 +1133,6 @@
   function mountHome() {
     unmountPlayer('home-screen');
     $('#view').innerHTML = homeHTML() + footHTML();
-    heroScene($('#hero-3d'));
     wakeMascot($('#home-mascot'));
     revealShelf($('#home-shelf'));
     const host = $('#home-screen');
@@ -1149,10 +1144,7 @@
       onMessage: (d, p) => { if (d.t === 'over') onGameOver(hero.gid, d, p).catch((e) => toast(e.message, 'bad')); },
     });
   }
-  /* The front page's backdrop: cartridges floating in 3D, drawn with a small perspective projection on a
-     2D canvas (no WebGL needed). Colors come from the theme tokens, so every theme recolors it. It pauses
-     off screen and in a hidden tab, and draws one still frame when calm motion is on. */
-  // Cart, the mascot, sits on the console. The page carries a still; on the website (SITE.mascot, set by
+  // Cart, the mascot, is a sticker on the console. The page carries a still; on the website (SITE.mascot, set by
   // build.mjs) the waving loop, a separate file next to the page, replaces it once loaded, unless calm motion is on.
   const MASCOT = 'MASCOT_STILL';
   function wakeMascot(img) {
@@ -1161,116 +1153,7 @@
     anim.onload = () => { if (img.isConnected && !calmNow()) img.src = anim.src; };
     anim.src = SITE.mascot;
   }
-  function heroScene(canvas) {
-    const ctx = canvas.getContext && canvas.getContext('2d');
-    if (!ctx) return;
-    let pal, palAt = -1;
-    const readPal = () => {
-      const css = getComputedStyle(document.documentElement), tok = (n) => css.getPropertyValue(n).trim() || '#888';
-      pal = { body: tok('--shell'), side: tok('--shell-dark'), line: tok('--line'), labels: [tok('--accent'), tok('--gold'), tok('--seg-3'), tok('--bad'), tok('--good')] };
-    };
-    readPal();
-    let seed = 7;
-    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    const carts = Array.from({ length: 30 }, (_, i) => ({
-      x: (rnd() - 0.5) * 30, y: (rnd() - 0.5) * 13, z: 9 + rnd() * 16,
-      rx: rnd() * 6.28, ry: rnd() * 6.28, vx: (rnd() - 0.5) * 0.5, vy: 0.25 + rnd() * 0.45, drift: 0.08 + rnd() * 0.12,
-      label: i % 5, s: 0.8 + rnd() * 0.5,
-    }));
-    // A cartridge: a box 1.0 wide, 1.2 tall, 0.26 deep, with a label on the front face.
-    const W = 0.5, H = 0.6, D = 0.13;
-    const V = [[-W, -H, -D], [W, -H, -D], [W, H, -D], [-W, H, -D], [-W, -H, D], [W, -H, D], [W, H, D], [-W, H, D]];
-    const F = [[0, 1, 2, 3, 'front'], [5, 4, 7, 6, 'back'], [4, 0, 3, 7, 'side'], [1, 5, 6, 2, 'side'], [4, 5, 1, 0, 'side'], [3, 2, 6, 7, 'side']];
-    const LIGHT = (() => { const l = [-0.4, -0.6, -0.7], m = Math.hypot(...l); return l.map((v) => v / m); })();
-    let w = 0, h = 0, raf = 0, last = 0, t = 0, px = 0, py = 0, visible = true;
-    function size() {
-      const r = canvas.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
-      w = r.width; h = r.height; canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    const shade = (hex, k) => {
-      const m = /^#?([0-9a-f]{6})$/i.exec(hex); if (!m) return hex;
-      const n = parseInt(m[1], 16), f = (c) => Math.max(0, Math.min(255, Math.round(c * k)));
-      return 'rgb(' + f(n >> 16) + ',' + f((n >> 8) & 255) + ',' + f(n & 255) + ')';
-    };
-    function draw() {
-      if (Math.floor(t) !== palAt) { palAt = Math.floor(t); readPal(); } // follows theme changes
-      ctx.clearRect(0, 0, w, h);
-      const focal = Math.min(w, 900) * 0.9, cx = w * (w > 900 ? 0.62 : 0.5) + px * 18, cy = h * 0.5 + py * 12;
-      const polys = [];
-      for (const c of carts) {
-        const ax = c.rx + t * c.vx, ay = c.ry + t * c.vy, sx = Math.sin(ax), cxr = Math.cos(ax), sy = Math.sin(ay), cyr = Math.cos(ay);
-        const yy = c.y + Math.sin(t * c.drift + c.x) * 0.6;
-        const pts = V.map(([x, y, z]) => {
-          x *= c.s; y *= c.s; z *= c.s;
-          const x1 = x * cyr + z * sy, z1 = -x * sy + z * cyr;
-          const y2 = y * cxr - z1 * sx, z2 = y * sx + z1 * cxr;
-          return [x1 + c.x + px * 0.4, y2 + yy + py * 0.3, z2 + c.z];
-        });
-        for (const [a, b, cc, d, kind] of F) {
-          const A = pts[a], B = pts[b], Cc = pts[cc];
-          const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [Cc[0] - A[0], Cc[1] - A[1], Cc[2] - A[2]];
-          const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-          const mid = [(A[0] + Cc[0]) / 2, (A[1] + Cc[1]) / 2, (A[2] + Cc[2]) / 2];
-          if (n[0] * mid[0] + n[1] * mid[1] + n[2] * mid[2] <= 0) continue; // facing away
-          const nm = Math.hypot(n[0], n[1], n[2]) || 1, lit = 0.72 + 0.38 * Math.max(0, -(n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / nm);
-          const quad = [a, b, cc, d].map((i) => pts[i]);
-          if (quad.some((p) => p[2] < 0.5)) continue;
-          polys.push({ z: mid[2], kind, lit, label: pal.labels[c.label], quad, fog: Math.min(0.9, Math.max(0.15, 1.5 - mid[2] / 20)) });
-        }
-      }
-      polys.sort((p, q) => q.z - p.z);
-      const proj = (p) => [cx + (p[0] / p[2]) * focal, cy + (p[1] / p[2]) * focal];
-      for (const p of polys) {
-        const q = p.quad.map(proj);
-        ctx.globalAlpha = p.fog;
-        ctx.beginPath(); q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
-        ctx.fillStyle = shade(p.kind === 'side' ? pal.side : pal.body, p.lit); ctx.fill();
-        ctx.lineWidth = 1; ctx.strokeStyle = pal.line; ctx.stroke();
-        if (p.kind === 'front') {
-          // The label: the top two thirds of the face, inset.
-          const lerp = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
-          const [tl, tr, br, bl] = [q[0], q[1], q[2], q[3]];
-          const L = (u, v) => lerp(lerp(tl, tr, u), lerp(bl, br, u), v);
-          const lab = [L(0.14, 0.1), L(0.86, 0.1), L(0.86, 0.6), L(0.14, 0.6)];
-          ctx.beginPath(); lab.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
-          ctx.fillStyle = shade(p.label, p.lit); ctx.fill();
-        }
-      }
-      ctx.globalAlpha = 1;
-    }
-    function frame(now) {
-      if (!canvas.isConnected) return;
-      raf = 0;
-      if (!visible || !w || document.hidden || calmNow()) return;
-      t += Math.min(0.05, (now - (last || now)) / 1000); last = now;
-      draw();
-      raf = requestAnimationFrame(frame);
-    }
-    const wake = () => { if (!raf && canvas.isConnected && canvas.offsetWidth) { last = 0; draw(); if (!calmNow()) raf = requestAnimationFrame(frame); } };
-    size(); draw();
-    if ('IntersectionObserver' in window) new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible) wake(); }).observe(canvas);
-    heroScene.cur = { resize: () => { size(); draw(); wake(); }, wake };
-    if (!heroScene.bound) {
-      heroScene.bound = true;
-      const live = () => heroScene.cur && $('#hero-3d') ? heroScene.cur : null;
-      window.addEventListener('resize', () => { const c = live(); if (c) c.resize(); });
-      document.addEventListener('visibilitychange', () => { const c = live(); if (c && !document.hidden) c.wake(); });
-    }
-    const hero = canvas.parentElement;
-    if (hero && window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
-      hero.addEventListener('pointermove', (e) => {
-        if (calmNow()) return;
-        const r = hero.getBoundingClientRect();
-        px = (e.clientX - r.left) / r.width - 0.5; py = (e.clientY - r.top) / r.height - 0.5;
-        const con = $('#home-console');
-        if (con) con.style.setProperty('--tilt-x', (-py * 5).toFixed(2) + 'deg'), con.style.setProperty('--tilt-y', (px * 7 - 9).toFixed(2) + 'deg');
-      });
-      hero.addEventListener('pointerleave', () => { px = py = 0; const con = $('#home-console'); if (con) { con.style.removeProperty('--tilt-x'); con.style.removeProperty('--tilt-y'); } });
-    }
-    wake();
-  }
-  // Cartridges on a shelf slide up in turn the first time they scroll into view.
+  // Stickers on a sheet slap down in turn the first time they scroll into view.
   function revealShelf(root) {
     if (!root || calmNow() || !('IntersectionObserver' in window)) return;
     const io = new IntersectionObserver((list) => list.forEach((e) => {
@@ -1300,11 +1183,11 @@
   function bizHTML() {
     const contact = contactHTML();
     return '<section class="hero biz" aria-labelledby="biz-title"><div class="hero-copy">'
-      + '<p class="eyebrow">ClaudePlay for business</p><h1 class="page-title" id="biz-title">Games your audience plays from a link</h1>'
+      + '<h1 class="page-title" id="biz-title">Games your audience plays from a link</h1>'
       + '<p class="lede">We build branded mini-games for brands, crypto communities and classrooms. Players need no app and no sign-up, and you get a leaderboard you can check.</p>'
       + '<div class="row cta"><button class="btn primary big" type="button" data-act="brand-demo">Make a branded demo</button>' + contact + '</div>'
       + '<p class="fine">The demo takes about a minute: pick your colors, rename the game and play it.</p></div>'
-      + '<figure class="console"><div class="console-bar"><span class="led" aria-hidden="true"></span><span>Example build</span><span class="serial">Your colors here</span></div>'
+      + '<figure class="console">'
       + '<div class="screen" id="biz-screen"></div>'
       + '<figcaption class="console-cap"><span><b>' + esc(BIZ_DEMO.title) + '</b> · A branded runner for a made-up coffee shop, in its own colors.</span></figcaption></figure></section>'
 
@@ -1595,7 +1478,7 @@
   }
   function mountStudio() {
     if (!S.studio) loadStudio();
-    $('#view').innerHTML = '<div class="gp-head"><p class="eyebrow">Create</p><h1>Make a cartridge</h1></div>'
+    $('#view').innerHTML = '<div class="gp-head"><h1>Make a cartridge</h1></div>'
       + '<div class="studio"><section class="st-left stack" id="st-left">' + studioLeft() + '</section>'
       + '<section class="st-right" id="st-right"><div class="screen" id="st-screen"></div><div class="toolbar" id="st-tools">' + studioTools() + '</div><div id="st-status">' + studioStatus() + '</div></section></div>' + footHTML();
     loadPreview();
@@ -1782,7 +1665,7 @@
   function viewWallet() {
     const inj = injectedProvider();
     if (!S.wallet) {
-      return '<div class="gp-head"><p class="eyebrow">Wallet</p><h1>Get a wallet in one click</h1></div>'
+      return '<div class="gp-head"><h1>Get a wallet in one click</h1></div>'
         + '<div class="grid2"><div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">ClaudePlay wallet</h2><p>A Solana keypair made in your browser. No extension, no seed phrase to write down first, and it works on phones.</p><p class="muted" style="font-size:0.875rem">Production uses a passkey or social-login embedded wallet with gasless transactions. This prototype keeps the devnet key in this browser so you can export it any time.</p><div class="row"><button class="btn primary" type="button" data-act="create-wallet">Create wallet</button><button class="btn ghost" type="button" data-act="import-wallet">Import a key</button></div></div>'
         + '<div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">Bring your own</h2><p>Connect Phantom, Solflare or Backpack. You sign once to approve a 7-day session key, so games never interrupt you with pop-ups.</p>'
         + (inj ? '<div class="row"><button class="btn" type="button" data-act="connect-injected">Connect ' + esc(inj.name) + '</button></div>' : '<p class="muted" style="font-size:0.875rem">No wallet extension can reach this page. Embedded pages often hide extensions, so open ClaudePlay in its own tab to use one.</p>')
@@ -1796,7 +1679,7 @@
     const games = S.world ? [...S.world.games.values()].filter((g) => g.creator === S.wallet.from) : [];
     const owned = S.world ? [...S.world.games.values()].filter((g) => g.collects.some((c) => c.pk === S.wallet.from)) : [];
     const recent = S.world ? S.world.log.filter((r) => r.ok && (r.tx.from === S.wallet.from || r.moves.some((m) => m.to === S.wallet.from))).slice(-12).reverse() : [];
-    return '<div class="gp-head"><p class="eyebrow">Wallet</p><h1>' + esc(nameOf(S.wallet.from)) + '</h1></div>'
+    return '<div class="gp-head"><h1>' + esc(nameOf(S.wallet.from)) + '</h1></div>'
       + '<div class="grid3">'
       + '<div class="panel balance"><span class="unit">' + UNIT + '</span><span class="amt">' + fmtSOL(solOf(w)) + '</span><span class="muted" style="font-size:0.875rem">For collects and tips. Earned ' + fmtSOL(w.earnedSol) + ' SOL so far.</span>' + (MAINNET ? '<p class="muted" style="font-size:0.875rem">Real SOL on Solana mainnet, paid straight from your wallet app.</p>' : '<div class="row"><button class="btn small" type="button" data-act="airdrop"' + (now < nextDrop ? ' disabled' : '') + '>' + (now < nextDrop ? 'Faucet in ' + Math.ceil((nextDrop - now) / 3600000) + 'h' : 'Get ' + dropAmt / C.LAMPORTS + ' devSOL') + '</button></div>') + '</div>'
       + '<div class="panel balance"><span class="unit">Sparks</span><span class="amt">' + fmtInt(w.sparks) + '</span><span class="muted" style="font-size:0.875rem">Pay for AI builds. Not transferable. ' + fmtInt(w.sparksEarned) + ' earned from players.</span><div class="row"><button class="btn small" type="button" data-act="claim"' + (claimed ? ' disabled' : '') + '>' + (claimed ? 'Claimed this week' : 'Claim ' + R.WEEKLY_SPARKS + ' free') + '</button>' + (CHAIN ? '' : '<button class="btn small ghost" type="button" data-act="buy-sparks">Buy ' + R.SPARK_PACK.sparks + ' for ' + R.SPARK_PACK.lamports / C.LAMPORTS + ' SOL</button>') + '</div></div>'
@@ -1875,7 +1758,7 @@
     const all = w ? w.log.slice().reverse() : [];
     const rows = all.filter((r) => inFilter(r, S.ui.ledger)).slice(0, 200);
     const ok = all.filter((r) => r.ok).length;
-    return '<div class="gp-head"><p class="eyebrow">Ledger</p><h1>Every move, signed</h1><p class="muted" style="max-width:62ch">ClaudePlay replays every signed transaction in order and recomputes all balances, so nothing here depends on trusting the server. Tap a row to see the exact bytes that were signed.</p></div>'
+    return '<div class="gp-head"><h1>Every move, signed</h1><p class="muted" style="max-width:62ch">ClaudePlay replays every signed transaction in order and recomputes all balances, so nothing here depends on trusting the server. Tap a row to see the exact bytes that were signed.</p></div>'
       + '<div class="facts" style="margin-bottom:16px"><div class="fact"><b>' + fmtInt(all.length) + '</b><span>transactions</span></div><div class="fact"><b>' + fmtInt(ok) + '</b><span>verified</span></div><div class="fact"><b>' + fmtInt(all.length - ok) + '</b><span>rejected by the rules</span></div><div class="fact"><b>' + fmtInt(w ? w.wallets.size : 0) + '</b><span>wallets</span></div></div>'
       + '<div class="row" role="group" aria-label="Filter" style="margin-bottom:12px">' + FILTERS.map(([k, l]) => '<button class="chip" type="button" data-act="ledger-filter" data-f="' + k + '" aria-pressed="' + (S.ui.ledger === k) + '">' + l + '</button>').join('') + '</div>'
       + (rows.length ? ledgerTable(rows) : '<div class="empty"><h2>Nothing here yet</h2><p>Transactions appear as soon as anyone signs one.</p></div>') + footHTML();
@@ -1918,7 +1801,7 @@
     const circulating = w.supply.emitted - w.supply.burned;
     const last = w.epochs[w.epochs.length - 1];
     const rows = pending.rewards.slice(0, 12);
-    return '<div class="gp-head"><p class="eyebrow">Economy</p><h1>Rewards paid from real activity</h1><p class="muted" style="max-width:66ch">Players and collectors pay creators directly. A 5% fee and Spark packs fill the treasury, which pays for everyone’s free Sparks and sends 40% of fees back to creators each epoch. GPLY is emitted on a fixed, decaying schedule and burned when people boost games or convert it to Sparks.</p></div>'
+    return '<div class="gp-head"><h1>Rewards paid from real activity</h1><p class="muted" style="max-width:66ch">Players and collectors pay creators directly. A 5% fee and Spark packs fill the treasury, which pays for everyone’s free Sparks and sends 40% of fees back to creators each epoch. GPLY is emitted on a fixed, decaying schedule and burned when people boost games or convert it to Sparks.</p></div>'
       + '<div class="facts" style="margin-bottom:20px"><div class="fact"><b>' + pending.n + '</b><span>next epoch</span></div><div class="fact"><b>' + fmtInt(pending.emission) + '</b><span>GPLY it emits</span></div><div class="fact"><b>' + fmtSOL(w.treasury.sol) + '</b><span>SOL in treasury</span></div><div class="fact"><b>' + fmtInt(w.supply.emitted) + '</b><span>GPLY emitted</span></div><div class="fact"><b>' + fmtInt(w.supply.burned) + '</b><span>GPLY burned</span></div><div class="fact"><b>' + fmtInt(circulating) + '</b><span>GPLY circulating of ' + fmtInt(R.MAX_SUPPLY) + ' max</span></div></div>'
       + '<div class="grid2"><div class="panel stack"><div class="split"><p class="eyebrow">Epoch ' + pending.n + ' preview</p><span class="muted" style="font-size:0.8125rem">activity since ' + (last ? when(last.to) : 'launch') + '</span></div>'
       + (rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Wallet</th><th>Role</th><th class="r">GPLY</th><th class="r">SOL</th></tr></thead><tbody>' + rows.map((r) => '<tr><td>' + esc(nameOf(r.to)) + (S.wallet && r.to === S.wallet.from ? ' <span class="chip accent">you</span>' : '') + '</td><td>' + esc(r.roles.join(' + ')) + '</td><td class="n">' + fmtInt(r.park) + '</td><td class="n">' + fmtSOL(r.sol) + '</td></tr>').join('') + '</tbody></table></div>'

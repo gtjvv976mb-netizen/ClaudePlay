@@ -1,0 +1,43 @@
+# Design
+
+ClaudePlay looks like a sticker pack. The page is the liner sheet, games are die-cut stickers, and the front page opens on a retail header card with a hang tab. Tokens live in `src/index.html`; every colour on the page comes from them.
+
+## World
+
+- **Liner sheet** (`--bg`, `--sheet`): a cool grey-white ground in light mode, near-black charcoal in dark mode. The front page's shelf sits on a slightly lighter sheet (`.sheet`).
+- **Pack colour** (`--pack`, `--pack-ink`): one chartreuse that owns whole fields (the header card, primary buttons, the ClaudePlay column of the comparison, the "you" share of a split). Text on it is always `--pack-ink`. In the contrast theme it turns yellow on black.
+- **Die-cut white** (`--die`, `--die-ink`): the thick border of every sticker, the console, the prompt label and the "Own it." label. It stays light in dark mode, like a real sticker, so text on it uses `--die-ink`.
+- **Accent** (`--accent`): deep green in light mode, chartreuse in dark mode. Used for focus rings, link underlines and small status chips, never for large fills.
+
+## Type
+
+- **Dela Gothic One** for headings, sticker titles and numbers. One weight; always `font-weight: 400`. Sentence case, never uppercase.
+- **Atkinson Hyperlegible** for everything else. Labels are bold body text, not mono and not uppercase.
+- System mono only for real data: hashes, addresses, signed bytes.
+
+## Shape and depth
+
+- Radii: `--r-s` 10px (inputs), `--r-m` 16px (panels, tables), `--r-l` 26px (the pack, sheets, the earn panel). Controls are pills (999px). Stickers use 20px outside, 14px on the art.
+- Shadows are soft lift shadows tinted from `--shadow`. No hard offset shadows, no glows, no black outlines.
+- Stickers sit a few degrees off straight (`--r`, from the game's hash in `cartHTML()`), and straighten when pointed at.
+
+## Motion
+
+- **Slap**: stickers, the console, Cart and toasts land with a short overshoot (`@keyframes slap`).
+- **Peel**: on hover or focus a sticker lifts and its bottom-right corner peels back, showing the sticker's back and the sheet under it (`.sticker::after`).
+- Calm motion and `prefers-reduced-motion` switch every animation and transition off; content is visible without them.
+
+## Components
+
+- `.pack`: the front page header card with the hang tab (`::before`). Buttons, chips and links inside it switch to pack ink.
+- `.sticker`: a die-cut image. `.peek` stickers tuck behind the console on wide screens and hide on phones.
+- `.mascot`: Cart, with the white die-cut border baked into `src/assets/mascot*.webp`.
+- `.console`: the playable game, set into a large white sticker.
+- `.flow-list`, `.earn-list`, `.ways`: label-and-text rows, used instead of rows of equal cards.
+- `.road`: the roadmap as stops on a line, the current stop filled with the pack colour.
+
+## Rules
+
+- No eyebrow labels above page headings, no numbered steps, no rows of three equal cards.
+- No em dashes in copy.
+- Every theme (light, dark, contrast) must pass the e2e contrast audit, and nothing may scroll sideways at 390px with the largest text.
