@@ -1,8 +1,9 @@
-import asyncio, json, sys, os
+import asyncio, json, sys, os, subprocess, time, urllib.request
 from playwright.async_api import async_playwright
 
 BASE = 'http://127.0.0.1:8765/local.html'
 SITE = 'http://127.0.0.1:8765/site/index.html'
+AI_SITE = 'http://127.0.0.1:8766/'
 OUT = sys.argv[1] if len(sys.argv) > 1 else '/tmp/shots'
 os.makedirs(OUT, exist_ok=True)
 MOCK = open(os.path.join(os.path.dirname(__file__), 'mock_claude.js')).read()
@@ -414,6 +415,47 @@ async def scenario_site(browser):
     check(not real, 'no console/page errors on the self-hosted site ' + str(real[:5]))
     await ctx.close()
 
+async def scenario_server(browser):
+    # The plain website served by server/server.mjs (with a fake Claude): anyone can describe a crypto game.
+    proc = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), '8766'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        for _ in range(50):
+            try: urllib.request.urlopen(AI_SITE + 'api/status', timeout=1); break
+            except Exception: time.sleep(0.1)
+        ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page.goto(AI_SITE)
+        await page.wait_for_selector('#h-crypto', timeout=15000)
+        n = await page.locator('button[data-act="home-idea"]').count()
+        check(n == 6, f'front page offers crypto game ideas ({n})')
+        await page.locator('button[data-act="home-idea"]', has_text='Block Miner').click()
+        await page.wait_for_selector('#st-prompt', timeout=8000)
+        prompt = await page.input_value('#st-prompt')
+        check(prompt.startswith('Block Miner:'), 'idea fills the AI studio prompt: ' + prompt[:40])
+        seg = await page.locator('button[data-act="studio-mode"][aria-pressed="true"]').inner_text()
+        check(seg.startswith('Describe'), 'AI studio is on for a website with a GamePlay server')
+        check(await page.locator('button[data-act="idea"][data-idea^="Rug Pull"]').count() == 1, 'studio lists crypto ideas')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_selector('.toast:has-text("Built")', timeout=20000)
+        check(True, 'server build streamed and loaded: ' + await toast_text(page))
+        await page.wait_for_selector('#st-screen iframe', timeout=5000)
+        check(await page.input_value('#pub-title') == 'Block Miner', 'game title read from the built file')
+        calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
+        check(len(calls) == 1 and calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nBlock Miner'), 'server sent the idea to Sonnet 5.5: ' + json.dumps(calls)[:160])
+        await page.screenshot(path=f'{OUT}/30-server-ai.png', full_page=True)
+        await page.fill('#st-prompt', 'Make the blocks glow.')
+        await page.click('button[data-act="gen-edit"]')
+        await page.wait_for_selector('button[data-act="version"][data-i="1"]', timeout=20000)
+        calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
+        check(len(calls) == 2 and calls[1]['model'] == 'claude-haiku-5-5', 'change request went to Haiku 5.5')
+        await page.click('button[data-act="publish"]')
+        await page.wait_for_selector('.gp-head h1:has-text("Block Miner")', timeout=8000)
+        check(True, 'published the AI-built crypto game')
+        real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+        check(not real, 'no console/page errors with the GamePlay server ' + str(real[:5]))
+        await ctx.close()
+    finally:
+        proc.terminate()
+
 async def scenario_a11y(browser):
     for scheme, theme in (('light', None), ('dark', None), ('light', 'contrast')):
         ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900}, color_scheme=scheme)
@@ -433,7 +475,7 @@ async def main():
     async with async_playwright() as p:
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required'])
-        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_a11y):
+        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_a11y):
             try:
                 await sc(browser)
             except Exception as e:

@@ -1,13 +1,20 @@
 {
   "name": "gameplay",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "GamePlay: a free game maker where people play, make, own and earn from browser games on Solana (devnet prototype).",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/core.test.mjs",
+    "start": "node server/server.mjs",
+    "test": "node test/core.test.mjs && node test/server.test.mjs",
     "serve": "cd dist && python3 -m http.server 8765 --bind 127.0.0.1",
     "e2e": "python3 test/e2e.py /tmp/gameplay-shots"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0"
   }
 }
