@@ -1,4 +1,4 @@
-// Builds GamePlay into single-file pages. No dependencies: run `node build.mjs`.
+// Builds ClaudePlay into single-file pages. No dependencies: run `node build.mjs`.
 //   dist/playpark.html  the page body published as a claude.ai artifact (the host adds <head>)
 //   dist/local.html     the same page in a bare document, used by the end-to-end tests
 //   dist/site/          a complete static website: index.html + README.md, ready for any host
@@ -32,14 +32,14 @@ writeFileSync(here('./dist/local.html'), skeleton + page + '</body></html>');
 const sitePage = template.replace('<!--INLINE-SCRIPTS-->', () => scripts(SITE));
 const cut = sitePage.indexOf('<a class="skip"');
 if (cut < 0) throw new Error('skip link marker not found');
-const desc = 'GamePlay is a free game maker. Make a browser game in minutes, share it with a link, and earn when people play, collect or remix it. No sign-up, works on any phone.';
+const desc = 'ClaudePlay is a free game maker. Make a browser game in minutes, share it with a link, and earn when people play, collect or remix it. No sign-up, works on any phone.';
 const icon = "data:image/svg+xml," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M3 8l5-5h16l5 5v21H3z' fill='#2a3ff5'/><rect x='8' y='8' width='16' height='11' rx='1.5' fill='#fff'/><path d='M9 24.5h14' stroke='#fff' stroke-width='2.4' stroke-dasharray='2 2.2'/></svg>");
 const site = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
   + '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n'
   + '<meta name="description" content="' + desc + '">\n'
   + '<meta name="theme-color" content="#e2e7e4" media="(prefers-color-scheme: light)">\n'
   + '<meta name="theme-color" content="#0d1211" media="(prefers-color-scheme: dark)">\n'
-  + '<meta property="og:type" content="website">\n<meta property="og:title" content="GamePlay">\n'
+  + '<meta property="og:type" content="website">\n<meta property="og:title" content="ClaudePlay">\n'
   + '<meta property="og:description" content="' + desc + '">\n'
   + '<meta name="twitter:card" content="summary">\n'
   + '<link rel="icon" href="' + icon + '">\n'

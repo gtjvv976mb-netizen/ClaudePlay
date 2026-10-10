@@ -84,7 +84,7 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
 {
   const { server, base } = await start({ client: null });
   const html = await (await fetch(base + '/')).text();
-  ok(html.includes('<title>GamePlay</title>') && !html.includes('"ai":'), 'serves the site with the AI studio off when there is no key');
+  ok(html.includes('<title>ClaudePlay</title>') && !html.includes('"ai":'), 'serves the site with the AI studio off when there is no key');
   const r = await post(base, { kind: 'new', prompt: 'x' });
   ok(r.status === 503, 'build returns 503 without a key');
   const st = await (await fetch(base + '/api/status')).json();
