@@ -10,15 +10,19 @@
 // Settings (environment variables):
 //   PORT                 port to listen on (8787)
 //   GP_ROOT              folder to serve (dist/site)
-//   GP_MODEL_FREE        model for every build on the free plan (claude-haiku-5-5)
+//   GP_MODEL_FREE_NEW    free plan: model for new games (claude-sonnet-5-5)
+//   GP_MODEL_FREE        free plan: model for changes and bug fixes (claude-haiku-5-5)
 //   GP_MODEL_NEW         Pro: model for new games and "best" builds (claude-sonnet-5-5)
 //   GP_MODEL_EDIT        Pro: model for changes and bug fixes (claude-haiku-5-5)
-//   GP_DAILY_BUILDS      free AI builds per visitor per day (3)
-//   GP_DAILY_TOTAL       free AI builds per day across the whole site, to cap spend (0 = no cap)
+//   GP_DAILY_BUILDS      free new games per visitor per day (2)
+//   GP_DAILY_TOTAL       free new games per day across the whole site, to cap spend (0 = no cap)
+//   GP_DAILY_EDITS       free AI changes and fixes per visitor per day (20)
+//   GP_DAILY_EDIT_TOTAL  free AI changes per day across the whole site (0 = no cap)
 //   GP_PRO_PRICE_SOL     price of a Pro pass in SOL, paid to GP_TREASURY (0.1; 0 = no Pro). Needs real
 //                        Solana payments (GP_SOLANA_CLUSTER + GP_TREASURY); see plans.mjs
 //   GP_PRO_DAYS          how long a Pro pass lasts (30)
-//   GP_PRO_BUILDS        Pro AI builds per day (10)
+//   GP_PRO_BUILDS        Pro new games per day (10)
+//   GP_PRO_EDITS         Pro AI changes per day (60)
 //   GP_MAX_ACTIVE        AI builds running at once across all visitors (4)
 //   GP_TRUST_PROXY=1     read the visitor address from the first X-Forwarded-For entry (set this
 //                        behind a proxy that overwrites that entry, as Render does)
@@ -43,17 +47,27 @@ const H = globalThis.PPHarness;
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
-const MAX_BODY = 96 * 1024;
+const MAX_BODY = 512 * 1024;
 const MAX_TOKENS = 64000;
 // Models that accept server-side refusal fallbacks ("default" routes by refusal category).
 const FALLBACK_OK = /^claude-(sonnet-5-5|opus-5|fable-5)/;
 
-/* Free builds all use the free model; Pro uses Sonnet for new games and "best" builds. */
+/* Free: new games on models.freeNew, changes on models.free. Pro: Sonnet for new games and "best" builds. */
 export function pickModel(req, models, plan = 'pro') {
-  if (plan !== 'pro') return models.free;
+  if (plan !== 'pro') return req.kind === 'new' ? models.freeNew || models.free : models.free;
   return req.kind === 'new' || req.tier === 'complex' ? models.new : models.edit;
 }
 const KEY_OK = /^[A-Za-z0-9_-]{32,128}$/;
+
+/* The creator's text, after their pictures (if any) so Claude can see what each one shows. */
+function userContent(req) {
+  const pics = (req.pics || []).filter((p) => p.data);
+  if (!pics.length) return H.harnessTask(req.kind, req);
+  const out = [];
+  for (const p of pics) out.push({ type: 'text', text: "Creator's picture '" + p.name + "':" }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: p.data } });
+  out.push({ type: 'text', text: H.harnessTask(req.kind, req) });
+  return out;
+}
 
 /* The Messages API request for one build. HARNESS is the system prompt, so it caches across builds. */
 export function buildParams(req, model) {
@@ -61,7 +75,7 @@ export function buildParams(req, model) {
     model,
     max_tokens: MAX_TOKENS,
     system: [{ type: 'text', text: H.HARNESS, cache_control: { type: 'ephemeral' } }],
-    messages: [{ role: 'user', content: H.harnessTask(req.kind, req) }],
+    messages: [{ role: 'user', content: userContent(req) }],
   };
   if (FALLBACK_OK.test(model)) { params.betas = ['server-side-fallback-2026-07-01']; params.fallbacks = 'default'; }
   return params;
@@ -83,23 +97,27 @@ export function createServer(opts = {}) {
   const root = resolve(opts.root || join(here, '..', 'dist', 'site'));
   const client = opts.client || null;
   const pick = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
-  const models = Object.assign({ free: 'claude-haiku-5-5', new: 'claude-sonnet-5-5', edit: 'claude-haiku-5-5' }, pick(opts.models));
-  const daily = opts.daily || 3;
+  const models = Object.assign({ freeNew: 'claude-sonnet-5-5', free: 'claude-haiku-5-5', new: 'claude-sonnet-5-5', edit: 'claude-haiku-5-5' }, pick(opts.models));
+  const daily = opts.daily || 2, dailyEdits = opts.dailyEdits || 20;
   const kv = opts.kv || memoryKv();
-  const limits = limiter({ total: opts.total || 0, maxActive: opts.maxActive || 4, kv });
+  const limits = limiter({ maxActive: opts.maxActive || 4, kv });
   const log = opts.log || (() => {});
   const gallery = opts.gallery || null;
   const chain = opts.chain || null;
   const pro = opts.pro || {};
-  const plans = openPlans({ kv, chain, price: pro.price, days: pro.days, daily: pro.daily });
+  const plans = openPlans({ kv, chain, price: pro.price, days: pro.days, daily: pro.daily, dailyEdits: pro.dailyEdits });
   const uidFrom = (req) => { const k = String(req.headers['x-gp-key'] || ''); return KEY_OK.test(k) ? uidOf(k) : null; };
-  /* The caller's plan, daily allowance and builds left today. */
+  /* The caller's plan and daily allowances: new games ('new') and changes and fixes ('edit'). */
   async function planInfo(req) {
     const uid = uidFrom(req);
     const plan = await plans.planOf(uid);
-    const who = plan === 'pro' ? 'u:' + uid : visitor(req);
-    const cap = plan === 'pro' ? plans.pro.daily : daily;
-    return { plan, who, uid, cap, left: Math.max(0, cap - (await limits.used(who))) };
+    const pro = plan === 'pro';
+    const who = pro ? 'u:' + uid : visitor(req);
+    const caps = pro ? { new: plans.pro.daily, edit: plans.pro.dailyEdits } : { new: daily, edit: dailyEdits };
+    const totals = pro ? { new: 0, edit: 0 } : { new: opts.total || 0, edit: opts.totalEdits || 0 };
+    const left = {};
+    for (const b of ['new', 'edit']) left[b] = Math.max(0, caps[b] - (await limits.used(who, b)));
+    return { plan, who, uid, caps, totals, left };
   }
   const chainHits = new Map();
 
@@ -151,9 +169,11 @@ export function createServer(opts = {}) {
     try {
       info = await planInfo(req);
       if (info.plan !== 'pro' && r.tier === 'complex' && plans.pro) return send(res, 402, { code: 'pro_required', message: 'Best builds use Claude Sonnet 5.5 and are part of Pro. Switch to a standard build, or get Pro.' });
-      slot = await limits.take(info.who, info.cap, info.plan === 'pro'
-        ? { site: false, limitMessage: 'You have used today’s ' + info.cap + ' Pro builds. They reset tomorrow.' }
-        : { limitMessage: 'You have used today’s ' + info.cap + ' free AI builds. Come back tomorrow' + (plans.pro ? ', get Pro for more,' : '') + ' or tune a kit meanwhile.' });
+      const bucket = r.kind === 'new' || (info.plan === 'pro' && r.tier === 'complex') ? 'new' : 'edit';
+      const cap = info.caps[bucket], what = bucket === 'new' ? 'new games' : 'AI changes';
+      slot = await limits.take(info.who, cap, info.plan === 'pro'
+        ? { bucket, limitMessage: 'You have used today’s ' + cap + ' Pro ' + what + '. They reset tomorrow.' }
+        : { bucket, total: info.totals[bucket], limitMessage: 'You have used today’s ' + cap + ' free ' + what + '. Come back tomorrow' + (plans.pro ? ', get Pro for more,' : '') + ' or tune a kit meanwhile.' });
     } catch (e) {
       log({ error: 'limits: ' + (e && e.message) });
       return send(res, 503, { code: 'unavailable', message: 'The AI studio cannot check your build allowance right now. Try again in a minute.' });
@@ -229,8 +249,8 @@ export function createServer(opts = {}) {
       if (path === '/api/build') return req.method === 'POST' ? await build(req, res) : send(res, 405, { code: 'bad_request', message: 'Use POST.' });
       if (path === '/api/status') {
         // Also Render's health check: report the site as up even if the build-count store is briefly unreachable.
-        const info = await planInfo(req).catch((e) => { log({ error: 'limits: ' + (e && e.message) }); return { plan: 'free', cap: daily, left: 0 }; });
-        return send(res, 200, { ai: !!client, gallery: !!gallery, chain: chain ? chain.site.cluster : null, models: client ? models : null, plan: info.plan, daily: info.cap, left: info.left, until: info.plan === 'pro' ? await plans.until(info.uid) : 0, pro: client ? await plans.offer(info.uid) : null });
+        const info = await planInfo(req).catch((e) => { log({ error: 'limits: ' + (e && e.message) }); return { plan: 'free', caps: { new: daily, edit: dailyEdits }, left: { new: 0, edit: 0 } }; });
+        return send(res, 200, { ai: !!client, gallery: !!gallery, chain: chain ? chain.site.cluster : null, models: client ? models : null, plan: info.plan, daily: info.caps.new, left: info.left.new, edits: { daily: info.caps.edit, left: info.left.edit }, until: info.plan === 'pro' ? await plans.until(info.uid) : 0, pro: client ? await plans.offer(info.uid) : null });
       }
       if (path === '/api/pro') {
         if (req.method !== 'POST') return send(res, 405, { code: 'bad_request', message: 'Use POST.' });
@@ -290,10 +310,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     root: env.GP_ROOT,
     client,
     kv: store.kv,
-    pro: { price: Math.round(proSol * 1e9), days: Number(env.GP_PRO_DAYS) || undefined, daily: Number(env.GP_PRO_BUILDS) || undefined },
-    models: { free: env.GP_MODEL_FREE || undefined, new: env.GP_MODEL_NEW || undefined, edit: env.GP_MODEL_EDIT || undefined },
+    pro: { price: Math.round(proSol * 1e9), days: Number(env.GP_PRO_DAYS) || undefined, daily: Number(env.GP_PRO_BUILDS) || undefined, dailyEdits: Number(env.GP_PRO_EDITS) || undefined },
+    models: { freeNew: env.GP_MODEL_FREE_NEW || undefined, free: env.GP_MODEL_FREE || undefined, new: env.GP_MODEL_NEW || undefined, edit: env.GP_MODEL_EDIT || undefined },
     daily: Number(env.GP_DAILY_BUILDS) || undefined,
     total: Number(env.GP_DAILY_TOTAL) || undefined,
+    dailyEdits: Number(env.GP_DAILY_EDITS) || undefined,
+    totalEdits: Number(env.GP_DAILY_EDIT_TOTAL) || undefined,
     maxActive: Number(env.GP_MAX_ACTIVE) || undefined,
     trustProxy: env.GP_TRUST_PROXY === '1',
     log: (o) => console.log(JSON.stringify(Object.assign({ ts: new Date().toISOString() }, o))),

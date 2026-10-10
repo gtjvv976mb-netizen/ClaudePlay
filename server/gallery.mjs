@@ -14,7 +14,7 @@ import { mkdir, readFile, rename, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const MAX_ACCOUNT = 256 * 1024;
-const MAX_BLOB = 200 * 1024;
+const MAX_BLOB = 320 * 1024;
 const sha256 = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
 export const uidOf = (key) => 'w_' + sha256('gameplay-gallery:' + key).slice(0, 32);
 const KEY_OK = /^[A-Za-z0-9_-]{32,128}$/;

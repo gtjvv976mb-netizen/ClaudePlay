@@ -172,6 +172,10 @@ ul, ol { margin: 0; padding: 0; }
 .btn.danger { color: var(--bad); border-color: var(--bad); background: transparent; }
 .btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 .chip { display: inline-flex; align-items: center; gap: 6px; font: 600 .71875rem/1 var(--mono); padding: 6px 8px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink-2); background: var(--panel); white-space: nowrap; }
+.pics { display: grid; gap: 8px; }
+.pic { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+.pic img { width: 48px; height: 48px; object-fit: contain; image-rendering: pixelated; }
+.pic input { min-width: 0; font-family: var(--mono); }
 .chip.ok { color: var(--good); border-color: currentColor; }
 .chip.bad { color: var(--bad); border-color: currentColor; }
 .chip.gold { color: var(--gold); border-color: currentColor; }

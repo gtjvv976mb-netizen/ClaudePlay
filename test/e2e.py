@@ -10,6 +10,16 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else '/tmp/shots'
 os.makedirs(OUT, exist_ok=True)
 MOCK = open(os.path.join(os.path.dirname(__file__), 'mock_claude.js')).read()
 fails = []
+def png_square(w, h, bg, fg, pad):
+    """A w x h PNG: a plain bg with an fg rectangle inset by pad."""
+    import zlib, struct
+    rows = b''
+    for y in range(h):
+        rows += b'\x00' + b''.join(bytes(fg if pad <= x < w - pad and pad <= y < h - pad else bg) for x in range(w))
+    chunk = lambda t, d: struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
+
+
 def check(cond, msg):
     print(('ok   ' if cond else 'FAIL ') + msg)
     if not cond: fails.append(msg)
@@ -442,9 +452,9 @@ async def scenario_server(browser):
         await page.wait_for_selector('#st-screen iframe', timeout=5000)
         check(await page.input_value('#pub-title') == 'Block Miner', 'game title read from the built file')
         calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
-        check(len(calls) == 1 and calls[0]['model'] == 'claude-haiku-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nBlock Miner'), 'free plan sent the idea to Haiku 5.5: ' + json.dumps(calls)[:160])
+        check(len(calls) == 1 and calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nBlock Miner'), 'free plan sent the new game idea to Sonnet 5.5: ' + json.dumps(calls)[:160])
         plan = await page.locator('#st-plan').inner_text()
-        check('Free plan' in plan and 'Claude Haiku 5.5' in plan and 'Get Pro' not in plan, 'studio shows the free plan, with no Pro offer without Solana payments: ' + plan)
+        check('Free plan' in plan and 'Claude Sonnet 5.5' in plan and 'Get Pro' not in plan, 'studio shows the free plan, with no Pro offer without Solana payments: ' + plan)
         await page.screenshot(path=f'{OUT}/30-server-ai.png', full_page=True)
         await page.fill('#st-prompt', 'Make the blocks glow.')
         await page.click('button[data-act="gen-edit"]')
@@ -465,8 +475,17 @@ async def scenario_server(browser):
         await page2.wait_for_selector('#gp-screen iframe', timeout=10000)
         await page2.wait_for_timeout(500)
         box = await page2.locator('#gp-screen iframe').bounding_box()
-        await page2.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
-        await page2.wait_for_selector('.toast:has-text("New best")', timeout=12000)
+        # The first tap can land while the cover is still starting the game, so tap again if no run starts.
+        for attempt in range(3):
+            await page2.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
+            try:
+                await page2.wait_for_selector('.toast:has-text("New best")', timeout=6000)
+                break
+            except Exception:
+                if attempt == 2:
+                    await page2.screenshot(path=f'{OUT}/debug-second.png', full_page=True)
+                    print('DEBUG toasts', await page2.locator('.toast').all_inner_texts(), errs2[:5])
+                    raise
         check(True, 'the share link opens and plays for another visitor, score signed')
         await page2.screenshot(path=f'{OUT}/31-second-visitor.png', full_page=True)
         await page.wait_for_timeout(5000)
@@ -477,6 +496,53 @@ async def scenario_server(browser):
         real2 = [e for e in errs2 if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real2, 'no console/page errors for the second visitor ' + str(real2[:5]))
         await ctx2.close()
+        # Guided start: pick 3D and a genre, and the game runs on the built-in 3D engine.
+        await page.goto(AI_SITE + '#create')
+        await page.wait_for_selector('button[data-act="dim"][data-dim="3d"]', timeout=10000)
+        await page.click('button[data-act="dim"][data-dim="3d"]')
+        await page.select_option('#st-genre', 'Racing')
+        await page.fill('#st-prompt', 'Steer a cube down a neon track.')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_selector('.toast:has-text("Built Cube Dash 3D")', timeout=20000)
+        calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
+        check('Game type: 3D' in calls[-1]['task'] and 'Genre: Racing' in calls[-1]['task'], 'the 3D and genre picks reach Claude: ' + calls[-1]['task'][-80:])
+        await page.wait_for_selector('#st-screen iframe', timeout=5000)
+        await page.wait_for_timeout(1500)
+        frame = next(f for f in page.frames if f != page.main_frame)
+        frames = await frame.evaluate('window.__frames || 0')
+        check(frames > 10 and await frame.evaluate('!!window.SP3D'), f'the 3D game renders with SP3D ({frames} frames)')
+        await page.screenshot(path=f'{OUT}/35-studio-3d.png')
+        # Your own pictures: a drawing on a plain background becomes a sprite the game draws.
+        pic = os.path.join(OUT, 'cat.png')
+        with open(pic, 'wb') as f:
+            f.write(png_square(40, 30, (255, 255, 255), (200, 40, 40), 10))
+        await page.click('button[data-act="dim"][data-dim="2d"]')
+        async with page.expect_file_chooser() as fc:
+            await page.click('button[data-act="pic-add"]')
+        await (await fc.value).set_files(pic)
+        await page.wait_for_selector('#pic-0', timeout=5000)
+        check(await page.input_value('#pic-0') == 'cat', 'the picture is named after its file')
+        await page.fill('#st-prompt', 'My cat catches falling tokens.')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_selector('.toast:has-text("Built Cat Catch")', timeout=20000)
+        calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
+        check(calls[-1]['images'] == 1 and calls[-1]['pics'] == ["- 'cat': 20x10 px"], 'Claude sees the picture and its name and size: ' + str(calls[-1]['pics']))
+        await page.wait_for_selector('#st-screen iframe', timeout=5000)
+        await page.wait_for_timeout(800)
+        frame = next(f for f in page.frames if f != page.main_frame)
+        w = await frame.evaluate('window.__pic || 0')
+        corner = await frame.evaluate("(() => { const i = SP.image('cat'), c = document.createElement('canvas'); c.width = i.naturalWidth; c.height = i.naturalHeight; const x = c.getContext('2d'); x.drawImage(i, 0, 0); return [x.getImageData(0, 0, 1, 1).data[3], x.getImageData(5, 5, 1, 1).data[0]]; })()")
+        check(w == 20 and corner[1] > 150, f'the game draws the cropped picture ({w}px wide, {corner})')
+        check(corner[0] == 255, 'the cropped picture keeps its own pixels')
+        await page.screenshot(path=f'{OUT}/36-studio-picture.png')
+        # The picture follows the art style: Neon arcade adds a glowing 2px outline. Changes keep the pictures.
+        await page.click('button[data-act="style"][data-style="Neon arcade"]')
+        await page.fill('#st-prompt', 'Make the cat faster.')
+        await page.click('button[data-act="gen-edit"]')
+        await page.wait_for_selector('button[data-act="version"][data-i="4"]', timeout=20000)
+        calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
+        check(calls[-1]['pics'] == ["- 'cat': 24x14 px"] and calls[-1]['images'] == 1 and not calls[-1]['picBlock'], 'a change restyles the picture and never sends its data as code: ' + str(calls[-1]['pics']))
+        await page.click('button[data-act="style"][data-style="Neon arcade"]')
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real, 'no console/page errors with the ClaudePlay server ' + str(real[:5]))
         await ctx.close()
@@ -604,7 +670,7 @@ async def scenario_a11y(browser):
 async def main():
     async with async_playwright() as p:
         exe = os.environ.get('CHROME_PATH')
-        browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required'])
+        browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader'])
         only = os.environ.get('E2E_ONLY', '').split(',')
         for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_mainnet, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue

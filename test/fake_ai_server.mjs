@@ -25,15 +25,46 @@ x.fillStyle='#ffd84d';x.font='24px sans-serif';x.fillText(state==='title'?'BLOCK
 SP.ready();requestAnimationFrame(loop);
 </scr` + `ipt></body></html>`;
 
+// A tiny 3D game on SP3D, streamed when the creator picks 3D.
+const GAME3D = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Cube Dash 3D</title>
+<meta name="description" content="Steer a cube down a 3D track.">
+<meta name="gameplay-genre" content="Racing">
+<meta name="gameplay-controls" content="Tap to start, drag to steer">
+</head><body>
+<scr` + `ipt>
+const g=SP3D.create({background:'#1a2240',fog:{near:20,far:60}});g.camera.y=5;g.camera.z=9;
+g.add('plane',{sx:30,sz:200,color:'#2e8b57'});const p=g.add('box',{y:0.5,color:'#ffd84d',shadow:true});
+let score=0,state='title';SP.ready();addEventListener('pointerdown',()=>{if(state!=='play'){state='play';score=0}SP.input('tap')});
+g.start((dt)=>{p.ry+=dt;if(state==='play'){score++;SP.score(score);if(score>90){state='over';SP.gameOver(score)}}
+g.hud.fillStyle='#fff';g.hud.font='20px sans-serif';g.hud.fillText(state==='play'?'SCORE '+score:'CUBE DASH 3D - tap',16,32);window.__frames=(window.__frames||0)+1});
+</scr` + `ipt></body></html>`;
+
+// A game that draws the creator's picture 'cat', streamed when the request has pictures.
+const GAMEPIC = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Cat Catch</title>
+<meta name="description" content="Your cat catches falling tokens.">
+<meta name="gameplay-genre" content="Arcade">
+<meta name="gameplay-controls" content="Tap to start">
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#123}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<scr` + `ipt>
+const c=document.getElementById('c'),x=c.getContext('2d');c.width=innerWidth;c.height=innerHeight;const cat=SP.image('cat');SP.ready();
+function loop(){x.fillStyle='#123';x.fillRect(0,0,c.width,c.height);if(cat.complete&&cat.naturalWidth){x.drawImage(cat,40,40,96,96);window.__pic=cat.naturalWidth}requestAnimationFrame(loop)}loop();
+</scr` + `ipt></body></html>`;
+
+const text = (content) => (typeof content === 'string' ? content : content.map((p) => p.text || '').join('\n'));
 const calls = [];
 const client = { beta: { messages: { stream(params, options) {
-  calls.push({ model: params.model, task: params.messages[0].content.slice(0, 200), system: params.system[0].text.slice(0, 60) });
+  const content = params.messages[0].content, task = text(content);
+  calls.push({ model: params.model, task: task.slice(0, 200), tail: task.slice(-200), pics: task.match(/- '[a-z0-9_]+': \d+x\d+ px/g) || [], picBlock: task.includes('sp-pictures'), images: Array.isArray(content) ? content.filter((p) => p.type === 'image').length : 0, system: params.system[0].text.slice(0, 60) });
   return {
     async *[Symbol.asyncIterator]() {
-      for (let i = 0; i < GAME.length; i += 300) {
+      const doc = task.includes("CREATOR'S PICTURES") ? GAMEPIC : task.includes('Game type: 3D') ? GAME3D : GAME;
+      for (let i = 0; i < doc.length; i += 300) {
         await new Promise((r) => setTimeout(r, 10));
         if (options.signal.aborted) throw new Error('aborted');
-        yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: GAME.slice(i, i + 300) } };
+        yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: doc.slice(i, i + 300) } };
       }
     },
     async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { output_tokens: 1 } }; },
