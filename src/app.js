@@ -1,4 +1,4 @@
-/* GamePlay app: views, wallet, storage, players and the AI build harness. */
+/* ClaudePlay app: views, wallet, storage, players and the AI build harness. */
 (function () {
   'use strict';
   const C = window.PPCore, K = window.PPKits, R = C.RULES;
@@ -65,7 +65,7 @@
   };
 
   const nameOf = (pk) => {
-    if (pk === C.STARTER) return 'GamePlay kit';
+    if (pk === C.STARTER) return 'ClaudePlay kit';
     if (pk === C.TREASURY) return 'Treasury';
     if (!pk) return 'nobody';
     const w = S.world && S.world.wallets.get(pk);
@@ -260,7 +260,7 @@
   /* ---------------- wallet ---------------- */
   async function useEmbedded(v) {
     const s = await C.ed.signer(C.b58dec(v.sk));
-    S.wallet = { kind: 'embedded', label: 'GamePlay wallet', from: s.pk, pk: s.pk, sign: s.sign, secret: v.sk };
+    S.wallet = { kind: 'embedded', label: 'ClaudePlay wallet', from: s.pk, pk: s.pk, sign: s.sign, secret: v.sk };
   }
   async function useSession(sess) {
     const s = await C.ed.signer(C.b58dec(sess.sk));
@@ -299,7 +299,7 @@
   }
   async function connectInjected() {
     const inj = injectedProvider();
-    if (!inj) { toast('No Solana wallet extension can reach this page. Use the GamePlay wallet instead.', 'bad'); return; }
+    if (!inj) { toast('No Solana wallet extension can reach this page. Use the ClaudePlay wallet instead.', 'bad'); return; }
     const res = await inj.p.connect();
     const pub = (res && res.publicKey) || inj.p.publicKey;
     const main = pub && (pub.toBase58 ? pub.toBase58() : String(pub));
@@ -335,7 +335,7 @@
   /* ---------------- Solana network ----------------
      When server/server.mjs runs with GP_SOLANA_CLUSTER, GP_SITE.chain is set and collects and tips are
      real Solana payments: the player's wallet pays the creator, the lineage and the treasury directly
-     (GamePlay never holds funds), the memo "gameplay:<ledger id>" ties the payment to its ledger entry,
+     (ClaudePlay never holds funds), the memo "gameplay:<ledger id>" ties the payment to its ledger entry,
      and every page checks the payment on Solana before the entry counts. Without it, the ledger keeps
      its simulated devSOL balances. */
   const SOLN = window.PPSolana;
@@ -414,7 +414,7 @@
       if (s.status === 'confirmed' || s.status === 'finalized') return;
       await new Promise((r) => setTimeout(r, i < 10 ? 1000 : 2000));
     }
-    throw new Error('Solana has not confirmed the payment yet. GamePlay will record it once it lands.');
+    throw new Error('Solana has not confirmed the payment yet. ClaudePlay will record it once it lands.');
   }
   /* Pays `transfers` ([{ to, amt }]) from the wallet with the memo for ledger entry `id`. */
   async function walletPay(transfers, id) {
@@ -582,14 +582,14 @@
     if (ENV === 'claude') return S.caps.sample(H.harnessPrompt(req.kind, req), Object.assign({ cache: false, modelTier: req.tier }, opts));
     return serverBuild(req, opts);
   }
-  /* Streams a build from the GamePlay server: one JSON object per line ({t:'text'|'done'|'error'}). */
+  /* Streams a build from the ClaudePlay server: one JSON object per line ({t:'text'|'done'|'error'}). */
   async function serverBuild(req, opts) {
     const aborted = () => !!(opts.signal && opts.signal.aborted);
     let res;
     try {
       res = await fetch(SITE.ai, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req), signal: opts.signal });
     } catch (e) {
-      throw aborted() ? { code: 'cancelled' } : { code: 'offline', message: 'Could not reach the GamePlay server. Check your connection and try again.' };
+      throw aborted() ? { code: 'cancelled' } : { code: 'offline', message: 'Could not reach the ClaudePlay server. Check your connection and try again.' };
     }
     if (!res.ok || !res.body) {
       let j = {};
@@ -685,9 +685,9 @@
     const where = S.mode === 'shared' ? 'Connected to the shared gallery'
       : S.hasDb ? 'View-only on the shared gallery; your activity stays on this device'
       : 'Running on this device only: your key, games and scores stay in this browser';
-    return '<footer class="foot"><div class="foot-main"><b class="foot-mark">GAMEPLAY</b>'
-      + '<p>An independent game maker on Solana. Not affiliated with Google or Google Labs Playground.</p>'
-      + '<p>' + (MAINNET ? 'Collects and tips are real SOL on Solana mainnet, paid from your own wallet app straight to creators. GamePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.'
+    return '<footer class="foot"><div class="foot-main"><b class="foot-mark">CLAUDEPLAY</b>'
+      + '<p>An unofficial fan project on Solana. Not affiliated with or endorsed by Anthropic, Google or Google Labs Playground. Claude is a trademark of Anthropic.</p>'
+      + '<p>' + (MAINNET ? 'Collects and tips are real SOL on Solana mainnet, paid from your own wallet app straight to creators. ClaudePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.'
         : CHAIN ? 'Devnet: collects and tips are real Solana devnet transactions paid with free test SOL, so no real funds move. GPLY is a working name and is not for sale.'
         : 'Devnet preview: transactions use real Ed25519 signatures on a simulated Solana ledger, and no real funds move. GPLY is a working name and is not for sale.') + '</p></div>'
       + '<nav class="foot-links" aria-label="Footer"><a href="#explore" data-nav="explore">Play</a><a href="#create" data-nav="create">Make</a><a href="#business" data-nav="business">For business</a><a href="#economy" data-nav="economy">Economy</a>'
@@ -783,13 +783,13 @@
     { name: 'Scale', what: 'A developer SDK and export, a mobile app and a multiplayer kit' },
   ];
   const FAQ = [
-    ['Is GamePlay free?', 'Yes. Playing, making and publishing are free. Every week you get ' + R.WEEKLY_SPARKS + ' Sparks for AI builds, and you earn ' + R.SPARKS_PER_PLAYER + ' more for each new player who tries one of your games.'],
-    ['Do I need a crypto wallet?', 'No. The first time you score or publish, GamePlay creates a wallet key in your browser. You can connect Phantom, Solflare or Backpack later, or export the key from Wallet.'],
-    MAINNET ? ['Is this real money?', 'Yes. Collects and tips are paid in real SOL from your own wallet app, straight to the creator, the remix creators and a 5% protocol fee. GamePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.']
+    ['Is ClaudePlay free?', 'Yes. Playing, making and publishing are free. Every week you get ' + R.WEEKLY_SPARKS + ' Sparks for AI builds, and you earn ' + R.SPARKS_PER_PLAYER + ' more for each new player who tries one of your games.'],
+    ['Do I need a crypto wallet?', 'No. The first time you score or publish, ClaudePlay creates a wallet key in your browser. You can connect Phantom, Solflare or Backpack later, or export the key from Wallet.'],
+    MAINNET ? ['Is this real money?', 'Yes. Collects and tips are paid in real SOL from your own wallet app, straight to the creator, the remix creators and a 5% protocol fee. ClaudePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.']
       : ['Is this real money?', 'Not yet. This preview runs on Solana devnet, so SOL balances are test tokens. GPLY is the working name of a future reward token. Nothing is for sale and there is no presale.'],
     ['Who can use it?', 'Anyone with a modern browser, in any country. When real-money features arrive they will follow local rules, including age checks where the law requires them.'],
-    ['Is GamePlay made by Google?', 'No. GamePlay is an independent project. It is not affiliated with Google or with Google Labs Playground.'],
-    ['Can I keep my game?', 'Yes. Every game is one HTML file. Download it from its page and it plays offline in any browser, with no GamePlay account.'],
+    ['Is ClaudePlay made by Anthropic or Google?', 'No. ClaudePlay is an unofficial fan project. It is not affiliated with or endorsed by Anthropic, Google or Google Labs Playground. Claude is a trademark of Anthropic.'],
+    ['Can I keep my game?', 'Yes. Every game is one HTML file. Download it from its page and it plays offline in any browser, with no ClaudePlay account.'],
     ['How are leaderboards kept fair?', 'Each score is signed by the player’s key and tied to the exact game file, with a seed and an input log so a suspicious run can be checked. Runs in assist mode stay off ranked boards.'],
     ['Where is my data stored?', 'In this preview your wallet key, games and scores stay in your browser on this device. Clearing site data removes them, so export your key from Wallet if you want to keep it.'],
     ['How do I report a game?', 'Open the game and press Report. Moderators can delist it, and the signed record stays on the ledger.'],
@@ -803,7 +803,7 @@
       ['Leaderboards', 'Play Games profile, in select genres', 'Wallet-signed scores tied to the exact game file'],
       ['Sharing', 'No outside links; built-in Social Links only', 'Share a link anywhere or download the file'],
     ];
-    return '<div class="spec"><table><caption class="sr">GamePlay compared with Google Labs Playground</caption><thead><tr><th scope="col"><span class="sr">Feature</span></th><th scope="col">Google Labs Playground</th><th scope="col">GamePlay</th></tr></thead><tbody>'
+    return '<div class="spec"><table><caption class="sr">ClaudePlay compared with Google Labs Playground</caption><thead><tr><th scope="col"><span class="sr">Feature</span></th><th scope="col">Google Labs Playground</th><th scope="col">ClaudePlay</th></tr></thead><tbody>'
       + rows.map(([k, a, b]) => '<tr><th scope="row">' + esc(k) + '</th><td class="them">' + esc(a) + '</td><td class="us">' + esc(b) + '</td></tr>').join('')
       + '</tbody></table></div>';
   }
@@ -819,12 +819,12 @@
   function homeHTML() {
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
     const creatorBps = 10000 - R.FEE_BPS - R.PARENT_BPS - R.GRAND_BPS;
-    const seg = [['you', 'You, the remixer', creatorBps], ['parent', 'Creator of the game you remixed', R.PARENT_BPS], ['grand', 'Creator one step further back', R.GRAND_BPS], ['fee', 'GamePlay protocol fee', R.FEE_BPS]];
+    const seg = [['you', 'You, the remixer', creatorBps], ['parent', 'Creator of the game you remixed', R.PARENT_BPS], ['grand', 'Creator one step further back', R.GRAND_BPS], ['fee', 'ClaudePlay protocol fee', R.FEE_BPS]];
     const solOf = (bps) => (bps / 10000).toFixed(2);
     return '<section class="hero" aria-labelledby="hero-title"><div class="hero-copy">'
       + '<p class="eyebrow">Free game maker · Built on Solana</p>'
       + '<h1 class="hero-title" id="hero-title"><span>Make it.</span> <span>Play it.</span> <span class="hl">Own it.</span></h1>'
-      + '<p class="lede">GamePlay lets anyone make a browser game in minutes, share it with a link, and earn when people play, collect or remix it. There is nothing to install, no sign-up, and it runs on any phone.</p>'
+      + '<p class="lede">ClaudePlay lets anyone make a browser game in minutes, share it with a link, and earn when people play, collect or remix it. There is nothing to install, no sign-up, and it runs on any phone.</p>'
       + '<div class="row cta"><a class="btn primary big" href="#explore" data-nav="explore">' + I.play + ' Play a game</a><a class="btn big" href="#create" data-nav="create">Make a game</a></div>'
       + '<ul class="ticks"><li>Free to play and make</li><li>No sign-up or wallet needed</li><li>Phone, tablet or computer</li><li>Keyboard, touch and assist mode</li></ul>'
       + '<p class="fine">' + (MAINNET ? 'Collects and tips are paid in real SOL from your own wallet. Playing and making games is free.' : 'Preview on Solana devnet: balances are test tokens and nothing is for sale.') + '</p></div>'
@@ -832,7 +832,7 @@
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
       + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure></section>'
 
-      + '<section class="strip" aria-label="GamePlay at a glance">'
+      + '<section class="strip" aria-label="ClaudePlay at a glance">'
       + '<div><b>' + Object.keys(K.KITS).length + '</b><span>game kits to start from</span></div>'
       + '<div><b>' + R.WEEKLY_SPARKS + '</b><span>free Sparks for AI builds every week</span></div>'
       + '<div><b>' + pct(10000 - R.FEE_BPS) + '</b><span>of every collect goes to the creator of an original game</span></div>'
@@ -848,7 +848,7 @@
       + '<section class="section" aria-labelledby="h-ways"><div class="section-head"><h2 id="h-ways">Three ways in</h2></div><div class="ways">'
       + '<article class="way"><p class="eyebrow">Players</p><h3>Play</h3><p>Play any game free. Your best scores are signed to a public leaderboard, and top players share the weekly reward pool.</p><a class="btn" href="#explore" data-nav="explore">Browse the arcade</a></article>'
       + '<article class="way"><p class="eyebrow">Creators</p><h3>Make</h3><p>Tune one of five game kits in a minute, or describe a new game to the AI studio. Publishing is free, and the result is one file you own.</p><a class="btn" href="#create" data-nav="create">Open the maker</a></article>'
-      + '<article class="way"><p class="eyebrow">Brands, communities, schools</p><h3>Bring it to your crowd</h3><p>Branded mini-games, playable quests with checkable winners, and game-making workshops.</p><a class="btn" href="#business" data-nav="business">GamePlay for business</a></article>'
+      + '<article class="way"><p class="eyebrow">Brands, communities, schools</p><h3>Bring it to your crowd</h3><p>Branded mini-games, playable quests with checkable winners, and game-making workshops.</p><a class="btn" href="#business" data-nav="business">ClaudePlay for business</a></article>'
       + '</div></section>'
 
       + '<section class="section" aria-labelledby="h-steps"><div class="section-head"><h2 id="h-steps">From idea to published game</h2></div><ol class="steps">'
@@ -871,7 +871,7 @@
       + '<li><b>Sparks</b><span>' + R.SPARKS_PER_PLAYER + ' Sparks for each new player of your game, up to ' + R.SPARKS_PLAYER_CAP + ' players per game.</span></li>'
       + '</ul></div><p class="fine">' + (MAINNET ? 'Collects, tips and royalties are paid in real SOL straight to your wallet. GPLY rewards are points with no cash value.' : 'On devnet these are test balances. Real payouts start at mainnet beta, after a security audit.') + '</p></section>'
 
-      + '<section class="section" aria-labelledby="h-compare"><div class="section-head"><h2 id="h-compare">GamePlay and Google Labs Playground</h2></div>'
+      + '<section class="section" aria-labelledby="h-compare"><div class="section-head"><h2 id="h-compare">ClaudePlay and Google Labs Playground</h2></div>'
       + '<p class="muted">Google Labs launched Playground on October 7, 2026. Here is how the two compare.</p>'
       + '<div class="table-scroll">' + specTable() + '</div>'
       + '<p class="fine">Playground details as reported in October 2026: ' + PLAYGROUND_SOURCES.map(([n, u]) => '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(n) + '</a>').join(', ') + '.</p></section>'
@@ -926,7 +926,7 @@
   function bizHTML() {
     const contact = contactHTML();
     return '<section class="hero biz" aria-labelledby="biz-title"><div class="hero-copy">'
-      + '<p class="eyebrow">GamePlay for business</p><h1 class="page-title" id="biz-title">Games your audience plays from a link</h1>'
+      + '<p class="eyebrow">ClaudePlay for business</p><h1 class="page-title" id="biz-title">Games your audience plays from a link</h1>'
       + '<p class="lede">We build branded mini-games for brands, crypto communities and classrooms. Players need no app and no sign-up, and you get a leaderboard you can check.</p>'
       + '<div class="row cta"><button class="btn primary big" type="button" data-act="brand-demo">Make a branded demo</button>' + contact + '</div>'
       + '<p class="fine">The demo takes about a minute: pick your colors, rename the game and play it.</p></div>'
@@ -948,7 +948,7 @@
       + '<section class="section" aria-labelledby="h-why"><div class="section-head"><h2 id="h-why">Why it works for campaigns</h2></div><ul class="feature-grid">'
       + '<li><b>Nothing to install</b><span>No app and no sign-up, so people start playing as soon as they open the link.</span></li>'
       + '<li><b>Scores you can check</b><span>Each score is signed and tied to the exact game file, with a seed and input log for spot checks.</span></li>'
-      + '<li><b>You keep the game</b><span>It is one HTML file. Host it on your own site, or keep it on GamePlay.</span></li>'
+      + '<li><b>You keep the game</b><span>It is one HTML file. Host it on your own site, or keep it on ClaudePlay.</span></li>'
       + '<li><b>Accessible by default</b><span>Assist mode, keyboard play, high contrast and larger text are built in.</span></li>'
       + '<li><b>Rewards stay with you</b><span>For token or NFT prizes, we hand you the verified winners and you pay them from your own wallet.</span></li>'
       + '<li><b>Fair play rules</b><span>Assisted runs stay off ranked boards, and every result can be traced to a signed run.</span></li>'
@@ -1022,7 +1022,7 @@
       return '<div class="stack"><dl class="kv">'
         + '<dt>Content hash</dt><dd class="hash">' + esc(g.hash) + '</dd>'
         + '<dt>Size</dt><dd>' + fmtInt(g.size) + ' bytes</dd>'
-        + '<dt>Stored at</dt><dd class="hash">' + (g.starter ? 'Built into GamePlay' : 'blobs/' + esc(g.hash.slice(0, 16)) + '… (content-addressed; Arweave in production)') + '</dd>'
+        + '<dt>Stored at</dt><dd class="hash">' + (g.starter ? 'Built into ClaudePlay' : 'blobs/' + esc(g.hash.slice(0, 16)) + '… (content-addressed; Arweave in production)') + '</dd>'
         + '<dt>Creator</dt><dd>' + esc(nameOf(g.creator)) + (g.starter ? '' : '<br><span class="hash">' + esc(g.creator) + '</span>') + '</dd>'
         + (g.starter ? '' : '<dt>Published</dt><dd>' + when(g.ts) + '</dd><dt>Signature</dt><dd class="hash">' + esc(g.sig) + '</dd>')
         + '<dt>Source</dt><dd>' + (g.kit === 'ai' ? 'AI-built from a prompt' : esc((K.KITS[g.kit] || {}).name || g.kit) + ' kit with tuned parameters') + '</dd>'
@@ -1051,7 +1051,7 @@
     const v = $('#view');
     unmountPlayer('gp-screen');
     if (!g) {
-      v.innerHTML = '<div class="empty"><h1>' + (S.world ? 'Cartridge not found' : 'Loading GamePlay…') + '</h1><p>' + (S.world ? 'It may have been published on another device, or it is still syncing.' : '') + '</p><a class="btn" href="#explore" data-nav="explore">Back to Explore</a></div>';
+      v.innerHTML = '<div class="empty"><h1>' + (S.world ? 'Cartridge not found' : 'Loading ClaudePlay…') + '</h1><p>' + (S.world ? 'It may have been published on another device, or it is still syncing.' : '') + '</p><a class="btn" href="#explore" data-nav="explore">Back to Explore</a></div>';
       return;
     }
     v.innerHTML = '<div class="gp-head"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(g.title) + '</h1><div class="row" id="gp-chips">' + gameChips(g) + '</div></div>'
@@ -1112,8 +1112,8 @@
     if (st.mode === 'ai') {
       if (!aiReady()) {
         body = ENV === 'claude'
-          ? '<div class="banner warn"><b>Describing games with AI needs a Claude sign-in.</b><span>The AI studio runs on your own Claude account. Sign in to Claude and open GamePlay again to use it. Tuning a kit works for everyone, and publishing, scores and collecting work the same either way.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>'
-          : '<div class="banner warn"><b>The AI studio is not switched on for this copy of GamePlay yet.</b><span>It needs a GamePlay server with an AI key. Tune a kit instead: publishing, scores and collecting work the same.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>';
+          ? '<div class="banner warn"><b>Describing games with AI needs a Claude sign-in.</b><span>The AI studio runs on your own Claude account. Sign in to Claude and open ClaudePlay again to use it. Tuning a kit works for everyone, and publishing, scores and collecting work the same either way.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>'
+          : '<div class="banner warn"><b>The AI studio is not switched on for this copy of ClaudePlay yet.</b><span>It needs a ClaudePlay server with an AI key. Tune a kit instead: publishing, scores and collecting work the same.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>';
       } else {
         const chat = st.chat.length ? st.chat.map((m) => '<div class="msg ' + (m.role === 'user' ? 'me' : m.role === 'note' ? 'note' : '') + '">' + esc(m.text) + '</div>').join('')
           : '<div class="msg note">Describe the game you want. Each build is a full game file you can play right away, then refine with follow-up requests.</div>';
@@ -1341,9 +1341,9 @@
     const inj = injectedProvider();
     if (!S.wallet) {
       return '<div class="gp-head"><p class="eyebrow">Wallet</p><h1>Get a wallet in one click</h1></div>'
-        + '<div class="grid2"><div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">GamePlay wallet</h2><p>A Solana keypair made in your browser. No extension, no seed phrase to write down first, and it works on phones.</p><p class="muted" style="font-size:0.875rem">Production uses a passkey or social-login embedded wallet with gasless transactions. This prototype keeps the devnet key in this browser so you can export it any time.</p><div class="row"><button class="btn primary" type="button" data-act="create-wallet">Create wallet</button><button class="btn ghost" type="button" data-act="import-wallet">Import a key</button></div></div>'
+        + '<div class="grid2"><div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">ClaudePlay wallet</h2><p>A Solana keypair made in your browser. No extension, no seed phrase to write down first, and it works on phones.</p><p class="muted" style="font-size:0.875rem">Production uses a passkey or social-login embedded wallet with gasless transactions. This prototype keeps the devnet key in this browser so you can export it any time.</p><div class="row"><button class="btn primary" type="button" data-act="create-wallet">Create wallet</button><button class="btn ghost" type="button" data-act="import-wallet">Import a key</button></div></div>'
         + '<div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">Bring your own</h2><p>Connect Phantom, Solflare or Backpack. You sign once to approve a 7-day session key, so games never interrupt you with pop-ups.</p>'
-        + (inj ? '<div class="row"><button class="btn" type="button" data-act="connect-injected">Connect ' + esc(inj.name) + '</button></div>' : '<p class="muted" style="font-size:0.875rem">No wallet extension can reach this page. Embedded pages often hide extensions, so open GamePlay in its own tab to use one.</p>')
+        + (inj ? '<div class="row"><button class="btn" type="button" data-act="connect-injected">Connect ' + esc(inj.name) + '</button></div>' : '<p class="muted" style="font-size:0.875rem">No wallet extension can reach this page. Embedded pages often hide extensions, so open ClaudePlay in its own tab to use one.</p>')
         + '</div></div>' + footHTML();
     }
     const w = myWallet() || { sol: 0, sparks: 0, park: 0, weeks: new Set(), lastAirdrop: 0, earnedSol: 0, earnedPark: 0, sparksEarned: 0, txs: [] };
@@ -1432,7 +1432,7 @@
     const all = w ? w.log.slice().reverse() : [];
     const rows = all.filter((r) => inFilter(r, S.ui.ledger)).slice(0, 200);
     const ok = all.filter((r) => r.ok).length;
-    return '<div class="gp-head"><p class="eyebrow">Ledger</p><h1>Every move, signed</h1><p class="muted" style="max-width:62ch">GamePlay replays every signed transaction in order and recomputes all balances, so nothing here depends on trusting the server. Tap a row to see the exact bytes that were signed.</p></div>'
+    return '<div class="gp-head"><p class="eyebrow">Ledger</p><h1>Every move, signed</h1><p class="muted" style="max-width:62ch">ClaudePlay replays every signed transaction in order and recomputes all balances, so nothing here depends on trusting the server. Tap a row to see the exact bytes that were signed.</p></div>'
       + '<div class="facts" style="margin-bottom:16px"><div class="fact"><b>' + fmtInt(all.length) + '</b><span>transactions</span></div><div class="fact"><b>' + fmtInt(ok) + '</b><span>verified</span></div><div class="fact"><b>' + fmtInt(all.length - ok) + '</b><span>rejected by the rules</span></div><div class="fact"><b>' + fmtInt(w ? w.wallets.size : 0) + '</b><span>wallets</span></div></div>'
       + '<div class="row" role="group" aria-label="Filter" style="margin-bottom:12px">' + FILTERS.map(([k, l]) => '<button class="chip" type="button" data-act="ledger-filter" data-f="' + k + '" aria-pressed="' + (S.ui.ledger === k) + '">' + l + '</button>').join('') + '</div>'
       + (rows.length ? ledgerTable(rows) : '<div class="empty"><h2>Nothing here yet</h2><p>Transactions appear as soon as anyone signs one.</p></div>') + footHTML();
@@ -1459,7 +1459,7 @@
   function flowDiagram() {
     const node = (x, y, t, sub, strong) => '<rect x="' + x + '" y="' + y + '" width="160" height="58" rx="4" style="fill:var(--panel-2);stroke:' + (strong ? 'var(--accent)' : 'var(--line)') + '" stroke-width="' + (strong ? 2 : 1) + '"/><text x="' + (x + 80) + '" y="' + (y + 25) + '" text-anchor="middle" style="fill:var(--ink);font:700 13px var(--body)">' + t + '</text><text x="' + (x + 80) + '" y="' + (y + 43) + '" text-anchor="middle" style="fill:var(--muted);font:400 11px var(--body)">' + sub + '</text>';
     const edge = (d, lx, ly, label, anchor) => '<path d="' + d + '" fill="none" style="stroke:var(--ink-2)" stroke-width="1.6" marker-end="url(#ah)"/><text x="' + lx + '" y="' + ly + '" text-anchor="' + (anchor || 'middle') + '" style="fill:var(--ink-2);font:600 11px var(--body);paint-order:stroke;stroke:var(--panel);stroke-width:4px;stroke-linejoin:round">' + label + '</text>';
-    return '<div class="diagram-wrap"><svg viewBox="0 0 760 236" role="img" aria-label="How value flows through GamePlay"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--ink-2)"/></marker></defs>'
+    return '<div class="diagram-wrap"><svg viewBox="0 0 760 236" role="img" aria-label="How value flows through ClaudePlay"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--ink-2)"/></marker></defs>'
       + node(20, 16, 'GPLY emission', '100k per epoch, −10% each') + node(300, 16, 'Creators', 'make and publish games') + node(580, 16, 'Burn', 'boosts and conversions')
       + node(20, 160, 'Players & collectors', 'play, score, collect') + node(300, 160, 'Treasury', '5% fees + Spark packs', true) + node(580, 160, 'Free AI compute', R.WEEKLY_SPARKS + ' Sparks a week each')
       + edge('M180 45 H296', 238, 37, '70% to creators') + edge('M100 74 V156', 108, 118, '30% to players', 'start')
@@ -1593,7 +1593,7 @@
     'remix': async (el) => { await startRemix(el.dataset.gid); },
     'report': (el) => {
       const g = gameOf(el); if (!g) return;
-      modal('<h2>Report ' + esc(g.title) + '</h2><p>Reports go to GamePlay’s moderators. Delisting hides a game from Explore; its signed record stays on the ledger.</p><div class="stack">'
+      modal('<h2>Report ' + esc(g.title) + '</h2><p>Reports go to ClaudePlay’s moderators. Delisting hides a game from Explore; its signed record stays on the ledger.</p><div class="stack">'
         + ['Harmful or hateful content', 'Copies someone else’s game or brand', 'Scam or misleading', 'Broken or unplayable'].map((r) => '<button class="btn ghost" type="button" data-act="confirm-report" data-gid="' + esc(g.gid) + '" data-reason="' + esc(r) + '" style="justify-content:flex-start">' + esc(r) + '</button>').join('')
         + '</div><div class="row"><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
     },
@@ -1695,7 +1695,7 @@
   async function settleEpoch() {
     if (!canSettle()) throw new Error('Only the prototype owner can settle epochs.');
     await ensureWallet();
-    if (S.wallet.del) throw new Error('Settle with a GamePlay wallet; session keys cannot act as the protocol authority.');
+    if (S.wallet.del) throw new Error('Settle with a ClaudePlay wallet; session keys cannot act as the protocol authority.');
     const w = S.world;
     const pending = C.computeEpoch(w, Date.now());
     if (!pending.rewards.length) throw new Error('Nothing to settle yet.');
@@ -1877,6 +1877,7 @@
     S.starters = await K.starterGames(C.sha256hex);
     loadStudio();
     S.world = await C.buildWorld({ accounts: worldAccounts(), protocol: protocol(), starters: S.starters, chain: worldChain });
+    if (MAINNET) { const tag = $('.mark span'); if (tag) tag.textContent = 'Fan project'; }
     await loadWallet();
     loadChainBal();
     renderHeader();
@@ -1938,6 +1939,6 @@
     }
     S.ready = true;
   }
-  boot().catch((e) => { console.error(e); $('#view').innerHTML = '<div class="empty"><h1>GamePlay could not start</h1><p class="mono">' + esc(e && e.message) + '</p></div>'; });
+  boot().catch((e) => { console.error(e); $('#view').innerHTML = '<div class="empty"><h1>ClaudePlay could not start</h1><p class="mono">' + esc(e && e.message) + '</p></div>'; });
   window.__pp = S;
 })();

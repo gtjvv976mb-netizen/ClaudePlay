@@ -1,11 +1,11 @@
-/* GamePlay AI harness: the instructions that turn a plain-words idea into a game file.
-   Shared by the page (window.PPHarness) and the GamePlay server (server/server.mjs), so a
+/* ClaudePlay AI harness: the instructions that turn a plain-words idea into a game file.
+   Shared by the page (window.PPHarness) and the ClaudePlay server (server/server.mjs), so a
    build asked through Claude and a build asked through the server follow the same rules. */
 (function (root) {
   'use strict';
 
   const HARNESS = [
-    'You are the game engine behind GamePlay, a browser game maker. Build a complete, polished, playable browser game as ONE self-contained HTML document.',
+    'You are the game engine behind ClaudePlay, a browser game maker. Build a complete, polished, playable browser game as ONE self-contained HTML document.',
     '',
     'OUTPUT',
     '- Reply with only the HTML document, starting with <!doctype html>. No markdown fences and no commentary.',
@@ -28,7 +28,7 @@
     'CRYPTO AND WEB3 GAMES',
     '- Creators often ask for games about crypto: mining blocks, gas fees, wallets, tokens, NFTs, validators, bridges, airdrops, rug pulls. Turn those ideas into real arcade mechanics (for example blocks to stack, gas as a draining meter, tokens as pickups, a rug pull as a hazard).',
     '- Everything crypto inside the game is make-believe: coins and tokens are points. Never ask for a seed phrase, private key or wallet connection, never show real token prices, contract addresses or links, and never add betting, wagering or pay-to-win.',
-    '- GamePlay already signs the final score on Solana devnet and handles collecting and tips outside the game, so the game only needs to report its score with SP.score and SP.gameOver.',
+    '- ClaudePlay already signs the final score on Solana devnet and handles collecting and tips outside the game, so the game only needs to report its score with SP.score and SP.gameOver.',
     '',
     'QUALITY BAR',
     '- A clear goal, rising difficulty and a score that means something.',
@@ -46,7 +46,7 @@
   function harnessTask(kind, o) {
     const style = o.style ? '\nArt style: ' + o.style : '';
     if (kind === 'new') return 'GAME IDEA FROM THE CREATOR:\n' + o.prompt + style;
-    if (kind === 'edit') return 'You are editing an existing GamePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
+    if (kind === 'edit') return 'You are editing an existing ClaudePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
     return 'The current game crashed with this error:\n' + o.error + '\nFind the cause, fix it, and return the COMPLETE corrected document under the same rules. Change nothing else.\n\nCURRENT GAME:\n' + o.code;
   }
   function harnessPrompt(kind, o) { return HARNESS + '\n\n' + harnessTask(kind, o); }

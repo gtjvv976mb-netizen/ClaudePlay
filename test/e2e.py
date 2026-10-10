@@ -166,7 +166,7 @@ async def scenario_mock(browser):
     await page.wait_for_selector('.toast:has-text("Built")', timeout=20000)
     check(True, 'AI build streamed and loaded: ' + await toast_text(page))
     calls = await page.evaluate('window.__sampleCalls')
-    check(len(calls) == 1 and calls[0]['head'].startswith('You are the game engine behind GamePlay'), 'harness prompt sent once')
+    check(len(calls) == 1 and calls[0]['head'].startswith('You are the game engine behind ClaudePlay'), 'harness prompt sent once')
     await page.wait_for_selector('#st-screen iframe', timeout=5000)
     t = await page.input_value('#pub-title')
     check(t == 'Target Pop', 'meta title read from generated file: ' + t)
@@ -327,7 +327,7 @@ async def scenario_site(browser):
     await page.goto(SITE)
     await page.wait_for_selector('#home-screen iframe', timeout=15000)
     check(await page.evaluate('document.documentElement.lang') == 'en', 'self-hosted page declares lang="en"')
-    check(await page.title() == 'GamePlay', 'self-hosted page title')
+    check(await page.title() == 'ClaudePlay', 'self-hosted page title')
     desc = await page.eval_on_selector('meta[name="description"]', 'm => m.content')
     check('free game maker' in desc, 'self-hosted page has a meta description')
     # skip link is the first stop for keyboard users
@@ -434,7 +434,7 @@ async def scenario_server(browser):
         prompt = await page.input_value('#st-prompt')
         check(prompt.startswith('Block Miner:'), 'idea fills the AI studio prompt: ' + prompt[:40])
         seg = await page.locator('button[data-act="studio-mode"][aria-pressed="true"]').inner_text()
-        check(seg.startswith('Describe'), 'AI studio is on for a website with a GamePlay server')
+        check(seg.startswith('Describe'), 'AI studio is on for a website with a ClaudePlay server')
         check(await page.locator('button[data-act="idea"][data-idea^="Rug Pull"]').count() == 1, 'studio lists crypto ideas')
         await page.click('button[data-act="gen-new"]')
         await page.wait_for_selector('.toast:has-text("Built")', timeout=20000)
@@ -476,7 +476,7 @@ async def scenario_server(browser):
         check(not real2, 'no console/page errors for the second visitor ' + str(real2[:5]))
         await ctx2.close()
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
-        check(not real, 'no console/page errors with the GamePlay server ' + str(real[:5]))
+        check(not real, 'no console/page errors with the ClaudePlay server ' + str(real[:5]))
         await ctx.close()
     finally:
         proc.terminate()

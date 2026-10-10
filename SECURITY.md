@@ -7,7 +7,7 @@ Scope: collects, tips, remix royalties, the protocol fee, weekly rewards, the si
 - **Simulated ledger (no `GP_SOLANA_CLUSTER`, or inside Claude):** unchanged. Balances are devSOL numbers replayed from signed ledger entries. Nothing touches Solana.
 - **Real network (`GP_SOLANA_CLUSTER=devnet`, `testnet` or `mainnet-beta`):** a collect or tip is a Solana transaction that the player's own wallet signs. It pays the creator, the parent and grandparent creators and the treasury directly, in one transaction, with the memo `gameplay:<ledger id>`. The ledger entry then carries the transaction signature (`b.chain`). Every page looks the payment up on Solana (through `/api/chain/txs`) and only counts the entry if the payment checks out. Balances shown are read from Solana.
 
-GamePlay never holds funds and the server never holds a private key.
+ClaudePlay never holds funds and the server never holds a private key.
 
 ## Findings and fixes
 
@@ -18,7 +18,7 @@ GamePlay never holds funds and the server never holds a private key.
 | 3 | A treasury key on the server would be a single point of theft. | **Fixed by design.** The treasury is only a public address (`GP_TREASURY`). The server refuses to start if the value is not a 32-byte address, so a pasted secret key is rejected. |
 | 4 | The built-in browser wallet keeps its key in `localStorage`, where any script bug could read it. | **Fixed for mainnet.** On mainnet, payments must come from a wallet app (Phantom, Solflare, Backpack, or any Wallet Standard wallet) and importing keys is disabled. The built-in wallet stays for devnet and for signing game actions. |
 | 5 | A published game could send whatever a player types to another site. | **Fixed.** Games run in a sandboxed frame (no same-origin, so no access to the page, its storage or wallets) and now also under a Content Security Policy that blocks every network request (`withSDK` in src/kits.js). AI-built games are also instructed never to ask for a wallet or seed phrase. |
-| 6 | The server's Solana endpoint could be used as a free general-purpose RPC relay. | **Fixed.** `/api/chain/send` relays only GamePlay payments: one signer, System transfers, a `gameplay:` memo and optional priority-fee settings. Requests are limited to 120 a minute per visitor and 16 KB per body. The faucet allows two drops a day per visitor and per address and does not exist on mainnet. |
+| 6 | The server's Solana endpoint could be used as a free general-purpose RPC relay. | **Fixed.** `/api/chain/send` relays only ClaudePlay payments: one signer, System transfers, a `gameplay:` memo and optional priority-fee settings. Requests are limited to 120 a minute per visitor and 16 KB per body. The faucet allows two drops a day per visitor and per address and does not exist on mainnet. |
 | 7 | Tips had no upper bound. | **Fixed.** Tips are capped at the same maximum as collect prices in both modes. |
 | 8 | Nothing stopped a deploy from pointing at mainnet by accident. | **Fixed.** Mainnet starts only with `GP_ALLOW_MAINNET=yes` and a treasury address. Devnet is the default in `render.yaml`. |
 | 9 | Signing confusion between ledger messages and Solana transactions from the same key. | **Not exploitable.** Ledger messages start with `GAMEPLAY/v1`; Solana messages start with byte `0x01`. Session keys from wallet apps can sign game actions for 7 days but cannot move funds: every payment needs the wallet app's own approval. |
@@ -37,7 +37,7 @@ Only Ken can do these. Nothing in the repo switches production to mainnet or mov
 
 1. **Fee wallet.** Create a wallet you control in Phantom or Solflare (a Ledger hardware wallet is better). Keep its recovery phrase offline. Never paste the phrase or a private key into chat, the repo, Render, or any website. Give the site only its public address, as `GP_TREASURY`.
 2. **Try it on devnet.** Deploy on Render, set `GP_TREASURY`, switch your wallet app to devnet, and collect and tip a game with free devnet SOL.
-3. **Independent security audit** of the payment flow and the server, and **a legal opinion** on real-money tips, royalties and the protocol fee: the Philippine SEC's CASP Rules (in force since 5 July 2025), the BSP's VASP rules, tax, and any country you will serve. GamePlay stays non-custodial, sells no token and offers no peso-to-crypto exchange.
+3. **Independent security audit** of the payment flow and the server, and **a legal opinion** on real-money tips, royalties and the protocol fee: the Philippine SEC's CASP Rules (in force since 5 July 2025), the BSP's VASP rules, tax, and any country you will serve. ClaudePlay stays non-custodial, sells no token and offers no peso-to-crypto exchange.
 4. **Moderation** of published games (the content screening and queue in the roadmap).
 5. **Say "go" in the thread.** Then the deploy changes are: `GP_SOLANA_CLUSTER=mainnet-beta`, `GP_ALLOW_MAINNET=yes` and your own RPC endpoint in `GP_SOLANA_RPC` (the server refuses mainnet without one). The site's wording switches to real SOL by itself.
 

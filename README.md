@@ -1,4 +1,6 @@
-# GamePlay
+# ClaudePlay
+
+> Unofficial fan project. ClaudePlay is not affiliated with or endorsed by Anthropic. Claude is a trademark of Anthropic, PBC.
 
 A free game maker where anyone can play browser games, make one in a minute, and own and earn from it on Solana. This is the full project: the website, the app, the tests and the build script.
 
@@ -15,9 +17,9 @@ Open `dist/site/index.html` in any browser. That one file is the whole website.
 
 `dist/site/README.md` lists more hosts and explains what works on a plain website.
 
-## Put the full GamePlay online
+## Put the full ClaudePlay online
 
-A static host (like GitHub Pages) serves the site with the AI studio off, and each visitor's games stay in their own browser. The GamePlay server adds both missing pieces: it holds your Claude API key and runs AI builds, and it keeps a shared gallery, so every visitor sees every published game, share links work for everyone, and leaderboards show all players. The gallery is saved to disk and survives restarts.
+A static host (like GitHub Pages) serves the site with the AI studio off, and each visitor's games stay in their own browser. The ClaudePlay server adds both missing pieces: it holds your Claude API key and runs AI builds, and it keeps a shared gallery, so every visitor sees every published game, share links work for everyone, and leaderboards show all players. The gallery is saved to disk and survives restarts.
 
 ### One click on Render
 
@@ -44,11 +46,11 @@ ANTHROPIC_API_KEY=sk-ant-... npm start      # http://localhost:8787
 
 The server serves `dist/site`, keeps the shared gallery in `GP_DATA_DIR` (default `./data`), and streams AI builds from Claude: Sonnet 5.5 builds new games and Haiku 5.5 applies changes and bug fixes. Each visitor gets 12 builds a day by default. `server/server.mjs` lists the settings (`GP_DATA_DIR`, `GP_ADMIN_KEY`, `GP_DAILY_BUILDS`, `GP_DAILY_TOTAL`, `GP_MAX_ACTIVE`, `GP_MODEL_NEW`, `GP_MODEL_EDIT`, and `GP_TRUST_PROXY=1` behind a proxy). Without an API key it still serves the site and the shared gallery, with the AI studio off.
 
-The front page and the studio offer crypto game ideas (Block Miner, Rug Pull Runner, Gas Fee Dodger and more). The build instructions keep crypto make-believe inside games: tokens are points, nothing asks for a wallet or seed phrase, and there is no betting. GamePlay itself signs scores and handles collects on Solana devnet.
+The front page and the studio offer crypto game ideas (Block Miner, Rug Pull Runner, Gas Fee Dodger and more). The build instructions keep crypto make-believe inside games: tokens are points, nothing asks for a wallet or seed phrase, and there is no betting. ClaudePlay itself signs scores and handles collects on Solana devnet.
 
 ### Real Solana payments
 
-Set `GP_SOLANA_CLUSTER` (`devnet` in `render.yaml`) and `GP_TREASURY` (a wallet address, never a secret key), and collects and tips become real Solana transfers. The player's wallet pays the creator, the remix lineage and the treasury directly in one transaction; GamePlay never holds funds and the server holds no private key. Every page checks each payment on Solana before it counts. On devnet, the Wallet page has a faucet for free test SOL. Optional: `GP_SOLANA_RPC` for your own RPC endpoint.
+Set `GP_SOLANA_CLUSTER` (`devnet` in `render.yaml`) and `GP_TREASURY` (a wallet address, never a secret key), and collects and tips become real Solana transfers. The player's wallet pays the creator, the remix lineage and the treasury directly in one transaction; ClaudePlay never holds funds and the server holds no private key. Every page checks each payment on Solana before it counts. On devnet, the Wallet page has a faucet for free test SOL. Optional: `GP_SOLANA_RPC` for your own RPC endpoint.
 
 Mainnet (real money) refuses to start unless `GP_ALLOW_MAINNET=yes` and your own RPC endpoint in `GP_SOLANA_RPC` are also set. On mainnet, players pay and creators publish from a wallet app (Phantom, Solflare or Backpack), never from a key kept in the browser. Do that only after the owner checklist in [SECURITY.md](SECURITY.md): your own fee wallet, an independent security audit, a legal opinion and moderation.
 
@@ -69,4 +71,4 @@ python3 test/e2e.py /tmp/gameplay-shots   # browser + accessibility tests (Pytho
 
 The website needs no npm packages; only the AI server uses the Anthropic SDK (`npm install`). The browser tests need `pip install playwright` and `playwright install chromium`.
 
-GamePlay is an independent project and is not affiliated with Google.
+ClaudePlay is an independent project and is not affiliated with Google.
