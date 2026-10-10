@@ -10,6 +10,9 @@ services:
     buildCommand: npm ci && node build.mjs
     startCommand: npm start
     healthCheckPath: /api/status
+    # Your own domain (DNS steps in the README). Render adds www.claudeplay.si and redirects it here.
+    domains:
+      - claudeplay.si
     disk:
       name: gameplay-data
       mountPath: /var/data
