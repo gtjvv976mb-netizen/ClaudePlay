@@ -143,6 +143,7 @@ export async function openGallery(opts = {}) {
   const state = { ver: 0, accounts: {}, protocol: {} };
   const blobIndex = new Set(store ? await store.load(state) : []);
   const memBlobs = new Map();
+  let checkBlob = opts.checkBlob || null; // (hash, data) => null to accept, or an error reply (the safety check)
   // A document change is applied only once the store has it.
   const save = async (col, id, data) => {
     if (store) await store.saveDoc(col, id, { ver: state.ver + 1, data }, state.ver + 1);
@@ -161,6 +162,8 @@ export async function openGallery(opts = {}) {
   const err = (status, code, message) => ({ status, body: { code, message } });
 
   return {
+    /* Requires every new game file to pass a check (server.mjs sets the safety check here). */
+    setBlobCheck(fn) { checkBlob = fn; },
     me(key) {
       if (!KEY_OK.test(key || '')) return err(401, 'unauthenticated', 'Missing gallery key.');
       const uid = uidOf(key);
@@ -204,6 +207,7 @@ export async function openGallery(opts = {}) {
         if (data.code.length > MAX_BLOB) return err(413, 'invalid_argument', 'This game file is too large.');
         if (memBlobs.has(id) || blobIndex.has(id)) return { status: 200, body: { ver: state.ver } };
         if (memBlobs.size + blobIndex.size >= limits.blobs) return err(507, 'quota_exceeded', 'The shared gallery is full.');
+        if (checkBlob) { const bad = await checkBlob(id, data); if (bad) return bad; }
         const doc = { code: data.code, size: data.code.length, ts: Number(data.ts) || Date.now() };
         if (store) {
           try { await store.saveBlob(id, doc); } catch (e) { console.error('gallery save failed', e); return err(503, 'unavailable', 'Could not save right now. Try again.'); }

@@ -218,11 +218,14 @@
     toast('You can view the shared gallery but not write to it, so your activity is saved on this device.');
     scheduleRefresh();
   }
-  async function putBlob(hash, code) {
+  async function putBlob(hash, code, screen) {
     S.blobs.set(hash, code);
     if (S.mode === 'shared') {
-      try { await S.caps.db.doc('blobs/' + hash).set({ code, size: code.length, ts: Date.now() }); return; }
-      catch (e) { if (e && e.code === 'invalid_argument') goLocal(myDoc()); else throw new Error('Could not store the game file (' + (e.code || 'error') + ').'); }
+      try { await S.caps.db.doc('blobs/' + hash).set(Object.assign({ code, size: code.length, ts: Date.now() }, screen ? { screen } : {})); return; }
+      catch (e) {
+        if (e && e.code === 'blocked') throw new Error(e.message || 'Run the safety check before publishing.');
+        if (e && e.code === 'invalid_argument') goLocal(myDoc()); else throw new Error('Could not store the game file (' + (e.code || 'error') + ').');
+      }
     }
     if (!LS.set(KEY.blob + hash, code)) toast('Storage is full on this device; the game file is kept only until you close the page.', 'bad');
   }
@@ -539,21 +542,23 @@
   /* ---------------- players (sandboxed iframes) ---------------- */
   function mountPlayer(host, code, opts) {
     unmountPlayer(host.id);
-    const seed = (C.randBytes(4).reduce((a, b) => a * 256 + b, 0)) >>> 0;
+    const seed = opts.seed != null ? opts.seed >>> 0 : (C.randBytes(4).reduce((a, b) => a * 256 + b, 0)) >>> 0;
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock');
     frame.setAttribute('title', opts.title || 'Game');
     frame.setAttribute('allow', 'autoplay');
-    frame.srcdoc = K.withSDK(code, seed, gameOpts());
+    frame.srcdoc = K.withSDK(code, seed, Object.assign(gameOpts(), opts.room ? { room: opts.room.hello } : {}));
     host.querySelectorAll('iframe').forEach((f) => f.remove());
     host.appendChild(frame);
-    const player = { id: host.id, frame, seed, opts, running: false };
+    const player = { id: host.id, frame, seed, opts, running: false, netReady: false, netQueue: [] };
     S.players.set(host.id, player);
+    if (opts.room) opts.room.listen((m) => { if (player.netReady) netDeliver(player, m); else player.netQueue.push(m); });
     return player;
   }
+  function netDeliver(p, m) { try { p.frame.contentWindow.postMessage(Object.assign({ __ppnet: 1 }, m), '*'); } catch (e) { /* the frame is gone */ } }
   function unmountPlayer(id) {
     const p = S.players.get(id);
-    if (p) { try { p.frame.remove(); } catch (e) { /* ignore */ } S.players.delete(id); }
+    if (p) { try { p.frame.remove(); } catch (e) { /* ignore */ } if (p.opts.room) p.opts.room.close(); S.players.delete(id); }
   }
   window.addEventListener('message', (e) => {
     const d = e.data;
@@ -562,6 +567,8 @@
       if (p.frame.contentWindow !== e.source) continue;
       if (d.t === 'score' && !p.running) { p.running = true; if (p.opts.onStart) p.opts.onStart(); }
       if (d.t === 'over') { if (!p.running && p.opts.onStart) p.opts.onStart(); p.running = false; }
+      if (d.t === 'net-ready' && p.opts.room) { p.netReady = true; p.netQueue.splice(0).forEach((m) => netDeliver(p, m)); }
+      if (d.t === 'net' && p.opts.room) p.opts.room.send(d.d, typeof d.to === 'string' ? d.to : null);
       if (p.opts.onMessage) p.opts.onMessage(d, p);
     }
   });
@@ -572,6 +579,70 @@
     if (!req) { toast('Fullscreen is not available here.'); return; }
     Promise.resolve(req.call(el)).catch(() => toast('Fullscreen is not available here.'));
   }
+
+  /* ---------------- multiplayer rooms ----------------
+     Games that use SP.room can be played together. On a website served by server/server.mjs a room is
+     a relay on the server (SITE.rooms); in the studio, "Test 2 players" joins two previews through a
+     room inside the page. A room endpoint is { hello: { me, host, players }, seed, listen(fn), send(d, to), close() }. */
+  const isMulti = (code) => /SP\.room\b/.test(code || '');
+  const roomBase = () => String(SITE.rooms || '').replace(/\/?$/, '');
+  function endpoint(hello, seed, sendFn, closeFn) {
+    let fn = null; const early = [];
+    return {
+      hello, seed,
+      listen(f) { fn = f; early.splice(0).forEach(f); },
+      emit(m) { if (m.t === 'join') hello.players.push({ id: m.id, name: m.name }); if (m.t === 'leave') hello.players = hello.players.filter((p) => p.id !== m.id); if (m.t === 'host') hello.host = m.id; if (fn) fn(m); else early.push(m); },
+      send: sendFn, close: closeFn,
+    };
+  }
+  function localRooms(n) {
+    const players = Array.from({ length: n }, (_, i) => ({ id: 'p' + (i + 1), name: 'Player ' + (i + 1) }));
+    const seed = (C.randBytes(4).reduce((a, b) => a * 256 + b, 0)) >>> 0;
+    const eps = players.map((p) => endpoint({ me: p.id, host: 'p1', players: players.slice() }, seed, (d, to) => {
+      eps.forEach((e) => { if (e.hello.me !== p.id && (!to || to === e.hello.me)) setTimeout(() => e.emit({ t: 'msg', from: p.id, d: JSON.parse(JSON.stringify(d === undefined ? null : d)) }), 30); });
+    }, () => {}));
+    return eps;
+  }
+  function joinServerRoom(code, gid, onChange) {
+    return new Promise((ok, fail) => {
+      const url = roomBase() + '/' + encodeURIComponent(code) + '/events?gid=' + encodeURIComponent(gid) + '&name=' + encodeURIComponent(S.wallet ? nameOf(S.wallet.from) : 'Player');
+      const es = new EventSource(url);
+      let ep = null, queue = [], timer = null, closed = false;
+      const flush = async () => {
+        timer = null;
+        if (!queue.length || closed) return;
+        const msgs = queue.splice(0, 40);
+        try { await fetch(roomBase() + '/' + code + '/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: ep.hello.me, token: ep.token, msgs }) }); } catch (e) { /* dropped, like a lost packet */ }
+        if (queue.length && !timer) timer = setTimeout(flush, 50);
+      };
+      es.onmessage = (e) => {
+        let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+        if (m.t === 'hello') {
+          ep = endpoint({ me: m.you, host: m.host, players: m.players }, m.seed, (d, to) => { if (queue.length < 400) queue.push({ d, to }); if (!timer) timer = setTimeout(flush, 50); }, () => { closed = true; es.close(); });
+          ep.token = m.token;
+          ok(ep); onChange(ep);
+        } else if (ep) { ep.emit(m); onChange(ep); }
+      };
+      es.onerror = () => {
+        if (closed) return;
+        closed = true; es.close();
+        if (!ep) fail(new Error('Could not join that room. It may have closed or be full.'));
+        else { ep.emit({ t: 'closed' }); onChange(ep, true); }
+      };
+    });
+  }
+  function roomHTML(g, state) {
+    if (!state) return '';
+    if (state.kind === 'offer') return '<div class="banner info"><b>This game is multiplayer.</b>' + (SITE.rooms ? '<span>Open a room and send friends the link to play together.</span><button class="btn small primary" type="button" data-act="room-open" data-gid="' + esc(g.gid) + '" style="justify-self:start">Play with friends</button>' : '<span>Rooms need the ClaudePlay website. You are playing solo here.</span>') + '</div>';
+    if (state.kind === 'joining') return '<div class="banner info"><b>Joining room ' + esc(state.code) + '…</b></div>';
+    if (state.kind === 'error') return '<div class="banner bad"><b>' + esc(state.message) + '</b><button class="btn small" type="button" data-act="room-leave" data-gid="' + esc(g.gid) + '" style="justify-self:start">Play solo</button></div>';
+    const ep = state.ep, link = location.href.split('#')[0] + '#game-' + g.gid + '&room=' + state.code;
+    return '<div class="banner info"><b>Room ' + esc(state.code) + (state.lost ? ' · disconnected' : ' · ' + ep.hello.players.length + (ep.hello.players.length === 1 ? ' player' : ' players')) + '</b>'
+      + '<span>' + esc(ep.hello.players.map((p) => p.name + (p.id === ep.hello.me ? ' (you)' : '')).join(', ')) + '</span>'
+      + '<label class="field"><span class="sr">Room link</span><input type="text" readonly id="room-link" value="' + esc(link) + '"></label>'
+      + '<div class="row"><button class="btn small" type="button" data-act="room-copy">Copy link</button><button class="btn small ghost" type="button" data-act="room-leave" data-gid="' + esc(g.gid) + '">Leave room</button></div></div>';
+  }
+  function renderRoom(g) { const el = $('#gp-room'); if (el) el.innerHTML = roomHTML(g, S.ui.room); }
 
   /* ---------------- AI harness ---------------- */
   const H = window.PPHarness;
@@ -826,7 +897,7 @@
     clearTimeout(studioSaveTimer);
     studioSaveTimer = setTimeout(() => {
       const st = S.studio;
-      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
+      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, players: st.players, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
       if (st.versions.length > 6) keep.vi = Math.max(-1, st.vi - (st.versions.length - 6));
       if (!LS.set(KEY.studio, keep) && keep.versions.length > 2) {
         keep.vi = Math.max(-1, keep.vi - (keep.versions.length - 2)); keep.versions = keep.versions.slice(-2);
@@ -898,6 +969,7 @@
     if (g.kit === 'ai') tags.push('<span class="chip">AI-built</span>');
     if (g.boost) tags.push('<span class="chip gold">' + I.park + ' ' + fmtInt(g.boost) + ' boost</span>');
     if (g.local) tags.push('<span class="chip">This device</span>');
+    if (g.ratingCount) tags.push('<span class="chip" title="Rated ' + g.rating.toFixed(1) + ' out of 5 by ' + plural(g.ratingCount, 'player') + '"><span aria-hidden="true">★</span> ' + g.rating.toFixed(1) + '<span class="sr"> out of 5 stars</span> (' + fmtInt(g.ratingCount) + ')</span>');
     const price = g.starter ? 'Free' : g.price ? fmtSOL(g.price) + ' SOL' : 'Free collect';
     return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '">'
       + '<div class="cart-body"><div class="cart-label">'
@@ -908,7 +980,9 @@
       + '<div class="cart-serial"><span>' + serial(g.hash) + '</span><span>' + plural(players, 'player') + '</span></div>'
       + '</div><div class="cart-grip"></div></div></a>';
   }
-  const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['boosted', 'Boosted']];
+  const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['rated', 'Top rated'], ['boosted', 'Boosted']];
+  /* Ranks by rating, pulled toward 3 stars until a game has a few ratings, so one 5-star vote does not top the list. */
+  const ratedScore = (g) => ((g.rating || 0) * (g.ratingCount || 0) + 3 * 3) / ((g.ratingCount || 0) + 3);
   function viewExplore() {
     const w = S.world;
     const starters = S.starters.map((s) => (w && w.games.get(s.gid)) || Object.assign({ creator: C.STARTER, starter: true, players: new Set(), collects: [] }, s));
@@ -919,6 +993,7 @@
       earning: (a, b) => (b.revenue - a.revenue) || (b.collects.length - a.collects.length),
       remixed: (a, b) => (b.remixes.length - a.remixes.length) || (b.ts - a.ts),
       boosted: (a, b) => (b.boost - a.boost) || (b.ts - a.ts),
+      rated: (a, b) => (ratedScore(b) - ratedScore(a)) || ((b.ratingCount || 0) - (a.ratingCount || 0)) || (b.ts - a.ts),
     }[S.ui.sort];
     community = community.sort(by);
     const totalPlayers = w ? new Set([].concat(...[...w.games.values()].map((g) => [...g.players]))).size : 0;
@@ -1284,12 +1359,21 @@
     if (!g.starter && canModerate()) out.push(btn('delist', g.delisted ? 'Relist' : 'Delist', 'danger'));
     return out.join('');
   }
+  function rateHTML(g) {
+    const ratings = g.ratings ? [...g.ratings.values()] : [];
+    const mine = S.wallet && ratings.find((r) => r.pk === S.wallet.from);
+    const own = S.wallet && g.creator === S.wallet.from;
+    const avg = g.ratingCount ? '<b>' + g.rating.toFixed(1) + '</b> out of 5 from ' + plural(g.ratingCount, 'rating') : 'No ratings yet';
+    return '<div class="rate"><span class="muted"><span aria-hidden="true">★</span> ' + avg + '</span>'
+      + (own ? '' : '<div class="row" role="group" aria-label="Your rating">' + [1, 2, 3, 4, 5].map((n) => '<button class="star" type="button" data-act="rate" data-gid="' + esc(g.gid) + '" data-stars="' + n + '" aria-pressed="' + !!(mine && mine.stars === n) + '" aria-label="Rate ' + n + (n === 1 ? ' star' : ' stars') + '"><span aria-hidden="true">' + (mine && n <= mine.stars ? '★' : '☆') + '</span></button>').join('') + '</div>')
+      + '</div>';
+  }
   function gameAbout(g) {
     const players = g.players ? g.players.size : 0;
     const facts = [[fmtInt(players), 'unique players'], [fmtInt(g.plays), 'runs'], [fmtInt(g.scores.size), 'signed scores']];
     if (!g.starter) facts.push([fmtInt(g.collects.length) + (g.cap ? ' / ' + fmtInt(g.cap) : ''), 'editions owned'], [fmtSOL(g.revenue), 'SOL earned'], [fmtInt(g.remixes.length), 'remixes']);
     if (g.reports && g.reports.length) facts.push([fmtInt(g.reports.length), 'reports']);
-    return '<div class="stack">' + (g.desc ? '<p>' + esc(g.desc) + '</p>' : '')
+    return '<div class="stack">' + rateHTML(g) + (g.desc ? '<p>' + esc(g.desc) + '</p>' : '')
       + (g.prompt ? '<p class="muted">Prompt: “' + esc(g.prompt) + '”</p>' : '')
       + '<div class="facts">' + facts.map(([b, s]) => '<div class="fact"><b>' + b + '</b><span>' + s + '</span></div>').join('') + '</div></div>';
   }
@@ -1344,17 +1428,31 @@
     }
     v.innerHTML = '<div class="gp-head"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(g.title) + '</h1><div class="row" id="gp-chips">' + gameChips(g) + '</div></div>'
       + '<div class="gp-grid"><div class="gp-main"><div class="screen" id="gp-screen" data-gid="' + esc(g.gid) + '" style="background:#05070a url(' + K.cover(g) + ') center/cover"></div>'
-      + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-about">' + gameAbout(g) + '</div></div>'
+      + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-room"></div><div id="gp-about">' + gameAbout(g) + '</div></div>'
       + '<aside class="gp-side"><div class="tabs" role="tablist" id="gp-tabs">' + TABS.map(([k, l]) => '<button role="tab" type="button" data-act="tab" data-tab="' + k + '" aria-selected="' + (S.ui.tab === k) + '">' + l + '</button>').join('') + '</div><div class="panel" id="gp-panel">' + gamePanel(g) + '</div></aside></div>' + footHTML();
     const code = await getBlob(g.hash);
     const host = $('#gp-screen');
     if (!host || host.dataset.gid !== g.gid) return;
     if (!code) { host.innerHTML = '<div class="screen-cover" style="cursor:default"><span>The game file is not available on this device.</span></div>'; return; }
-    mountPlayer(host, code, {
-      title: g.title,
+    const play = (room) => mountPlayer(host, code, {
+      title: g.title, room, seed: room ? room.seed : null,
       onStart: () => recordPlay(g.gid).catch(() => {}),
       onMessage: (d, p) => { if (d.t === 'over') onGameOver(g.gid, d, p).catch((e) => toast(e.message, 'bad')); if (d.t === 'error') toast('This game reported an error: ' + d.v, 'bad'); },
     });
+    S.ui.mountSeq = (S.ui.mountSeq || 0) + 1;
+    if (!isMulti(code)) { S.ui.room = null; play(null); return; }
+    const want = S.ui.roomCode;
+    if (!want || !SITE.rooms) { S.ui.room = { kind: 'offer' }; renderRoom(g); play(null); return; }
+    S.ui.room = { kind: 'joining', code: want }; renderRoom(g);
+    const seq = S.ui.mountSeq = (S.ui.mountSeq || 0) + 1;
+    try {
+      const ep = await joinServerRoom(want, g.gid, (e, lost) => { if (S.ui.room && S.ui.room.ep === e) { if (lost) S.ui.room.lost = true; renderRoom(g); } });
+      if (seq !== S.ui.mountSeq || S.route !== 'game' || S.arg !== g.gid || S.ui.roomCode !== want || $('#gp-screen') !== host) { ep.close(); return; }
+      S.ui.room = { kind: 'in', code: want, ep }; renderRoom(g);
+      play(ep);
+    } catch (e) {
+      S.ui.room = { kind: 'error', message: e.message }; renderRoom(g);
+    }
   }
   function updateGame(g) {
     $('#gp-chips').innerHTML = gameChips(g);
@@ -1411,7 +1509,8 @@
           + (has ? '' : '<div class="stack" style="gap:8px"><p class="eyebrow" id="crypto-ideas">Make a crypto game</p><div class="row" role="group" aria-labelledby="crypto-ideas">' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></div>')
           + '<label class="field"><span class="sr">Your idea or change</span><textarea id="st-prompt" data-in="prompt" placeholder="' + (has ? 'Ask for a change: “make the jump higher and add a double-jump power-up”' : 'Block Miner: stack falling transaction blocks before the gas meter runs dry…') + '">' + esc(st.prompt) + '</textarea></label>'
           + '<div class="row" role="group" aria-label="Game type"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + ((st.dim || '2d') === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
-          + '<label class="sr" for="st-genre">Genre</label><select id="st-genre" data-in="genre" style="width:auto"><option value="">Any genre</option>' + GENRES.map((g) => '<option' + (st.genre === g ? ' selected' : '') + '>' + esc(g) + '</option>').join('') + '</select></div>'
+          + '<label class="sr" for="st-genre">Genre</label><select id="st-genre" data-in="genre" style="width:auto"><option value="">Any genre</option>' + GENRES.map((g) => '<option' + (st.genre === g ? ' selected' : '') + '>' + esc(g) + '</option>').join('') + '</select>'
+          + '<button class="chip" type="button" data-act="players" aria-pressed="' + (st.players === 'multi') + '">Multiplayer</button></div>'
           + '<div class="row" role="group" aria-label="Art style">' + STYLES.map((s) => '<button class="chip" type="button" data-act="style" data-style="' + esc(s) + '" aria-pressed="' + (st.style === s) + '">' + esc(s) + '</button>').join('') + '</div>'
           + picsHTML()
           + '<div class="row" id="st-gen">' + genButtons() + '</div><div id="st-plan">' + planHTML() + '</div>'
@@ -1462,7 +1561,8 @@
       + '<label class="field">Description<input id="pub-desc" type="text" maxlength="200" data-in="pub-desc" value="' + esc(st.desc || meta.desc || '') + '" placeholder="One line players see on the cartridge"></label>'
       + '<div class="grid2"><label class="field">Collect price <small>' + UNIT + ', 0 for a free collect</small><input id="pub-price" type="number" min="0" max="100" step="0.01" data-in="pub-price" value="' + esc(st.price) + '"></label>'
       + '<label class="field">Editions <small>0 for an open edition</small><input id="pub-cap" type="number" min="0" max="100000" step="1" data-in="pub-cap" value="' + esc(st.cap) + '"></label></div>'
-      + '<p class="muted" style="font-size:0.875rem">Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
+      + (st.blocked ? '<div class="banner bad" role="alert"><b>The safety check stopped this game</b><span>' + esc(st.blocked.join(' ')) + '</span><span class="muted">Ask for a change that fixes it, then publish again.</span></div>' : '')
+      + '<p class="muted" style="font-size:0.875rem">Every game gets an automatic safety check before it goes public. Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
       + '<div class="row"><button class="btn primary" type="button" data-act="publish"' + (ready && !st.busy ? '' : ' disabled') + '>Sign &amp; publish</button>' + (ready ? '' : '<span class="muted">Build a game first.</span>') + '</div></div>';
   }
   function studioTools() {
@@ -1471,6 +1571,7 @@
     const versions = st.mode === 'ai' && st.versions.length > 1 ? '<div class="versions" role="group" aria-label="Versions">' + st.versions.map((v, i) => '<button class="chip" type="button" data-act="version" data-i="' + i + '" aria-pressed="' + (i === st.vi) + '">v' + (i + 1) + '</button>').join('') + '</div>' : '';
     return '<button class="btn small" type="button" data-act="restart"' + (ready ? '' : ' disabled') + '>Restart</button>'
       + '<button class="btn small ghost" type="button" data-act="fullscreen-studio"' + (ready ? '' : ' disabled') + '>Fullscreen</button>'
+      + (st.mode === 'ai' && isMulti(studioCode()) ? '<button class="btn small" type="button" data-act="mp-test" aria-pressed="' + !!st.mp + '">' + (st.mp ? 'One player' : 'Test 2 players') + '</button>' : '')
       + '<button class="btn small ghost" type="button" data-act="view-code-studio"' + (ready ? '' : ' disabled') + '>View code</button>'
       + (canDownload() ? '<button class="btn small ghost" type="button" data-act="download-studio"' + (ready ? '' : ' disabled') + '>Download .html</button>' : '')
       + versions;
@@ -1510,15 +1611,22 @@
       const host = $('#st-screen'); if (!host) return;
       const code = studioCode();
       S.studio.error = null; S.studio.lastRun = null;
+      unmountPlayer('st-p1'); unmountPlayer('st-p2');
       if (!code) { unmountPlayer('st-screen'); host.innerHTML = '<div class="screen-cover" style="cursor:default;background:transparent"><span>Your game appears here</span></div>'; rerenderStudioRight(); return; }
+      const onMessage = (d) => {
+        if (d.t === 'error') { S.studio.error = d.v; rerenderStudioRight(); }
+        if (d.t === 'over') { S.studio.lastRun = Math.floor(d.v || 0); rerenderStudioRight(); }
+      };
+      if (S.studio.mp && isMulti(code)) {
+        // Two previews in one room inside the page, so creators can test multiplayer before publishing.
+        unmountPlayer('st-screen');
+        host.innerHTML = '<div class="mp-split"><div id="st-p1"></div><div id="st-p2"></div></div>';
+        localRooms(2).forEach((ep, i) => mountPlayer($('#st-p' + (i + 1)), code, { title: 'Preview, player ' + (i + 1), room: ep, seed: ep.seed, onMessage }));
+        rerenderStudioRight();
+        return;
+      }
       host.innerHTML = '';
-      mountPlayer(host, code, {
-        title: 'Preview',
-        onMessage: (d) => {
-          if (d.t === 'error') { S.studio.error = d.v; rerenderStudioRight(); }
-          if (d.t === 'over') { S.studio.lastRun = Math.floor(d.v || 0); rerenderStudioRight(); }
-        },
-      });
+      mountPlayer(host, code, { title: 'Preview', onMessage });
       rerenderStudioRight();
     }, delay || 0);
   }
@@ -1548,7 +1656,7 @@
     S.ctl = ctl;
     try {
       const pics = await stylePics(st.pics, st.style);
-      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', pics, code: kind === 'new' ? '' : H.stripPictures(base || ''), error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
+      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', players: st.players === 'multi' ? 'multi' : '', pics, code: kind === 'new' ? '' : H.stripPictures(base || ''), error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
       const res = await aiBuild(req, {
         signal: ctl.signal,
         onText: ({ text }) => {
@@ -1596,7 +1704,13 @@
     if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Connect your wallet app (Phantom, Solflare or Backpack) in Wallet before publishing, so collects and tips reach a wallet you control.');
     const hash = await C.sha256hex(code);
     const gid = 'g' + C.randHex(8);
-    await putBlob(hash, code);
+    const check = await safetyCheck(code, title, (st.desc || meta.desc || '').slice(0, 200));
+    if (!check.ok) {
+      st.blocked = check.reasons; rerenderStudioLeft();
+      throw new Error('The safety check stopped this game: ' + check.reasons.join(' '));
+    }
+    st.blocked = null;
+    await putBlob(hash, code, check.token);
     const firstPrompt = st.mode === 'ai' ? (st.chat.find((m) => m.role === 'user') || {}).text || '' : '';
     const { tx } = await signAndAppend('publish', {
       gid, title, genre: st.mode === 'kit' ? K.KITS[st.kit].genre : meta.genre || 'Arcade', desc: (st.desc || meta.desc || '').slice(0, 200),
@@ -1607,6 +1721,29 @@
     S.studio.parent = null; S.studio.title = ''; S.studio.desc = '';
     saveStudio();
     nav('game', gid);
+  }
+  /* The safety check every game passes before it is published. On the website the server reviews it
+     (patterns plus Claude, and the gallery only takes checked files); inside Claude the viewer's own
+     Claude account reviews it; elsewhere only the pattern checks run. */
+  async function safetyCheck(code, title, desc) {
+    const found = H.staticScreen(code);
+    if (found.length) return { ok: false, reasons: found };
+    toast('Running the safety check…');
+    if (ENV === 'web' && SITE.screen) {
+      let res, j = {};
+      try { res = await fetch(SITE.screen, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, title, desc }) }); j = await res.json(); }
+      catch (e) { throw new Error('Could not reach the safety check. Check your connection and try again.'); }
+      if (!res.ok) throw new Error(j.message || 'The safety check failed. Try again.');
+      return j.ok ? { ok: true, token: j.token } : { ok: false, reasons: j.reasons || ['The safety check did not allow this game.'] };
+    }
+    if (ENV === 'claude' && S.caps.sample) {
+      try {
+        const res = await S.caps.sample(H.SCREEN_PROMPT + '\n\nTITLE: ' + title + '\nDESCRIPTION: ' + desc + '\n\nGAME CODE:\n' + H.stripPictures(code), { cache: false });
+        const v = H.parseScreen(res && (res.text || res));
+        return v.ok ? { ok: true } : { ok: false, reasons: v.reasons };
+      } catch (e) { return { ok: true }; } // the viewer declined or has no Claude access; the gallery owner can still delist
+    }
+    return { ok: true };
   }
   async function startRemix(gid) {
     const g = S.world.games.get(gid);
@@ -1671,7 +1808,7 @@
   }
 
   /* ---------- ledger ---------- */
-  const TYPE = { airdrop: 'Faucet', spark_claim: 'Weekly Sparks', handle: 'Handle', gen: 'AI build', publish: 'Publish', collect: 'Collect', tip: 'Tip', score: 'Score', spark_buy: 'Spark pack', boost: 'Boost', convert: 'Convert', report: 'Report', epoch: 'Epoch rewards' };
+  const TYPE = { airdrop: 'Faucet', spark_claim: 'Weekly Sparks', handle: 'Handle', gen: 'AI build', publish: 'Publish', collect: 'Collect', tip: 'Tip', score: 'Score', spark_buy: 'Spark pack', boost: 'Boost', convert: 'Convert', report: 'Report', rate: 'Rating', epoch: 'Epoch rewards' };
   const FILTERS = [['all', 'All'], ['games', 'Publishes'], ['money', 'Payments'], ['scores', 'Scores'], ['rewards', 'Rewards & burns'], ['bad', 'Rejected']];
   const inFilter = (r, f) => {
     const t = r.kind === 'epoch' ? 'epoch' : r.tx.t;
@@ -1701,6 +1838,7 @@
       case 'boost': return { who, what: g ? g.title : '', amt: fmtInt(tx.b.amt) + ' GPLY burned' };
       case 'convert': return { who, what: 'Sparks', amt: fmtInt((tx.b.lots || 0) * R.CONVERT.park) + ' GPLY burned' };
       case 'report': return { who, what: g ? g.title : '', amt: '—' };
+      case 'rate': return { who, what: g ? g.title : '', amt: Math.floor(+tx.b.stars || 0) + ' ★' };
       case 'handle': return { who, what: '@' + (tx.b.name || ''), amt: '—' };
       default: return { who, what: '', amt: '' };
     }
@@ -1790,12 +1928,13 @@
   /* ---------------- navigation ---------------- */
   function nav(route, arg) {
     const hash = route === 'game' ? 'game-' + arg : route;
+    S.ui.roomCode = null;
     if (location.hash.slice(1) !== hash) { try { history.pushState(null, '', '#' + hash); } catch (e) { try { location.hash = hash; } catch (_) { /* ignore */ } } }
     go(route, arg);
   }
   function go(route, arg) {
     const changed = route !== S.route || arg !== S.arg;
-    if (S.route === 'create' && route !== 'create') unmountPlayer('st-screen');
+    if (S.route === 'create' && route !== 'create') { unmountPlayer('st-screen'); unmountPlayer('st-p1'); unmountPlayer('st-p2'); }
     if (S.route === 'game' && (route !== 'game' || arg !== S.arg)) unmountPlayer('gp-screen');
     if (S.route === 'home' && route !== 'home') unmountPlayer('home-screen');
     if (S.route === 'business' && route !== 'business') unmountPlayer('biz-screen');
@@ -1807,12 +1946,19 @@
   }
   function parseHash() {
     const h = (location.hash || '').slice(1);
-    if (h.startsWith('game-')) return ['game', h.slice(5)];
+    if (h.startsWith('game-')) { const [gid, room] = h.slice(5).split('&room='); return ['game', gid, room && /^[A-HJ-NP-Z2-9]{6}$/.test(room) ? room : null]; }
     if (['home', 'explore', 'create', 'wallet', 'ledger', 'economy', 'business'].includes(h)) return [h, null];
     return ['home', null];
   }
-  window.addEventListener('hashchange', () => { const [r, a] = parseHash(); if (r !== S.route || a !== S.arg) go(r, a); });
-  window.addEventListener('popstate', () => { const [r, a] = parseHash(); if (r !== S.route || a !== S.arg) go(r, a); });
+  function onHash() {
+    const [r, a, room] = parseHash();
+    const roomChanged = (room || null) !== (S.ui.roomCode || null);
+    S.ui.roomCode = room || null;
+    if (r !== S.route || a !== S.arg) go(r, a);
+    else if (r === 'game' && roomChanged) mountGame();
+  }
+  window.addEventListener('hashchange', onHash);
+  window.addEventListener('popstate', onHash);
 
   /* ---------------- actions ---------------- */
   const gameOf = (el) => S.world && S.world.games.get(el.dataset.gid);
@@ -1982,6 +2128,36 @@
     'gen-edit': () => generate('edit'),
     'gen-fix': () => generate('fix'),
     'stop': () => { if (S.ctl) S.ctl.abort(); },
+    'rate': async (el) => {
+      const stars = +el.dataset.stars;
+      await ensureWallet();
+      await signAndAppend('rate', { gid: el.dataset.gid, stars });
+      toast('Rated ' + stars + (stars === 1 ? ' star' : ' stars') + '. Thanks!');
+    },
+    'room-open': async (el) => {
+      const gid = el.dataset.gid;
+      el.disabled = true;
+      try {
+        const res = await fetch(roomBase(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ gid }) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j.message || 'Could not open a room. Try again.');
+        try { history.replaceState(null, '', '#game-' + gid + '&room=' + j.code); } catch (e) { /* ignore */ }
+        S.ui.roomCode = j.code;
+        await mountGame();
+        toast('Room ' + j.code + ' is open. Copy the link and send it to friends.');
+      } catch (e) { el.disabled = false; toast(e.message, 'bad'); }
+    },
+    'room-copy': async () => {
+      const inp = $('#room-link'); if (!inp) return;
+      try { await navigator.clipboard.writeText(inp.value); toast('Room link copied.'); } catch (e) { inp.focus(); inp.select(); toast('Press Ctrl+C or ⌘C to copy the link.'); }
+    },
+    'room-leave': (el) => {
+      S.ui.roomCode = null;
+      try { history.replaceState(null, '', '#game-' + el.dataset.gid); } catch (e) { /* ignore */ }
+      mountGame();
+    },
+    'players': (el) => { S.studio.players = S.studio.players === 'multi' ? '' : 'multi'; el.setAttribute('aria-pressed', String(S.studio.players === 'multi')); saveStudio(); },
+    'mp-test': () => { S.studio.mp = !S.studio.mp; loadPreview(); },
     'pic-add': () => {
       const inp = document.createElement('input');
       inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/gif,image/webp';
@@ -2210,8 +2386,8 @@
     if (!document.documentElement.lang) document.documentElement.lang = 'en';
     applyPrefs();
     if (reducedMotionQuery && reducedMotionQuery.addEventListener) reducedMotionQuery.addEventListener('change', () => { if (S.prefs.motion === 'system') renderView(true); });
-    const [r, a] = parseHash();
-    S.route = r; S.arg = a;
+    const [r, a, room] = parseHash();
+    S.route = r; S.arg = a; S.ui.roomCode = room || null;
     renderHeader();
     S.starters = await K.starterGames(C.sha256hex);
     loadStudio();

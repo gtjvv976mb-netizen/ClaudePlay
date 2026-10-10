@@ -373,7 +373,7 @@
     const supply = { emitted: 0, burned: 0 };
     const games = new Map();
     for (const s of starters) {
-      games.set(s.gid, { ...s, creator: STARTER, ts: 0, collects: [], tips: [], scores: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, starter: true });
+      games.set(s.gid, { ...s, creator: STARTER, ts: 0, collects: [], tips: [], scores: new Map(), ratings: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, starter: true });
     }
     const log = [];
     const epochs = [];
@@ -448,7 +448,7 @@
             title: cleanText(b.title, 40) || 'Untitled', genre: cleanText(b.genre, 24) || 'Arcade',
             desc: cleanText(b.desc, 200), prompt: cleanText(b.prompt, 600), hash: b.hash, size: Math.floor(num(b.size)) || 0,
             parent: b.parent || null, price, cap, kit: cleanText(b.kit, 20) || 'ai', params: b.params && typeof b.params === 'object' ? b.params : null,
-            collects: [], tips: [], scores: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, local: e.local,
+            collects: [], tips: [], scores: new Map(), ratings: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, local: e.local,
           };
           games.set(gid, g);
           if (g.parent) games.get(g.parent).remixes.push(gid);
@@ -532,6 +532,16 @@
           rec.moves.push({ from: '@compute', to: tx.from, amt: lots * RULES.CONVERT.sparks, unit: 'SPARK' });
           rec.ok = true; break;
         }
+        case 'rate': {
+          // One rating per signed-in account per game (the latest counts); creators cannot rate their own games.
+          const g = games.get(b.gid);
+          const stars = Math.floor(num(b.stars));
+          if (!g) { fail('Game not found'); break; }
+          if (!(stars >= 1 && stars <= 5)) { fail('Ratings are 1 to 5 stars'); break; }
+          if (g.creator === tx.from || (g.creatorUid && g.creatorUid === e.uid)) { fail('Creators cannot rate their own games'); break; }
+          g.ratings.set(e.uid || tx.from, { pk: tx.from, stars, ts: tx.ts });
+          rec.ok = true; break;
+        }
         case 'report': {
           const g = games.get(b.gid);
           if (!g) { fail('Game not found'); break; }
@@ -568,6 +578,11 @@
       cw.sparks += earned; cw.sparksEarned += earned;
     }
     for (const [gid, reason] of Object.entries(delisted)) { const g = games.get(gid); if (g) g.delisted = reason || 'Delisted'; }
+    for (const g of games.values()) {
+      const n = g.ratings.size;
+      let sum = 0; for (const r of g.ratings.values()) sum += r.stars;
+      g.ratingCount = n; g.rating = n ? sum / n : 0;
+    }
 
     return { wallets, games, treasury, supply, log, epochs, playersByAccount, config, now, delisted };
   }
