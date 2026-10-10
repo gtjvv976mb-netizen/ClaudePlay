@@ -32,6 +32,7 @@
   --seg-3: #0f7a6f;
   --led: #356c06;
   --shadow: rgba(20, 24, 30, .2);
+  --w-sky: #8fd3ff; --w-haze: #ffe6cc; --w-floor: #fff3e6; --w-grid: #ff4f9a; --w-sun: #ffd23f; --w-sun-2: #ff6a4d; --w-coin: #ffc21a; --w-hot: #ff4f6d; --w-cool: #12c2ae; --w-pop: #7a5cff;
   --scrim: rgba(10, 12, 16, .55);
   --display: "Dela Gothic One", "Arial Black", system-ui, sans-serif;
   --body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -49,6 +50,7 @@
     --pack: #c6ef3a; --pack-ink: #141a0c; --pack-ink-2: #34401c; --die: #eef1f3; --die-ink: #14181e;
     --gold: #f1c04d; --good: #4cc681; --warn: #f2a63c; --bad: #ff6e64; --seg-3: #4fd1c0; --led: #c6ef3a;
     --shadow: rgba(0, 0, 0, .55); --scrim: rgba(0, 0, 0, .65);
+    --w-sky: #05040c; --w-haze: #3a1650; --w-floor: #0b0916; --w-grid: #c6ef3a; --w-sun: #ffe14d; --w-sun-2: #ff3d8b; --w-coin: #ffd23f; --w-hot: #ff4f6d; --w-cool: #3df2dc; --w-pop: #9d7bff;
     color-scheme: dark;
   }
 }
@@ -59,6 +61,7 @@
   --pack: #c6ef3a; --pack-ink: #141a0c; --pack-ink-2: #34401c; --die: #eef1f3; --die-ink: #14181e;
   --gold: #f1c04d; --good: #4cc681; --warn: #f2a63c; --bad: #ff6e64; --seg-3: #4fd1c0; --led: #c6ef3a;
   --shadow: rgba(0, 0, 0, .55); --scrim: rgba(0, 0, 0, .65);
+  --w-sky: #05040c; --w-haze: #3a1650; --w-floor: #0b0916; --w-grid: #c6ef3a; --w-sun: #ffe14d; --w-sun-2: #ff3d8b; --w-coin: #ffd23f; --w-hot: #ff4f6d; --w-cool: #3df2dc; --w-pop: #9d7bff;
   color-scheme: dark;
 }
 /* In-page choices from Accessibility settings win over the device and the viewer theme. */
@@ -69,6 +72,7 @@
   --pack: #c6ef3a; --pack-ink: #141a0c; --pack-ink-2: #34401c; --die: #ffffff; --die-ink: #14181e;
   --gold: #8a6300; --good: #16764a; --warn: #9c5a00; --bad: #bf3329; --seg-3: #0f7a6f; --led: #356c06;
   --shadow: rgba(20, 24, 30, .2); --scrim: rgba(10, 12, 16, .55);
+  --w-sky: #8fd3ff; --w-haze: #ffe6cc; --w-floor: #fff3e6; --w-grid: #ff4f9a; --w-sun: #ffd23f; --w-sun-2: #ff6a4d; --w-coin: #ffc21a; --w-hot: #ff4f6d; --w-cool: #12c2ae; --w-pop: #7a5cff;
   color-scheme: light;
 }
 :root[data-gp-theme="dark"] {
@@ -78,6 +82,7 @@
   --pack: #c6ef3a; --pack-ink: #141a0c; --pack-ink-2: #34401c; --die: #eef1f3; --die-ink: #14181e;
   --gold: #f1c04d; --good: #4cc681; --warn: #f2a63c; --bad: #ff6e64; --seg-3: #4fd1c0; --led: #c6ef3a;
   --shadow: rgba(0, 0, 0, .55); --scrim: rgba(0, 0, 0, .65);
+  --w-sky: #05040c; --w-haze: #3a1650; --w-floor: #0b0916; --w-grid: #c6ef3a; --w-sun: #ffe14d; --w-sun-2: #ff3d8b; --w-coin: #ffd23f; --w-hot: #ff4f6d; --w-cool: #3df2dc; --w-pop: #9d7bff;
   color-scheme: dark;
 }
 :root[data-gp-theme="contrast"] {
@@ -87,6 +92,7 @@
   --pack: #ffd60a; --pack-ink: #000000; --pack-ink-2: #000000; --die: #ffffff; --die-ink: #000000;
   --gold: #ffd60a; --good: #7dff9a; --warn: #ffb340; --bad: #ff8a80; --seg-3: #7df9ff; --led: #ffd60a;
   --shadow: rgba(0, 0, 0, 0); --scrim: rgba(0, 0, 0, .85);
+  --w-sky: #05040c; --w-haze: #3a1650; --w-floor: #0b0916; --w-grid: #c6ef3a; --w-sun: #ffe14d; --w-sun-2: #ff3d8b; --w-coin: #ffd23f; --w-hot: #ff4f6d; --w-cool: #3df2dc; --w-pop: #9d7bff;
   color-scheme: dark;
 }
 :root[data-gp-text="lg"] { font-size: 112.5%; }
@@ -251,16 +257,25 @@ label.color input { width: 44px; height: 34px; padding: 2px; border: 1px solid v
 .ticks.small li { align-items: baseline; }
 @media (max-width: 960px) { .hero { grid-template-columns: 1fr; gap: 28px; } }
 
-.pack { --px: 0; --py: 0; position: relative; isolation: isolate; background: var(--pack); color: var(--pack-ink); border-radius: var(--r-l); padding: 52px 40px 26px; gap: 18px 40px; align-items: center;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr); grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; }
-.pack::before { content: ""; position: absolute; top: 18px; left: 50%; width: 92px; height: 20px; margin-left: -46px; border-radius: 999px; background: var(--bg); box-shadow: inset 0 2px 3px rgba(0, 0, 0, .18); }
-.pack .hero-copy { gap: 14px; }
+/* The front page floats over the background game (.world): the copy is a chartreuse card with a hang tab, the
+   console and the stickers sit on the right, and the open middle column is where the kart races. */
+.world { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; display: block; pointer-events: none; background: var(--bg); }
+.world[hidden] { display: none; }
+#view > .pack, #view > .foot-mini { position: relative; z-index: 1; }
+:root[data-route="home"] .wrap { overflow-x: clip; }
+.pack { --px: 0; --py: 0; position: relative; isolation: isolate; color: var(--ink); padding: 8px 0 4px; gap: 18px 28px; align-items: center;
+  grid-template-columns: minmax(0, 27rem) minmax(0, 1fr) minmax(0, 30rem); grid-template-rows: minmax(0, 1fr) auto; }
+.pack .hero-copy { grid-column: 1; position: relative; gap: 14px; background: var(--pack); color: var(--pack-ink); border-radius: var(--r-l); padding: 50px 28px 22px;
+  box-shadow: 0 2px 2px rgba(0, 0, 0, .1), 0 34px 60px -30px rgba(0, 0, 0, .6); rotate: -1deg; animation: slap .7s cubic-bezier(.2, .9, .3, 1.2) backwards;
+  translate: calc(var(--px) * -12px) calc(var(--py) * -8px); transition: translate .6s cubic-bezier(.16, 1, .3, 1); }
+.pack .hero-copy::before { content: ""; position: absolute; top: 18px; left: 50%; width: 84px; height: 18px; margin-left: -42px; border-radius: 999px; background: var(--pack-ink); opacity: .22; }
+.pack .stage3d { grid-column: 3; }
 .pack .lede { color: var(--pack-ink-2); font-size: 1.0625rem; max-width: 30em; }
 .pack .fine { color: var(--pack-ink-2); }
-.pack .hero-title { color: var(--pack-ink); font-size: clamp(2.25rem, min(4.6vw, 6.6vh), 4.25rem); }
+.pack .hero-title { color: var(--pack-ink); font-size: clamp(2rem, min(3.5vw, 6vh), 3.375rem); }
 .pack .hero-title .hl { display: inline-block; margin-top: .1em; background: var(--die); color: var(--die-ink); padding: .06em .28em .12em; border-radius: 18px; rotate: -2.5deg; box-shadow: 0 10px 18px -12px rgba(0, 0, 0, .5); }
 .pack .btn { background: var(--die); border-color: var(--die); color: var(--die-ink); }
-.pack a:not(.btn) { color: var(--pack-ink); text-decoration-color: var(--pack-ink); }
+.pack a:not(.btn) { color: var(--die-ink); text-decoration-color: var(--die-ink); }
 .pack :focus-visible { outline-color: var(--pack-ink); }
 /* Depth: every layer in the stage moves with the pointer by its own depth --d (calm motion leaves them still). */
 .stage3d { position: relative; min-width: 0; align-self: center; width: min(100%, calc((100dvh - 400px) * 1.55)); justify-self: center; }
@@ -315,8 +330,8 @@ label.color input { width: 44px; height: 34px; padding: 2px; border: 1px solid v
 .pack .maker-ideas .chip { flex: none; background: transparent; border-color: var(--pack-ink); color: var(--pack-ink); font-size: .8125rem; padding: 7px 11px; transition: transform .25s cubic-bezier(.34, 1.56, .64, 1), background-color .15s; }
 .pack .maker-ideas .chip:hover { background: var(--die); border-color: var(--die); color: var(--die-ink); transform: translateY(-2px) rotate(-2deg); }
 /* The strip of stickers along the bottom of the card. */
-.pack-shelf { --behind: var(--pack); grid-column: 1 / -1; display: grid; gap: 8px; min-width: 0; }
-.pack-shelf-head { display: flex; align-items: baseline; gap: 14px; }
+.pack-shelf { --behind: var(--bg); grid-column: 1 / -1; display: grid; gap: 8px; min-width: 0; }
+.pack-shelf-head { display: flex; align-items: baseline; gap: 14px; justify-self: start; background: var(--die); color: var(--die-ink); border-radius: 999px; padding: 4px 16px 3px; box-shadow: 0 8px 16px -10px rgba(0, 0, 0, .5); }
 .pack-shelf-head h2 { font: 400 1rem/1.2 var(--display); }
 .pack-shelf-head a { font-weight: 700; font-size: .875rem; display: inline-block; padding-block: 4px; }
 .pack .shelf { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); grid-template-columns: none; gap: 18px; overflow-x: auto; scrollbar-width: none; padding: 8px 4px 4px; margin: -8px -4px 0; }
@@ -326,7 +341,7 @@ label.color input { width: 44px; height: 34px; padding: 2px; border: 1px solid v
 .pack .cart .sticker img { border-radius: 10px; width: 100%; height: clamp(64px, 11.5vh, 112px); object-fit: cover; }
 .pack .cart .sticker::after { border-bottom-right-radius: 15px; }
 .pack .cart:hover .sticker, .pack .cart:focus-visible .sticker { transform: perspective(500px) translateY(-6px) rotateX(10deg) scale(1.04); }
-.pack .cart-title { font-size: .875rem; color: var(--pack-ink); padding: 0 2px; }
+.pack .cart-title { font-size: .875rem; justify-self: start; max-width: 100%; background: var(--die); color: var(--die-ink); border-radius: 999px; padding: 1px 10px; box-shadow: 0 6px 12px -8px rgba(0, 0, 0, .5); }
 .pack .cart-by, .pack .cart-tags { display: none; }
 .pack .cart:focus-visible { outline-color: var(--pack-ink); }
 /* One screen: on wide screens the front page is the header, the pack and a one-line footer. */
@@ -335,29 +350,33 @@ label.color input { width: 44px; height: 34px; padding: 2px; border: 1px solid v
   :root[data-route="home"] .wrap { flex: 1; width: 100%; display: flex; flex-direction: column; padding-block: 14px 10px; }
   :root[data-route="home"] .pack { display: grid; flex: 1; }
   :root[data-route="home"] .pack { min-height: 560px; }
+  :root[data-route="home"] .wrap { max-width: 1480px; }
 }
 @media (min-width: 961px) and (max-height: 840px) {
-  .pack { padding: 44px 34px 16px; row-gap: 10px; }
-  .pack::before { top: 14px; }
+  .pack { row-gap: 10px; }
+  .pack .hero-copy { padding: 42px 24px 16px; }
+  .pack .hero-copy::before { top: 14px; }
   .pack .hero-copy { gap: 10px; }
   .pack .lede { font-size: 1rem; }
   .maker-box textarea { padding-block: 8px 2px; }
-  .maker-box textarea[rows] { height: 2.6em; }
+  .maker-box textarea[rows] { height: 3.5em; }
   .maker-bar .btn { min-height: 40px; }
   .pack .cart .sticker img { height: clamp(56px, 9vh, 90px); }
   .mascot { translate: calc(var(--px) * 40px) calc(-42% + var(--py) * 30px); }
 }
-.foot-mini { margin-top: 10px; padding-top: 0; border: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; font-size: .75rem; }
+.foot-mini { margin-top: 10px; padding: 6px 16px; border: 0; border-radius: var(--r-m); background: var(--sheet); display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; font-size: .75rem; }
 .foot-mini .foot-links { margin-left: auto; gap: 4px 14px; }
 @media (max-width: 960px) {
-  .pack { grid-template-columns: 1fr; padding: 52px 20px 22px; }
+  .pack { grid-template-columns: 1fr; padding: 4px 0 18px; }
+  .pack .hero-copy, .pack .stage3d { grid-column: auto; }
+  .pack .hero-copy { rotate: none; }
   .stage3d { margin: 56px 0 6px; width: 100%; }
   .peek, .tag-sticker { display: none; }
   .mascot { width: 92px; right: 12px; translate: 0 -72%; }
   .pack .console { transform: none; }
 }
 @media (max-width: 560px) {
-  .pack { border-radius: 22px; margin-inline: -6px; padding-inline: 16px; }
+  .pack .hero-copy { border-radius: 22px; margin-inline: -6px; padding: 46px 16px 18px; }
   .pack .hero-title .hl { border-radius: 12px; }
   .maker-ideas { margin-inline: -16px; padding-inline: 16px; mask-image: none; }
   .pack .shelf { grid-auto-columns: 132px; margin-inline: -16px; padding-inline: 16px; }
