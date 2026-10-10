@@ -5,3 +5,4 @@ node_modules/
 # Build outputs for the claude.ai artifact and the test page; dist/site/ is kept in the repo.
 /dist/playpark.html
 /dist/local.html
+data/

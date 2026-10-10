@@ -33,7 +33,7 @@ To use your own domain (for example `gameplay.example`), add it in the host's do
 ## What needs more work
 
 - **AI studio.** Describing games in words needs the GamePlay server (`server/server.mjs` in the source repository), which holds your Claude API key and limits builds per visitor. On a static host without it, the page tells visitors to tune a kit instead.
-- **Shared gallery.** Games published on a plain website stay in that visitor's browser. A shared gallery needs a database or the Solana programs described in the blueprint.
+- **Shared gallery.** On a static host, games published by a visitor stay in that visitor's browser. The GamePlay server (`server/server.mjs` in the source repository) keeps a shared gallery so everyone sees every game.
 - **Contact button.** To show a contact button on the Business page, open `index.html`, search for `window.GP_SITE`, and put your email address or an `https://` booking link in `contact`. If you build from source, `GP_CONTACT=hello@example.com node build.mjs` does the same.
 
 GamePlay is an independent project and is not affiliated with Google.

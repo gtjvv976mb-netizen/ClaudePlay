@@ -15,9 +15,9 @@ Open `dist/site/index.html` in any browser. That one file is the whole website.
 
 `dist/site/README.md` lists more hosts and explains what works on a plain website.
 
-## Turn on the AI studio for everyone
+## Put the full GamePlay online
 
-A static host serves the site with the AI studio switched off, because describing games in words needs a Claude API key that must never be in the page. The GamePlay server holds the key and runs the builds.
+A static host (like GitHub Pages) serves the site with the AI studio off, and each visitor's games stay in their own browser. The GamePlay server adds both missing pieces: it holds your Claude API key and runs AI builds, and it keeps a shared gallery, so every visitor sees every published game, share links work for everyone, and leaderboards show all players. The gallery is saved to disk and survives restarts.
 
 ### One click on Render
 
@@ -26,8 +26,9 @@ A static host serves the site with the AI studio switched off, because describin
 1. Click the button and sign in to Render with GitHub.
 2. Paste your Anthropic API key (from https://console.anthropic.com/settings/keys) when Render asks for `ANTHROPIC_API_KEY`, then click *Deploy Blueprint*.
 3. When the deploy finishes, open the `onrender.com` link Render shows. Build a game from one of the crypto ideas to check it works.
+4. In the service's *Logs*, find the line `Owner link (keep it private)`. Open your site with that `?admin=…` ending once, in your own browser: that browser can then settle the weekly rewards (Economy page) and delist games.
 
-`render.yaml` sets everything else: 12 builds per visitor per day and 300 for the whole site, so a public link can't run up your bill. Change those in the service's *Environment* tab. The free plan sleeps after a while without visitors, so the first visit after that takes about a minute to wake up. The button needs this repository to be public; for a private one, use *New → Blueprint* in the Render dashboard and pick the repository.
+`render.yaml` uses Render's Starter instance with a 1 GB disk for the gallery (Render shows the price before you confirm; a disk needs a paid instance). For a free trial, set `plan: free` and remove the `disk` block: everything works, but published games reset on every deploy or restart. It also sets 12 AI builds per visitor per day and 300 for the whole site, so a public link can't run up your bill; change those in the *Environment* tab. The button needs this repository to be public; for a private one, use *New → Blueprint* in the Render dashboard and pick the repository.
 
 ### Anywhere else
 
@@ -39,7 +40,7 @@ node build.mjs
 ANTHROPIC_API_KEY=sk-ant-... npm start      # http://localhost:8787
 ```
 
-The server serves `dist/site` and streams AI builds from Claude: Sonnet 5.5 builds new games and Haiku 5.5 applies changes and bug fixes. Each visitor gets 12 builds a day by default. `server/server.mjs` lists the settings (`GP_DAILY_BUILDS`, `GP_DAILY_TOTAL`, `GP_MAX_ACTIVE`, `GP_MODEL_NEW`, `GP_MODEL_EDIT`, and `GP_TRUST_PROXY=1` behind a proxy). Without a key it still serves the site, with the AI studio off.
+The server serves `dist/site`, keeps the shared gallery in `GP_DATA_DIR` (default `./data`), and streams AI builds from Claude: Sonnet 5.5 builds new games and Haiku 5.5 applies changes and bug fixes. Each visitor gets 12 builds a day by default. `server/server.mjs` lists the settings (`GP_DATA_DIR`, `GP_ADMIN_KEY`, `GP_DAILY_BUILDS`, `GP_DAILY_TOTAL`, `GP_MAX_ACTIVE`, `GP_MODEL_NEW`, `GP_MODEL_EDIT`, and `GP_TRUST_PROXY=1` behind a proxy). Without an API key it still serves the site and the shared gallery, with the AI studio off.
 
 The front page and the studio offer crypto game ideas (Block Miner, Rug Pull Runner, Gas Fee Dodger and more). The build instructions keep crypto make-believe inside games: tokens are points, nothing asks for a wallet or seed phrase, and there is no betting. GamePlay itself signs scores and handles collects on Solana devnet.
 

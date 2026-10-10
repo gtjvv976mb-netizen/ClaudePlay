@@ -17,10 +17,15 @@
 //   GP_MAX_ACTIVE        AI builds running at once across all visitors (4)
 //   GP_TRUST_PROXY=1     read the visitor address from the first X-Forwarded-For entry (set this
 //                        behind a proxy that overwrites that entry, as Render does)
+//   GP_DATA_DIR          folder for the shared gallery (./data); put it on a persistent disk
+//   GP_ADMIN_KEY         any long secret; the server prints an owner link at startup. Open it once
+//                        to settle reward epochs and delist games from that browser
 import { createServer as httpServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openGallery } from './gallery.mjs';
+import { createHash } from 'node:crypto';
 
 await import('../src/harness.js');
 const H = globalThis.PPHarness;
@@ -85,7 +90,7 @@ function apiError(err) {
 }
 
 /* Creates the server. Options: root, client (an Anthropic client, or null for no AI), models,
-   daily, total, maxActive, trustProxy, log. */
+   daily, total, maxActive, trustProxy, log, gallery (from openGallery(), or null for none). */
 export function createServer(opts = {}) {
   const root = resolve(opts.root || join(here, '..', 'dist', 'site'));
   const client = opts.client || null;
@@ -94,6 +99,7 @@ export function createServer(opts = {}) {
   const daily = opts.daily || 12;
   const limits = limiter({ daily, total: opts.total || 0, maxActive: opts.maxActive || 4 });
   const log = opts.log || (() => {});
+  const gallery = opts.gallery || null;
 
   const visitor = (req) => {
     const fwd = opts.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -113,20 +119,21 @@ export function createServer(opts = {}) {
       if (!(await stat(file)).isFile()) throw new Error('not a file');
     } catch (e) { return send(res, 404, 'Not found', 'text/plain; charset=utf-8'); }
     let body = await readFile(file);
-    if (client && file === join(root, 'index.html')) {
-      // Tell the page where to send AI builds.
-      body = body.toString('utf8').replace(/window\.GP_SITE = (\{.*?\});/, (m, json) => 'window.GP_SITE = ' + JSON.stringify(Object.assign(JSON.parse(json), { ai: 'api/build' })).replace(/</g, '\\u003c') + ';');
+    if ((client || gallery) && file === join(root, 'index.html')) {
+      // Tell the page where to send AI builds and where the shared gallery lives.
+      const extra = Object.assign(client ? { ai: 'api/build' } : {}, gallery ? { gallery: 'api/db' } : {});
+      body = body.toString('utf8').replace(/window\.GP_SITE = (\{.*?\});/, (m, json) => 'window.GP_SITE = ' + JSON.stringify(Object.assign(JSON.parse(json), extra)).replace(/</g, '\\u003c') + ';');
     }
     res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
     res.end(req.method === 'HEAD' ? undefined : body);
   }
 
-  function readBody(req) {
+  function readBody(req, max = MAX_BODY) {
     return new Promise((ok, fail) => {
       let size = 0; const parts = [];
       // Past the limit, keep draining (so the client can read the 413) but stop storing.
-      req.on('data', (c) => { size += c.length; if (size <= MAX_BODY) parts.push(c); else if (size > 8 * MAX_BODY) req.destroy(); });
-      req.on('end', () => (size > MAX_BODY ? fail(Object.assign(new Error('too big'), { tooBig: true })) : ok(Buffer.concat(parts).toString('utf8'))));
+      req.on('data', (c) => { size += c.length; if (size <= max) parts.push(c); else if (size > 8 * max) req.destroy(); });
+      req.on('end', () => (size > max ? fail(Object.assign(new Error('too big'), { tooBig: true })) : ok(Buffer.concat(parts).toString('utf8'))));
       req.on('error', fail);
     });
   }
@@ -177,11 +184,28 @@ export function createServer(opts = {}) {
     }
   }
 
+  async function db(req, res, url) {
+    const key = String(req.headers['x-gp-key'] || '');
+    const reply = (r) => send(res, r.status, r.body);
+    const rest = url.pathname.slice('/api/db/'.length);
+    if (req.method === 'GET' && rest === 'me') return reply(gallery.me(key));
+    if (req.method === 'GET' && rest === 'snapshot') return reply(gallery.snapshot(Number(url.searchParams.get('since')) || 0));
+    if (req.method === 'GET' && rest.startsWith('blobs/')) return reply(await gallery.getBlob(rest.slice(6)));
+    if (req.method === 'PUT') {
+      let data;
+      try { data = JSON.parse(await readBody(req, 300 * 1024)); } catch (e) { return send(res, e.tooBig ? 413 : 400, { code: 'invalid_argument', message: e.tooBig ? 'This document is too large to save.' : 'The request was not valid JSON.' }); }
+      return reply(await gallery.put(rest, data, key, visitor(req)));
+    }
+    return send(res, 404, { code: 'not_found', message: 'Unknown gallery request.' });
+  }
+
   return httpServer(async (req, res) => {
     try {
-      const path = new URL(req.url, 'http://x').pathname;
+      const url = new URL(req.url, 'http://x');
+      const path = url.pathname;
+      if (path.startsWith('/api/db/')) return gallery ? await db(req, res, url) : send(res, 404, { code: 'not_found', message: 'This server has no shared gallery.' });
       if (path === '/api/build') return req.method === 'POST' ? await build(req, res) : send(res, 405, { code: 'bad_request', message: 'Use POST.' });
-      if (path === '/api/status') return send(res, 200, { ai: !!client, models: client ? models : null, daily, left: limits.left(visitor(req)) });
+      if (path === '/api/status') return send(res, 200, { ai: !!client, gallery: !!gallery, models: client ? models : null, daily, left: limits.left(visitor(req)) });
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { code: 'bad_request', message: 'Method not allowed.' });
       return await serveFile(req, res);
     } catch (e) {
@@ -202,7 +226,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.warn('ANTHROPIC_API_KEY is not set, so the AI studio is off. Kits, publishing and scores still work.');
   }
   const port = Number(env.PORT) || 8787;
+  // The owner's gallery key is derived from GP_ADMIN_KEY so it is URL-safe whatever the secret looks like.
+  const ownerKey = env.GP_ADMIN_KEY && env.GP_ADMIN_KEY.length >= 16 ? 'owner' + createHash('sha256').update('gameplay-owner:' + env.GP_ADMIN_KEY).digest('hex').slice(0, 40) : null;
+  if (env.GP_ADMIN_KEY && !ownerKey) console.warn('GP_ADMIN_KEY must be at least 16 characters; ignoring it.');
+  const gallery = await openGallery({ dir: resolve(env.GP_DATA_DIR || join(here, '..', 'data')), adminKey: ownerKey });
+  if (ownerKey) console.log('Owner link (keep it private): <your site address>/?admin=' + ownerKey);
   const server = createServer({
+    gallery,
     root: env.GP_ROOT,
     client,
     models: { new: env.GP_MODEL_NEW || undefined, edit: env.GP_MODEL_EDIT || undefined },
@@ -212,5 +242,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     trustProxy: env.GP_TRUST_PROXY === '1',
     log: (o) => console.log(JSON.stringify(Object.assign({ ts: new Date().toISOString() }, o))),
   });
+  const save = () => gallery.flush().then(() => process.exit(0));
+  process.on('SIGTERM', save); process.on('SIGINT', save);
   server.listen(port, () => console.log('GamePlay is running on http://localhost:' + port + (client ? ' with the AI studio on' : '')));
 }

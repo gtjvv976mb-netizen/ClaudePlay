@@ -1,5 +1,10 @@
 // Tests for server/server.mjs with a fake Anthropic client. Run `node build.mjs` first.
 import { createServer, buildParams, pickModel, limiter } from '../server/server.mjs';
+import { openGallery, uidOf } from '../server/gallery.mjs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let fails = 0; const ok = (c, m) => { if (!c) { fails++; console.log('FAIL', m); } else console.log('ok  ', m); };
 const H = globalThis.PPHarness;
@@ -155,6 +160,51 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
   const st = await (await fetch(base + '/api/status')).json();
   ok(st.left === 12, 'a cancelled build is not counted');
   server.close();
+}
+
+// --- shared gallery
+{
+  const dir = mkdtempSync(join(tmpdir(), 'gp-gallery-'));
+  const ADMIN = 'admin_' + 'k'.repeat(40), A = 'a'.repeat(48), B = 'b'.repeat(48);
+  let gallery = await openGallery({ dir, adminKey: ADMIN });
+  let { server, base } = await start({ client: null, gallery });
+  const html = await (await fetch(base + '/')).text();
+  ok(html.includes('"gallery":"api/db"') && !html.includes('"ai":'), 'index.html points at the shared gallery even without an AI key');
+  const db = (method, path, body, key) => fetch(base + '/api/db/' + path, { method, headers: Object.assign({ 'content-type': 'application/json' }, key ? { 'x-gp-key': key } : {}), body: body ? JSON.stringify(body) : undefined });
+  ok((await db('GET', 'me')).status === 401, 'gallery needs a key');
+  const meA = await (await db('GET', 'me', null, A)).json();
+  ok(meA.uid === uidOf(A) && meA.isOwner === false, 'uid comes from the key');
+  ok((await (await db('GET', 'me', null, ADMIN)).json()).isOwner === true, 'admin key is the owner');
+  const doc = { v: 1, txs: [{ t: 'airdrop' }], plays: {} };
+  ok((await db('PUT', 'accounts/' + meA.uid, doc, A)).status === 200, 'visitor saves their own account');
+  ok((await db('PUT', 'accounts/' + meA.uid, { v: 1, txs: [] }, B)).status === 403, "another visitor can't overwrite it");
+  const code = '<!doctype html><html><body>game</body></html>';
+  const hash = createHash('sha256').update(code).digest('hex');
+  ok((await db('PUT', 'blobs/' + hash, { code: code + 'x' }, A)).status === 400, 'game file must match its fingerprint');
+  ok((await db('PUT', 'blobs/' + hash, { code, ts: 1 }, A)).status === 200, 'game file stored under its fingerprint');
+  ok((await db('PUT', 'protocol/e1', { n: 1 }, A)).status === 403, "visitors can't settle epochs");
+  ok((await db('PUT', 'protocol/e1', { n: 1 }, ADMIN)).status === 200, 'owner can settle epochs');
+  ok((await db('PUT', 'protocol/../x', { n: 1 }, ADMIN)).status === 404, 'unknown documents rejected');
+  const s1 = await (await db('GET', 'snapshot')).json();
+  ok(s1.accounts[meA.uid].txs.length === 1 && s1.protocol.e1.n === 1, 'snapshot returns every document');
+  const s2 = await (await db('GET', 'snapshot?since=' + s1.ver)).json();
+  ok(!Object.keys(s2.accounts).length && !Object.keys(s2.protocol).length, 'snapshot since the last version is empty');
+  await gallery.flush(); server.close();
+
+  gallery = await openGallery({ dir, adminKey: ADMIN });
+  ({ server, base } = await start({ client: null, gallery }));
+  const s3 = await (await db('GET', 'snapshot')).json();
+  ok(s3.accounts[meA.uid] && s3.protocol.e1, 'gallery survives a restart');
+  const blob = await (await db('GET', 'blobs/' + hash)).json();
+  ok(blob.code === code, 'game files survive a restart');
+  ok((await db('GET', 'blobs/' + 'f'.repeat(64))).status === 404, 'missing game file is 404');
+  server.close();
+  rmSync(dir, { recursive: true, force: true });
+
+  const small = await openGallery({ limits: { newPerDay: 1 } });
+  const r1 = await small.put('accounts/' + uidOf(A), { v: 1 }, A, '1.2.3.4');
+  const r2 = await small.put('accounts/' + uidOf(B), { v: 1 }, B, '1.2.3.4');
+  ok(r1.status === 200 && r2.status === 429, 'new accounts per address are limited');
 }
 
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');

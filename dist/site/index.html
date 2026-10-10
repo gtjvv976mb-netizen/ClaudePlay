@@ -1872,7 +1872,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     no: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>',
   };
 
-  const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1' };
+  const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1' };
   const PREF_DEFAULTS = { theme: 'system', text: 'md', motion: 'system', speed: 1, sound: true };
   const ADJ = ['brisk', 'quiet', 'lucky', 'neon', 'sunny', 'swift', 'cosmic', 'mellow', 'bold', 'tiny', 'jolly', 'pixel', 'rapid', 'calm', 'wild', 'zesty'];
   const NOUN = ['lynx', 'otter', 'comet', 'falcon', 'gecko', 'panda', 'koi', 'badger', 'heron', 'moth', 'yak', 'wombat', 'raven', 'ibis', 'tapir', 'newt'];
@@ -3454,6 +3454,76 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     }, 0);
   });
 
+  /* ---------------- shared gallery on a website ---------------- */
+  /* On a website served by server/server.mjs (GP_SITE.gallery is set), the server keeps the shared
+     gallery. This gives the page the same db/user interface Claude gives an artifact. Each browser
+     has a random gallery key; the site owner opens the site once as /?admin=<GP_ADMIN_KEY>. */
+  async function webCaps() {
+    const base = SITE.gallery.replace(/\/?$/, '/');
+    const qs = new URLSearchParams(location.search);
+    const admin = qs.get('admin');
+    if (admin) {
+      LS.set(KEY.gallery, admin);
+      qs.delete('admin');
+      try { history.replaceState(null, '', location.pathname + (qs.toString() ? '?' + qs : '') + location.hash); } catch (e) { /* ignore */ }
+    }
+    let key = LS.get(KEY.gallery);
+    if (!key) { key = C.randHex(24); LS.set(KEY.gallery, key); }
+    const call = async (method, path, body) => {
+      let res;
+      try {
+        res = await fetch(base + path, { method, headers: Object.assign({ 'x-gp-key': key }, body ? { 'content-type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
+      } catch (e) { throw { code: 'unavailable', message: 'Could not reach the shared gallery.' }; }
+      let j = null;
+      try { j = await res.json(); } catch (e) { /* not JSON */ }
+      if (!res.ok) throw { code: (j && j.code) || 'unavailable', message: (j && j.message) || 'Gallery error ' + res.status };
+      return j;
+    };
+    let me;
+    try { me = await call('GET', 'me'); } catch (e) { toast('The shared gallery is not reachable, so your activity stays on this device for now.', 'bad'); return null; }
+
+    const cols = { accounts: new Map(), protocol: new Map() };
+    const subs = { accounts: [], protocol: [] };
+    let ver = 0, timer = null, failures = 0, polling = false;
+    const snap = (m) => ({ docs: [...m].map(([id, d]) => ({ id, exists: true, data: () => d })) });
+    async function poll() {
+      clearTimeout(timer);
+      if (polling) return;
+      polling = true;
+      try {
+        const s = await call('GET', 'snapshot?since=' + ver);
+        failures = 0;
+        const first = !ver, changed = {};
+        for (const c of ['accounts', 'protocol']) for (const [id, d] of Object.entries(s[c] || {})) { cols[c].set(id, d); changed[c] = true; }
+        ver = s.ver || ver || -1;
+        for (const c of ['accounts', 'protocol']) if (first || changed[c]) subs[c].forEach((x) => x.cb(snap(cols[c])));
+      } catch (e) {
+        if (++failures === 3) subs.accounts.forEach((x) => x.err && x.err(e));
+      }
+      polling = false;
+      timer = setTimeout(poll, document.hidden ? 15000 : 4000);
+    }
+    const db = {
+      collection: (c) => ({
+        onSnapshot(cb, err) {
+          subs[c].push({ cb, err });
+          if (subs.accounts.length + subs.protocol.length === 1) poll();
+          else if (ver) setTimeout(() => cb(snap(cols[c])), 0);
+          return () => {};
+        },
+      }),
+      doc: (path) => ({
+        async set(d) { await call('PUT', path, d); setTimeout(poll, 100); },
+        async get() {
+          try { const d = await call('GET', path); return { exists: true, data: () => d }; }
+          catch (e) { if (e.code === 'not_found') return { exists: false, data: () => undefined }; throw e; }
+        },
+      }),
+    };
+    const user = { id: async () => me.uid, isOwner: async () => !!me.isOwner, can: async () => true };
+    return { db, user, sample: null, downloads: null };
+  }
+
   /* ---------------- boot ---------------- */
   async function boot() {
     if (!document.documentElement.lang) document.documentElement.lang = 'en';
@@ -3469,10 +3539,15 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     renderHeader();
     renderView(true);
     const cl = window.claude;
+    let caps = null;
     if (cl && typeof cl.use === 'function') {
       const use = (n) => cl.use(n).catch(() => null);
       const [db, user, sample, downloads] = await Promise.all([use('db'), use('user'), use('sample'), use('downloads')]);
-      S.caps = { db, user, sample, downloads };
+      caps = { db, user, sample, downloads };
+    } else if (SITE.gallery) caps = await webCaps();
+    if (caps) {
+      const { db, user, sample } = caps;
+      S.caps = caps;
       if (user) {
         S.uid = await user.id();
         S.isOwner = await user.isOwner();

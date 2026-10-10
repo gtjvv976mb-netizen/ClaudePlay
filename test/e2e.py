@@ -450,6 +450,29 @@ async def scenario_server(browser):
         await page.click('button[data-act="publish"]')
         await page.wait_for_selector('.gp-head h1:has-text("Block Miner")', timeout=8000)
         check(True, 'published the AI-built crypto game')
+        check('Connected to the shared gallery' in await page.locator('.foot').inner_text(), 'website visitors write to the shared gallery')
+        gid_url = page.url
+        # a second visitor, in a fresh browser, sees and plays the published game
+        ctx2, page2, errs2 = await new_page(browser, viewport={'width': 390, 'height': 844})
+        await page2.goto(AI_SITE + '#explore')
+        await page2.wait_for_selector('.cart:has-text("Block Miner")', timeout=15000)
+        check(True, 'another visitor sees the published game in the arcade')
+        await page2.goto(gid_url.replace(AI_SITE, AI_SITE + '?r=1'))
+        await page2.wait_for_selector('#gp-screen iframe', timeout=10000)
+        await page2.wait_for_timeout(500)
+        box = await page2.locator('#gp-screen iframe').bounding_box()
+        await page2.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
+        await page2.wait_for_selector('.toast:has-text("New best")', timeout=12000)
+        check(True, 'the share link opens and plays for another visitor, score signed')
+        await page2.screenshot(path=f'{OUT}/31-second-visitor.png', full_page=True)
+        await page.wait_for_timeout(5000)
+        await page.click('button[data-act="tab"][data-tab="board"]') if await page.locator('button[data-act="tab"][data-tab="board"]').count() else None
+        await page.wait_for_timeout(300)
+        rows = await page.locator('#gp-panel tbody tr').count()
+        check(rows >= 1, f'creator sees the other visitor on the leaderboard ({rows} rows)')
+        real2 = [e for e in errs2 if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+        check(not real2, 'no console/page errors for the second visitor ' + str(real2[:5]))
+        await ctx2.close()
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real, 'no console/page errors with the GamePlay server ' + str(real[:5]))
         await ctx.close()
@@ -475,7 +498,9 @@ async def main():
     async with async_playwright() as p:
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required'])
+        only = os.environ.get('E2E_ONLY', '').split(',')
         for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_a11y):
+            if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
             try:
                 await sc(browser)
             except Exception as e:
