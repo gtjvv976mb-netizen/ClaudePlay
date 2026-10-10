@@ -1078,7 +1078,8 @@
       + '<p class="fine">Free to play and make, with no sign-up or wallet needed. ' + (MAINNET ? 'Collects and tips are paid in real SOL from your own wallet.' : 'Preview on Solana devnet: balances are test tokens and nothing is for sale.') + '</p></div>'
       + '<div class="stage3d"><figure class="console" id="home-console"><div class="console-bar"><span class="led" aria-hidden="true"></span><span>Now playing</span><span class="serial">' + serial(hero ? hero.hash : '') + '</span></div>'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
-      + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure></div></section>'
+      + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure>'
+      + '<img class="mascot" id="home-mascot" src="' + MASCOT + '" alt="" width="348" height="381" decoding="async"></div></section>'
 
       + '<section class="section" aria-labelledby="h-carts"><div class="section-head"><h2 id="h-carts">Pick a cartridge</h2><a href="#explore" data-nav="explore">See the whole arcade</a></div>'
       + '<p class="muted">Every game here is free to play and free to remix.</p><div class="shelf" id="home-shelf">' + homeShelf() + '</div></section>'
@@ -1137,6 +1138,7 @@
     unmountPlayer('home-screen');
     $('#view').innerHTML = homeHTML() + footHTML();
     heroScene($('#hero-3d'));
+    wakeMascot($('#home-mascot'));
     revealShelf($('#home-shelf'));
     const host = $('#home-screen');
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
@@ -1150,6 +1152,15 @@
   /* The front page's backdrop: cartridges floating in 3D, drawn with a small perspective projection on a
      2D canvas (no WebGL needed). Colors come from the theme tokens, so every theme recolors it. It pauses
      off screen and in a hidden tab, and draws one still frame when calm motion is on. */
+  // Cart, the mascot, sits on the console. The page carries a still; on the website (SITE.mascot, set by
+  // build.mjs) the waving loop, a separate file next to the page, replaces it once loaded, unless calm motion is on.
+  const MASCOT = 'MASCOT_STILL';
+  function wakeMascot(img) {
+    if (!img || !SITE.mascot || calmNow()) return;
+    const anim = new Image();
+    anim.onload = () => { if (img.isConnected && !calmNow()) img.src = anim.src; };
+    anim.src = SITE.mascot;
+  }
   function heroScene(canvas) {
     const ctx = canvas.getContext && canvas.getContext('2d');
     if (!ctx) return;
