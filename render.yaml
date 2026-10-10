@@ -4,15 +4,26 @@ services:
   - type: web
     name: gameplay
     runtime: node
-    plan: free
+    # The shared gallery lives on a persistent disk, which needs a paid instance (Starter).
+    # For a free trial, change this to "free" and delete the disk block: games then reset on every deploy.
+    plan: starter
     buildCommand: npm ci && node build.mjs
     startCommand: npm start
     healthCheckPath: /api/status
+    disk:
+      name: gameplay-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: NODE_VERSION
         value: "22"
+      - key: GP_DATA_DIR
+        value: /var/data
+      # A random secret; the service log prints your owner link (settle rewards, delist games).
+      - key: GP_ADMIN_KEY
+        generateValue: true
       # Render overwrites the first X-Forwarded-For entry with the real visitor address.
       - key: GP_TRUST_PROXY
         value: "1"

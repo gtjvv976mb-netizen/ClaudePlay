@@ -1,6 +1,7 @@
 // Runs server/server.mjs with a fake Claude client, for the browser tests: `node test/fake_ai_server.mjs 8766`.
 // Every build streams the same small game; GET /__calls lists what the page asked for.
 import { createServer } from '../server/server.mjs';
+import { openGallery } from '../server/gallery.mjs';
 
 const GAME = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Block Miner</title>
@@ -36,7 +37,8 @@ const client = { beta: { messages: { stream(params, options) {
   };
 } } } };
 
-const server = createServer({ client, daily: 50 });
+const gallery = await openGallery({ adminKey: 'owner_' + 'x'.repeat(40) });
+const server = createServer({ client, daily: 50, gallery });
 const handle = server.listeners('request')[0];
 server.removeAllListeners('request');
 server.on('request', (req, res) => {

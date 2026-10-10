@@ -27,7 +27,8 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 | `src/kits.js` | Canvas game engine, five tunable kits (runner, flap, shooter, breaker, dodge), brand palettes, the player SDK injected into every game (`window.SP`), procedural cover art. Exposed as `window.PPKits`. |
 | `src/harness.js` | The AI build harness shared by the page and the server: `HARNESS` (system prompt, including the crypto-game rules), `harnessTask()`, `checkRequest()`, style and idea lists (`CRYPTO_IDEAS`). Exposed as `window.PPHarness`. |
 | `src/app.js` | The app: routes (`home`, `explore`, `game-<id>`, `create`, `wallet`, `ledger`, `economy`, `business`), wallet, storage, sandboxed game players, AI studio (`aiBuild()` picks Claude's `sample` or the server), accessibility settings. |
-| `server/server.mjs` | Zero-config Node server: serves `dist/site`, injects `GP_SITE.ai`, and streams `POST /api/build` from the Claude API (Sonnet 5.5 for new games, Haiku 5.5 for edits) with per-visitor daily limits. The only file that uses an npm package (`@anthropic-ai/sdk`). |
+| `server/server.mjs` | Zero-config Node server: serves `dist/site`, injects `GP_SITE.ai` / `GP_SITE.gallery`, serves the shared gallery at `/api/db/*`, and streams `POST /api/build` from the Claude API (Sonnet 5.5 for new games, Haiku 5.5 for edits) with per-visitor daily limits. The only file that uses an npm package (`@anthropic-ai/sdk`). |
+| `server/gallery.mjs` | Shared gallery for the hosted website: the same `accounts/`, `blobs/`, `protocol/` documents as Claude's `db`, saved to `GP_DATA_DIR`. A browser's uid is derived from its random gallery key (`pp.gallery.v1`); blobs must match their SHA-256; only the owner (`GP_ADMIN_KEY`) writes `protocol/`. |
 | `src/index.html` | Styles (design tokens, light/dark/high-contrast themes) and the page shell. `<!--INLINE-SCRIPTS-->` is replaced by the three scripts at build time. |
 | `build.mjs` | Writes `dist/playpark.html` (body published as a claude.ai artifact), `dist/local.html` (test page) and `dist/site/` (the standalone website + README). |
 | `test/` | `core.test.mjs` unit tests, `server.test.mjs` server tests, `e2e.py` browser scenarios and a11y audit, `mock_claude.js` fake artifact runtime, `fake_ai_server.mjs` the server with a fake Claude for the browser tests. |
@@ -37,7 +38,7 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 ## Where it runs
 
 - **Inside Claude** (`ENV === 'claude'`): the artifact runtime provides `window.claude.use('db' | 'user' | 'sample' | 'downloads')`. The owner and invited editors write to a shared gallery in `db`; public-link viewers are read-only and fall back to local mode. `sample` powers the AI studio using the viewer's own Claude account.
-- **As a plain website** (`ENV === 'web'`): no `window.claude`. Everything runs in local mode with `localStorage`; downloads use a normal link. The AI studio is on only when `server/server.mjs` serves the page (it sets `window.GP_SITE.ai`); on a static host it shows a notice. Business inquiries use `window.GP_SITE.contact` (set `GP_CONTACT` when building).
+- **As a plain website** (`ENV === 'web'`): no `window.claude`. Everything runs in local mode with `localStorage`; downloads use a normal link. When `server/server.mjs` serves the page it sets `window.GP_SITE.ai` (AI studio on) and `window.GP_SITE.gallery` (`webCaps()` in app.js gives the page a `db`/`user` backed by the server, so it runs in shared mode like the artifact). On a static host the AI studio shows a notice and everything stays in local mode. Business inquiries use `window.GP_SITE.contact` (set `GP_CONTACT` when building).
 
 ## Rules that keep things working
 
@@ -56,7 +57,7 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 ## Next engineering steps
 
 1. Deploy `server/server.mjs` with a Claude API key (`render.yaml` / the README's Deploy to Render button), and move its in-memory daily limits to a shared store (and tie them to Sparks) once it runs on more than one instance.
-2. A shared gallery for the plain website (a small database or the Solana programs below).
+2. Move the gallery from a JSON file on one disk to a database once traffic needs more than one instance.
 3. Solana programs: an Anchor registry, Metaplex Core / Bubblegum v2 editions, a Merkle rewards distributor.
 4. Passkey embedded wallets (Privy, Dynamic or Para) and a Kora fee relayer for gasless actions.
 5. Game files on Arweave, plus content screening and a moderation queue.
