@@ -24,6 +24,7 @@ const HASH = /^[0-9a-f]{64}$/;
 /* Folder storage: gallery.json (rewritten atomically, batched) plus one file per game in blobs/. */
 export function fileStore(dir) {
   let state = null, flushTimer = null, flushing = Promise.resolve();
+  const kv = fileKv(dir);
   const flush = () => {
     clearTimeout(flushTimer); flushTimer = null;
     if (!state) return flushing;
@@ -50,6 +51,39 @@ export function fileStore(dir) {
       await rename(tmp, join(dir, 'blobs', id + '.json'));
     },
     async getBlob(id) { return JSON.parse(await readFile(join(dir, 'blobs', id + '.json'), 'utf8')); },
+    flush: () => Promise.all([flush(), kv.flush()]),
+    kv,
+  };
+}
+
+/* Small key-value store for build counts and Pro passes, saved to kv.json (batched like the index). */
+function fileKv(dir) {
+  let m = null, timer = null, saving = Promise.resolve();
+  const file = join(dir, 'kv.json');
+  const load = async () => {
+    if (m) return;
+    m = new Map();
+    try { for (const [k, e] of Object.entries(JSON.parse(await readFile(file, 'utf8')))) m.set(k, e); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  };
+  const flush = () => {
+    clearTimeout(timer); timer = null;
+    if (!m) return saving;
+    const now = Date.now();
+    const data = JSON.stringify(Object.fromEntries([...m].filter(([, e]) => !e.exp || e.exp > now)));
+    saving = saving.then(async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(file + '.tmp', data);
+      await rename(file + '.tmp', file);
+    }).catch((e) => console.error('kv save failed', e));
+    return saving;
+  };
+  const touch = () => { if (!timer) timer = setTimeout(flush, 250); };
+  const live = (k) => { const e = m.get(k); if (e && e.exp && e.exp < Date.now()) { m.delete(k); return null; } return e || null; };
+  return {
+    async incr(k, by, ttl) { await load(); const e = live(k); const v = (e ? Number(e.v) || 0 : 0) + by; m.set(k, { v, exp: e ? e.exp : ttl ? Date.now() + ttl * 1000 : 0 }); touch(); return v; },
+    async get(k) { await load(); const e = live(k); return e ? e.v : null; },
+    async set(k, v) { await load(); m.set(k, { v, exp: 0 }); touch(); },
+    async once(k) { await load(); if (live(k)) return false; m.set(k, { v: 1, exp: 0 }); touch(); return true; },
     flush,
   };
 }
@@ -77,6 +111,13 @@ export function redisStore(url, token, prefix = 'gp:') {
     async saveBlob(id, doc) { await call([['SET', prefix + 'blob:' + id, JSON.stringify(doc)], ['SADD', prefix + 'blobs', id]]); },
     async getBlob(id) { const [v] = await call([['GET', prefix + 'blob:' + id]]); return v ? JSON.parse(v) : null; },
     async flush() {},
+    // Build counts and Pro passes (see plans.mjs): atomic counters, so several instances can share them.
+    kv: {
+      async incr(k, by, ttl) { const [v] = await call([['INCRBY', prefix + k, String(by)]].concat(ttl ? [['EXPIRE', prefix + k, String(ttl)]] : [])); return Number(v); },
+      async get(k) { const [v] = await call([['GET', prefix + k]]); return v == null ? null : JSON.parse(v); },
+      async set(k, v) { await call([['SET', prefix + k, JSON.stringify(v)]]); },
+      async once(k) { const [v] = await call([['SET', prefix + k, '1', 'NX']]); return v === 'OK'; },
+    },
   };
 }
 

@@ -43,7 +43,7 @@ const client = { beta: { messages: { stream(params, options) {
 const gallery = await openGallery({ adminKey: 'owner_' + 'x'.repeat(40) });
 const fake = ['chain', 'mainnet'].includes(process.argv[3]) ? fakeRpc() : null;
 const chain = fake ? openChain({ cluster: process.argv[3] === 'mainnet' ? 'mainnet-beta' : 'devnet', treasury: 'GPTreasury1111111111111111111111111111111111', rpc: fake.rpc }) : null;
-const server = createServer({ client, daily: 50, gallery, chain });
+const server = createServer({ client, daily: 50, gallery, chain, pro: { price: 1e8, days: 30, daily: 10 } });
 const handle = server.listeners('request')[0];
 server.removeAllListeners('request');
 server.on('request', (req, res) => {

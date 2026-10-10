@@ -7,7 +7,9 @@ export async function fakeRedis(token = 'test-token') {
   const run = ([cmd, key, ...a]) => {
     switch (cmd) {
       case 'GET': return kv.has(key) ? kv.get(key) : null;
-      case 'SET': kv.set(key, a[0]); return 'OK';
+      case 'SET': if (a[1] === 'NX' && kv.has(key)) return null; kv.set(key, a[0]); return 'OK';
+      case 'INCRBY': { const v = (Number(kv.get(key)) || 0) + Number(a[0]); kv.set(key, String(v)); return v; }
+      case 'EXPIRE': return kv.has(key) ? 1 : 0;
       case 'HSET': { const h = hashes.get(key) || new Map(); hashes.set(key, h); h.set(a[0], a[1]); return 1; }
       case 'HGETALL': return [...(hashes.get(key) || new Map())].flat();
       case 'SADD': { const s = sets.get(key) || new Set(); sets.set(key, s); s.add(a[0]); return 1; }

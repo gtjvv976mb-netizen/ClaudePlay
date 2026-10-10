@@ -30,11 +30,20 @@ services:
       # Render overwrites the first X-Forwarded-For entry with the real visitor address.
       - key: GP_TRUST_PROXY
         value: "1"
+      # Free plan: AI builds per visitor per day, all on Claude Haiku 5.5 (about $0.02 a game).
       - key: GP_DAILY_BUILDS
-        value: "12"
-      # Builds per day across the whole site, so a public link cannot run up your API bill.
+        value: "3"
+      # Free builds per day across the whole site, so a public link cannot run up your API bill.
       - key: GP_DAILY_TOTAL
-        value: "300"
+        value: "100"
+      # Pro pass: paid in SOL from the player's wallet straight to GP_TREASURY. Unlocks Claude Sonnet 5.5
+      # and GP_PRO_BUILDS builds a day for GP_PRO_DAYS days. Needs GP_TREASURY; 0 turns Pro off.
+      - key: GP_PRO_PRICE_SOL
+        value: "0.1"
+      - key: GP_PRO_DAYS
+        value: "30"
+      - key: GP_PRO_BUILDS
+        value: "10"
       # Collects and tips are real Solana payments on this network. Devnet uses free test SOL.
       # Mainnet (real money) also needs GP_ALLOW_MAINNET=yes, and only after the checklist in SECURITY.md.
       - key: GP_SOLANA_CLUSTER

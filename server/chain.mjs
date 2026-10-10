@@ -62,6 +62,7 @@ export function openChain(opts) {
 
   return {
     site: { cluster, treasury },
+    lookup,
     async handle(method, rest, body, who) {
       try {
         if (method === 'GET' && rest === 'blockhash') {
