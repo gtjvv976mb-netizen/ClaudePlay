@@ -1064,26 +1064,21 @@
     const creatorBps = 10000 - R.FEE_BPS - R.PARENT_BPS - R.GRAND_BPS;
     const seg = [['you', 'You, the remixer', creatorBps], ['parent', 'Creator of the game you remixed', R.PARENT_BPS], ['grand', 'Creator one step further back', R.GRAND_BPS], ['fee', 'ClaudePlay protocol fee', R.FEE_BPS]];
     const solOf = (bps) => (bps / 10000).toFixed(2);
-    return '<section class="hero" aria-labelledby="hero-title"><div class="hero-copy">'
-      + '<p class="eyebrow">Free game maker · Built on Solana</p>'
+    const st = S.studio || {};
+    const dim = st.dim || '2d';
+    return '<section class="hero hero-home" aria-labelledby="hero-title"><canvas class="hero-3d" id="hero-3d" aria-hidden="true"></canvas><div class="hero-copy">'
       + '<h1 class="hero-title" id="hero-title"><span>Make it.</span> <span>Play it.</span> <span class="hl">Own it.</span></h1>'
-      + '<p class="lede">ClaudePlay lets anyone make a browser game in minutes, share it with a link, and earn when people play, collect or remix it. There is nothing to install, no sign-up, and it runs on any phone.</p>'
-      + '<div class="row cta"><a class="btn primary big" href="#explore" data-nav="explore">' + I.play + ' Play a game</a><a class="btn big" href="#create" data-nav="create">Make a game</a></div>'
-      + '<ul class="ticks"><li>Free to play and make</li><li>No sign-up or wallet needed</li><li>Phone, tablet or computer</li><li>Keyboard, touch and assist mode</li></ul>'
-      + '<p class="fine">' + (MAINNET ? 'Collects and tips are paid in real SOL from your own wallet. Playing and making games is free.' : 'Preview on Solana devnet: balances are test tokens and nothing is for sale.') + '</p></div>'
-      + '<figure class="console"><div class="console-bar"><span class="led" aria-hidden="true"></span><span>Now playing</span><span class="serial">' + serial(hero ? hero.hash : '') + '</span></div>'
+      + '<p class="lede">Describe a game in one sentence and Claude builds it, ready to play on any phone. Share it with a link, and earn when people play, collect or remix it.</p>'
+      + '<form class="maker" data-form="home-build"><label class="sr" for="home-prompt">Describe your game</label>'
+      + '<div class="maker-box"><textarea id="home-prompt" rows="2" maxlength="600" placeholder="A cat on a skateboard dodging gas fees across neon rooftops">' + esc(st.versions && st.versions.length ? '' : (st.prompt || '')) + '</textarea>'
+      + '<div class="maker-bar"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + (dim === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
+      + '<button class="btn primary" type="submit">' + I.spark + (aiReady() ? ' Build it' : ' Open the studio') + '</button></div></div>'
+      + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or start from a crypto idea</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form>'
+      + '<div class="row cta"><a class="btn" href="#explore" data-nav="explore">' + I.play + ' Play a game</a><a class="btn ghost" href="#create" data-act="home-kit">Tune a kit, no AI</a></div>'
+      + '<p class="fine">Free to play and make, with no sign-up or wallet needed. ' + (MAINNET ? 'Collects and tips are paid in real SOL from your own wallet.' : 'Preview on Solana devnet: balances are test tokens and nothing is for sale.') + '</p></div>'
+      + '<div class="stage3d"><figure class="console" id="home-console"><div class="console-bar"><span class="led" aria-hidden="true"></span><span>Now playing</span><span class="serial">' + serial(hero ? hero.hash : '') + '</span></div>'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
-      + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure></section>'
-
-      + '<section class="strip" aria-label="ClaudePlay at a glance">'
-      + '<div><b>' + Object.keys(K.KITS).length + '</b><span>game kits to start from</span></div>'
-      + '<div><b>' + R.WEEKLY_SPARKS + '</b><span>free Sparks for AI builds every week</span></div>'
-      + '<div><b>' + pct(10000 - R.FEE_BPS) + '</b><span>of every collect goes to the creator of an original game</span></div>'
-      + '<div><b>1 file</b><span>is a whole game, so you can keep it forever</span></div></section>'
-
-      + '<section class="section" aria-labelledby="h-crypto"><div class="section-head"><h2 id="h-crypto">Make a crypto game from one sentence</h2><a href="#create" data-nav="create">Open the AI studio</a></div>'
-      + '<p class="muted">Describe it in plain words and Claude builds the whole game, ready to play, publish on Solana' + (MAINNET ? '' : ' devnet') + ' and share. Start from one of these:</p>'
-      + '<div class="row">' + CRYPTO_IDEAS.map((t) => '<button class="btn small" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></section>'
+      + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure></div></section>'
 
       + '<section class="section" aria-labelledby="h-carts"><div class="section-head"><h2 id="h-carts">Pick a cartridge</h2><a href="#explore" data-nav="explore">See the whole arcade</a></div>'
       + '<p class="muted">Every game here is free to play and free to remix.</p><div class="shelf" id="home-shelf">' + homeShelf() + '</div></section>'
@@ -1141,6 +1136,8 @@
   function mountHome() {
     unmountPlayer('home-screen');
     $('#view').innerHTML = homeHTML() + footHTML();
+    heroScene($('#hero-3d'));
+    revealShelf($('#home-shelf'));
     const host = $('#home-screen');
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
     if (!host || !hero) return;
@@ -1149,6 +1146,129 @@
       onStart: () => recordPlay(hero.gid).catch(() => {}),
       onMessage: (d, p) => { if (d.t === 'over') onGameOver(hero.gid, d, p).catch((e) => toast(e.message, 'bad')); },
     });
+  }
+  /* The front page's backdrop: cartridges floating in 3D, drawn with a small perspective projection on a
+     2D canvas (no WebGL needed). Colors come from the theme tokens, so every theme recolors it. It pauses
+     off screen and in a hidden tab, and draws one still frame when calm motion is on. */
+  function heroScene(canvas) {
+    const ctx = canvas.getContext && canvas.getContext('2d');
+    if (!ctx) return;
+    let pal, palAt = -1;
+    const readPal = () => {
+      const css = getComputedStyle(document.documentElement), tok = (n) => css.getPropertyValue(n).trim() || '#888';
+      pal = { body: tok('--shell'), side: tok('--shell-dark'), line: tok('--line'), labels: [tok('--accent'), tok('--gold'), tok('--seg-3'), tok('--bad'), tok('--good')] };
+    };
+    readPal();
+    let seed = 7;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const carts = Array.from({ length: 30 }, (_, i) => ({
+      x: (rnd() - 0.5) * 30, y: (rnd() - 0.5) * 13, z: 9 + rnd() * 16,
+      rx: rnd() * 6.28, ry: rnd() * 6.28, vx: (rnd() - 0.5) * 0.5, vy: 0.25 + rnd() * 0.45, drift: 0.08 + rnd() * 0.12,
+      label: i % 5, s: 0.8 + rnd() * 0.5,
+    }));
+    // A cartridge: a box 1.0 wide, 1.2 tall, 0.26 deep, with a label on the front face.
+    const W = 0.5, H = 0.6, D = 0.13;
+    const V = [[-W, -H, -D], [W, -H, -D], [W, H, -D], [-W, H, -D], [-W, -H, D], [W, -H, D], [W, H, D], [-W, H, D]];
+    const F = [[0, 1, 2, 3, 'front'], [5, 4, 7, 6, 'back'], [4, 0, 3, 7, 'side'], [1, 5, 6, 2, 'side'], [4, 5, 1, 0, 'side'], [3, 2, 6, 7, 'side']];
+    const LIGHT = (() => { const l = [-0.4, -0.6, -0.7], m = Math.hypot(...l); return l.map((v) => v / m); })();
+    let w = 0, h = 0, raf = 0, last = 0, t = 0, px = 0, py = 0, visible = true;
+    function size() {
+      const r = canvas.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+      w = r.width; h = r.height; canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    const shade = (hex, k) => {
+      const m = /^#?([0-9a-f]{6})$/i.exec(hex); if (!m) return hex;
+      const n = parseInt(m[1], 16), f = (c) => Math.max(0, Math.min(255, Math.round(c * k)));
+      return 'rgb(' + f(n >> 16) + ',' + f((n >> 8) & 255) + ',' + f(n & 255) + ')';
+    };
+    function draw() {
+      if (Math.floor(t) !== palAt) { palAt = Math.floor(t); readPal(); } // follows theme changes
+      ctx.clearRect(0, 0, w, h);
+      const focal = Math.min(w, 900) * 0.9, cx = w * (w > 900 ? 0.62 : 0.5) + px * 18, cy = h * 0.5 + py * 12;
+      const polys = [];
+      for (const c of carts) {
+        const ax = c.rx + t * c.vx, ay = c.ry + t * c.vy, sx = Math.sin(ax), cxr = Math.cos(ax), sy = Math.sin(ay), cyr = Math.cos(ay);
+        const yy = c.y + Math.sin(t * c.drift + c.x) * 0.6;
+        const pts = V.map(([x, y, z]) => {
+          x *= c.s; y *= c.s; z *= c.s;
+          const x1 = x * cyr + z * sy, z1 = -x * sy + z * cyr;
+          const y2 = y * cxr - z1 * sx, z2 = y * sx + z1 * cxr;
+          return [x1 + c.x + px * 0.4, y2 + yy + py * 0.3, z2 + c.z];
+        });
+        for (const [a, b, cc, d, kind] of F) {
+          const A = pts[a], B = pts[b], Cc = pts[cc];
+          const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [Cc[0] - A[0], Cc[1] - A[1], Cc[2] - A[2]];
+          const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+          const mid = [(A[0] + Cc[0]) / 2, (A[1] + Cc[1]) / 2, (A[2] + Cc[2]) / 2];
+          if (n[0] * mid[0] + n[1] * mid[1] + n[2] * mid[2] <= 0) continue; // facing away
+          const nm = Math.hypot(n[0], n[1], n[2]) || 1, lit = 0.72 + 0.38 * Math.max(0, -(n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / nm);
+          const quad = [a, b, cc, d].map((i) => pts[i]);
+          if (quad.some((p) => p[2] < 0.5)) continue;
+          polys.push({ z: mid[2], kind, lit, label: pal.labels[c.label], quad, fog: Math.min(0.9, Math.max(0.15, 1.5 - mid[2] / 20)) });
+        }
+      }
+      polys.sort((p, q) => q.z - p.z);
+      const proj = (p) => [cx + (p[0] / p[2]) * focal, cy + (p[1] / p[2]) * focal];
+      for (const p of polys) {
+        const q = p.quad.map(proj);
+        ctx.globalAlpha = p.fog;
+        ctx.beginPath(); q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
+        ctx.fillStyle = shade(p.kind === 'side' ? pal.side : pal.body, p.lit); ctx.fill();
+        ctx.lineWidth = 1; ctx.strokeStyle = pal.line; ctx.stroke();
+        if (p.kind === 'front') {
+          // The label: the top two thirds of the face, inset.
+          const lerp = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+          const [tl, tr, br, bl] = [q[0], q[1], q[2], q[3]];
+          const L = (u, v) => lerp(lerp(tl, tr, u), lerp(bl, br, u), v);
+          const lab = [L(0.14, 0.1), L(0.86, 0.1), L(0.86, 0.6), L(0.14, 0.6)];
+          ctx.beginPath(); lab.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
+          ctx.fillStyle = shade(p.label, p.lit); ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+    function frame(now) {
+      if (!canvas.isConnected) return;
+      raf = 0;
+      if (!visible || !w || document.hidden || calmNow()) return;
+      t += Math.min(0.05, (now - (last || now)) / 1000); last = now;
+      draw();
+      raf = requestAnimationFrame(frame);
+    }
+    const wake = () => { if (!raf && canvas.isConnected && canvas.offsetWidth) { last = 0; draw(); if (!calmNow()) raf = requestAnimationFrame(frame); } };
+    size(); draw();
+    if ('IntersectionObserver' in window) new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible) wake(); }).observe(canvas);
+    heroScene.cur = { resize: () => { size(); draw(); wake(); }, wake };
+    if (!heroScene.bound) {
+      heroScene.bound = true;
+      const live = () => heroScene.cur && $('#hero-3d') ? heroScene.cur : null;
+      window.addEventListener('resize', () => { const c = live(); if (c) c.resize(); });
+      document.addEventListener('visibilitychange', () => { const c = live(); if (c && !document.hidden) c.wake(); });
+    }
+    const hero = canvas.parentElement;
+    if (hero && window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+      hero.addEventListener('pointermove', (e) => {
+        if (calmNow()) return;
+        const r = hero.getBoundingClientRect();
+        px = (e.clientX - r.left) / r.width - 0.5; py = (e.clientY - r.top) / r.height - 0.5;
+        const con = $('#home-console');
+        if (con) con.style.setProperty('--tilt-x', (-py * 5).toFixed(2) + 'deg'), con.style.setProperty('--tilt-y', (px * 7 - 9).toFixed(2) + 'deg');
+      });
+      hero.addEventListener('pointerleave', () => { px = py = 0; const con = $('#home-console'); if (con) { con.style.removeProperty('--tilt-x'); con.style.removeProperty('--tilt-y'); } });
+    }
+    wake();
+  }
+  // Cartridges on a shelf slide up in turn the first time they scroll into view.
+  function revealShelf(root) {
+    if (!root || calmNow() || !('IntersectionObserver' in window)) return;
+    const io = new IntersectionObserver((list) => list.forEach((e) => {
+      if (!e.isIntersecting) return;
+      io.unobserve(e.target);
+      e.target.style.setProperty('--i', String([...e.target.parentElement.children].indexOf(e.target) % 8));
+      e.target.classList.add('in');
+    }), { rootMargin: '0px 0px -8% 0px' });
+    [...root.children].forEach((c) => io.observe(c));
   }
   function updateHome() { const s = $('#home-shelf'); if (s) s.innerHTML = homeShelf(); }
 
@@ -2003,6 +2123,7 @@
     'style': (el) => { const s = el.dataset.style; S.studio.style = S.studio.style === s ? '' : s; $$('[data-act="style"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.style === S.studio.style))); saveStudio(); },
     'idea': (el) => { const idea = el.dataset.idea || el.textContent; S.studio.prompt = idea; const t = $('#st-prompt'); if (t) { t.value = idea; t.focus(); } saveStudio(); },
     'home-idea': (el) => { S.studio.mode = 'ai'; S.studio.prompt = el.dataset.idea; saveStudio(); nav('create'); },
+    'home-kit': () => { if (!S.studio.versions.length) S.studio.mode = 'kit'; saveStudio(); nav('create'); },
     'gen-new': () => generate('new'),
     'gen-edit': () => generate('edit'),
     'gen-fix': () => generate('fix'),
@@ -2116,6 +2237,7 @@
   });
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr[data-act]')) { e.preventDefault(); e.target.click(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target.id === 'home-prompt') { e.preventDefault(); e.target.form.requestSubmit(); }
   });
   document.addEventListener('submit', (e) => {
     const f = e.target.closest('[data-form]');
@@ -2129,6 +2251,12 @@
         await signAndAppend('handle', { name: v });
         toast('Handle saved.');
         renderView(true);
+      } else if (kind === 'home-build') {
+        const t = $('#home-prompt'), v = ((t && t.value) || '').trim();
+        if (!v) { toast('Describe your game first.'); if (t) t.focus(); return; }
+        S.studio.mode = 'ai'; S.studio.prompt = v; saveStudio();
+        nav('create');
+        if (aiReady()) await generate('new');
       } else if (kind === 'import') {
         await importWallet($('#import-key').value);
         closeModal();
