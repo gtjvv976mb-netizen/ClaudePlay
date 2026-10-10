@@ -1,6 +1,7 @@
 // Tests for server/server.mjs with a fake Anthropic client. Run `node build.mjs` first.
 import { createServer, buildParams, pickModel, limiter } from '../server/server.mjs';
-import { openGallery, uidOf } from '../server/gallery.mjs';
+import { openGallery, uidOf, fileStore, redisStore, copyGallery } from '../server/gallery.mjs';
+import { fakeRedis } from './fake_redis.mjs';
 import { chainConfig, openChain } from '../server/chain.mjs';
 import { fakeRpc } from './fake_rpc.mjs';
 import { createHash } from 'node:crypto';
@@ -164,11 +165,15 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
   server.close();
 }
 
-// --- shared gallery
-{
+// --- shared gallery, on a folder and on (fake) Upstash Redis
+const redis = await fakeRedis();
+const okAll = ok;
+for (const kind of ['folder', 'redis']) {
   const dir = mkdtempSync(join(tmpdir(), 'gp-gallery-'));
+  const mkStore = () => (kind === 'folder' ? fileStore(dir) : redisStore(redis.url, redis.token));
+  const ok = (c, m) => okAll(c, kind + ': ' + m);
   const ADMIN = 'admin_' + 'k'.repeat(40), A = 'a'.repeat(48), B = 'b'.repeat(48);
-  let gallery = await openGallery({ dir, adminKey: ADMIN });
+  let gallery = await openGallery({ store: mkStore(), adminKey: ADMIN });
   let { server, base } = await start({ client: null, gallery });
   const html = await (await fetch(base + '/')).text();
   ok(html.includes('"gallery":"api/db"') && !html.includes('"ai":'), 'index.html points at the shared gallery even without an AI key');
@@ -193,16 +198,48 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
   ok(!Object.keys(s2.accounts).length && !Object.keys(s2.protocol).length, 'snapshot since the last version is empty');
   await gallery.flush(); server.close();
 
-  gallery = await openGallery({ dir, adminKey: ADMIN });
+  gallery = await openGallery({ store: mkStore(), adminKey: ADMIN });
   ({ server, base } = await start({ client: null, gallery }));
   const s3 = await (await db('GET', 'snapshot')).json();
   ok(s3.accounts[meA.uid] && s3.protocol.e1, 'gallery survives a restart');
+  ok(s3.ver >= s1.ver, 'version keeps counting up after a restart');
+  const s4 = await (await db('GET', 'snapshot?since=' + (s3.ver + 50))).json();
+  ok(s4.accounts[meA.uid], 'a page ahead of the server after a restart gets everything again');
   const blob = await (await db('GET', 'blobs/' + hash)).json();
   ok(blob.code === code, 'game files survive a restart');
   ok((await db('GET', 'blobs/' + 'f'.repeat(64))).status === 404, 'missing game file is 404');
+  if (kind === 'redis') {
+    redis.setDown(true);
+    const r = await db('PUT', 'accounts/' + meA.uid, { v: 2, txs: [] }, A);
+    ok(r.status === 503, 'a save the database refuses is reported, not acknowledged');
+    redis.setDown(false);
+    const s5 = await (await db('GET', 'snapshot')).json();
+    ok(s5.accounts[meA.uid].txs.length === 1, 'the refused save did not change the gallery');
+  }
   server.close();
   rmSync(dir, { recursive: true, force: true });
-
+}
+{
+  // Moving a disk gallery to Redis copies everything once, then never again.
+  const dir = mkdtempSync(join(tmpdir(), 'gp-move-'));
+  const A = 'a'.repeat(48);
+  const g = await openGallery({ store: fileStore(dir) });
+  const code = '<!doctype html><p>moved</p>';
+  const hash = createHash('sha256').update(code).digest('hex');
+  await g.put('accounts/' + uidOf(A), { v: 1, txs: [1, 2] }, A, 'x');
+  await g.put('blobs/' + hash, { code }, A, 'x');
+  await g.flush();
+  const fresh = await fakeRedis();
+  const moved = await copyGallery(fileStore(dir), redisStore(fresh.url, fresh.token));
+  okAll(moved && moved.docs === 1 && moved.blobs === 1, 'a disk gallery moves to Redis: ' + JSON.stringify(moved));
+  const r = await openGallery({ store: redisStore(fresh.url, fresh.token) });
+  okAll(r.snapshot(0).body.accounts[uidOf(A)].txs.length === 2 && (await r.getBlob(hash)).body.code === code, 'moved games and accounts are all there');
+  okAll((await copyGallery(fileStore(dir), redisStore(fresh.url, fresh.token))) === null, 'it never copies over a gallery that already has data');
+  fresh.close(); rmSync(dir, { recursive: true, force: true });
+}
+redis.close();
+{
+  const A = 'a'.repeat(48), B = 'b'.repeat(48);
   const small = await openGallery({ limits: { newPerDay: 1 } });
   const r1 = await small.put('accounts/' + uidOf(A), { v: 1 }, A, '1.2.3.4');
   const r2 = await small.put('accounts/' + uidOf(B), { v: 1 }, B, '1.2.3.4');

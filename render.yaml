@@ -4,26 +4,26 @@ services:
   - type: web
     name: gameplay
     runtime: node
-    # The shared gallery lives on a persistent disk, which needs a paid instance (Starter).
-    # For a free trial, change this to "free" and delete the disk block: games then reset on every deploy.
-    plan: starter
+    # Free: the instance sleeps after 15 minutes without visitors and takes about a minute to wake.
+    # Published games are kept in a free Upstash Redis database (below), because free instances have no disk.
+    plan: free
     buildCommand: npm ci && node build.mjs
     startCommand: npm start
     healthCheckPath: /api/status
     # Your own domain (DNS steps in the README). Render adds www.claudeplay.si and redirects it here.
     domains:
       - claudeplay.si
-    disk:
-      name: gameplay-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: NODE_VERSION
         value: "22"
-      - key: GP_DATA_DIR
-        value: /var/data
+      # From your free Upstash Redis database (console.upstash.com → your database → REST API).
+      # Without them, published games are lost whenever the free instance restarts.
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
       # A random secret; the service log prints your owner link (settle rewards, delist games).
       - key: GP_ADMIN_KEY
         generateValue: true
