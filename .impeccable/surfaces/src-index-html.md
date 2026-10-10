@@ -8,9 +8,9 @@ related_targets: ["src/app.js"]
 Scope: the whole site, front page first. Visitor mode: persuade (front page), operate (studio, wallet, ledger).
 Audience: phone players arriving from links; first-time makers, many from crypto communities.
 
-## Current direction (2026-10-10, replaces the sticker pack below)
+## Current direction (2026-10-10, replaces the night arcade and the sticker pack)
 
-Night arcade, after the owner said he did not like the sticker-pack design and theme. See DESIGN.md: near-black ground (warm paper in light), Big Shoulders Display uppercase headings, solid hairline-bordered surfaces, one hot orange, the 3D background game on the front page.
+Calm and professional, after the owner asked for "visually appealing but not saturated" and "professional". See DESIGN.md: silver-grey and graphite grounds, one muted slate-blue accent, Geist at weight 600 in sentence case, pill controls, double-bezel panels with diffuse shadows, and the 3D background game slowed down in muted pastels.
 
 ## Direction contract (superseded)
 

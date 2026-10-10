@@ -1034,7 +1034,6 @@
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
     const st = S.studio || {};
     const dim = st.dim || '2d';
-    const tags = [['GG', 'ta'], ['+1 SOL', 'tb'], ['New best!', 'tc']];
     return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy">'
       + '<h1 class="hero-title" id="hero-title"><span>Make it.</span> <span>Play it.</span> <span class="hl">Own it.</span></h1>'
       + '<p class="lede">Describe a game and Claude builds it. Share the link and earn when people collect it.</p>'
@@ -1044,7 +1043,6 @@
       + '<button class="btn primary" type="submit">' + I.spark + (aiReady() ? ' Build it' : ' Open the studio') + '</button></div></div>'
       + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or try</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form></div>'
       + '<div class="stage3d">'
-      + tags.map(([t, k]) => '<span class="tag-sticker ' + k + '" aria-hidden="true">' + t + '</span>').join('')
       + '<figure class="console" id="home-console">'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
       + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure>'
@@ -1104,7 +1102,7 @@
     [...root.children].forEach((c) => io.observe(c));
   }
   /* ---------- the background: a 3D game that plays itself behind the front page ---------- */
-  // Cart's hover-kart races down a neon track through a city of game cartridges, grabbing coins and dodging blocks.
+  // Cart's hover-kart races down a quiet track through a city of game cartridges, grabbing coins and dodging blocks.
   // It drives itself; move the mouse to steer it and click an empty spot to jump. It holds still while the console game has focus. Raw WebGL, no libraries; colors come
   // from the --w-* tokens. Calm motion draws one still frame. The contrast theme and browsers without WebGL keep the
   // plain page. It is decoration: aria-hidden, no pointer events, and it stops when the page leaves the front page.
@@ -1276,7 +1274,7 @@
     // The game state.
     const LANES = [-4.4, -2.2, 0, 2.2, 4.4];
     const ship = { x: 0, vx: 0, y: 0, vy: 0, lane: 2, spin: 0 };
-    let objs = [], speed = 20, boost = 0, dist = 0, nextRow = 0, nextSide = 0, nextBoard = 0, coins = 0, shake = 0, pulse = 0, think = 0, clock = 0;
+    let objs = [], speed = 14, boost = 0, dist = 0, nextRow = 0, nextSide = 0, nextBoard = 0, coins = 0, shake = 0, pulse = 0, think = 0, clock = 0;
     let userX = null, userUntil = 0;
     const add = (o) => { o.alive = true; o.t = rnd() * 10; objs.push(o); return o; };
     function row(z) {
@@ -1309,13 +1307,13 @@
     for (let z = -20; z > -190; z -= 26) board(z);
 
     function crash(o) {
-      o.alive = false; shake = 0.55; ship.spin = 1; speed = Math.max(14, speed * 0.62); boost = 0;
-      burst(o.x, 0.8, o.z, o.col, 70, 11, 0.26, 18); burst(o.x, 0.8, o.z, P.die, 24, 7, 0.18, 10);
+      o.alive = false; shake = 0.2; ship.spin = 1; speed = Math.max(10, speed * 0.7); boost = 0;
+      burst(o.x, 0.8, o.z, o.col, 30, 8, 0.22, 18); burst(o.x, 0.8, o.z, P.die, 12, 5, 0.16, 10);
     }
     function grab(o) {
       o.alive = false; coins++; pulse = 1;
       burst(o.x, o.y, o.z, P.coin, 16, 5, 0.32, 4);
-      if (coins % 10 === 0) { boost = 2.2; for (let i = 0; i < 3; i++) burst(ship.x + (i - 1) * 3, 6 + rnd() * 3, -14 - rnd() * 8, pick([P.pop, P.cool, P.coin, P.hot]), 60, 9, 0.55, 3); }
+      if (coins % 10 === 0) { boost = 2.2; for (let i = 0; i < 3; i++) burst(ship.x + (i - 1) * 3, 6 + rnd() * 3, -14 - rnd() * 8, pick([P.pop, P.cool, P.coin, P.hot]), 24, 7, 0.45, 3); }
     }
     function jump() { if (ship.y < 0.05) { ship.vy = 9.6; burst(ship.x, 0.1, 0.4, P.ship, 14, 4, 0.3, 6); } }
     function pilot() {
@@ -1335,8 +1333,8 @@
     function step(dt) {
       clock += dt; dt = Math.min(dt, 0.05);
       const user = userX != null && performance.now() < userUntil;
-      speed = Math.min(30, speed + dt * 0.6);
-      const v = speed + (boost > 0 ? 12 : 0); boost = Math.max(0, boost - dt);
+      speed = Math.min(20, speed + dt * 0.4);
+      const v = speed + (boost > 0 ? 6 : 0); boost = Math.max(0, boost - dt);
       dist += v * dt;
       for (const o of objs) { o.z += v * dt; o.t += dt; }
       for (let i = 0; i < PN; i++) { const o = i * 13; if (pd[o + 6] <= 0) continue; pd[o + 2] += v * dt; }
@@ -1992,8 +1990,8 @@
     const inj = injectedProvider();
     if (!S.wallet) {
       return '<div class="gp-head"><h1>Get a wallet in one click</h1></div>'
-        + '<div class="grid2"><div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">ClaudePlay wallet</h2><p>A Solana keypair made in your browser. No extension, no seed phrase to write down first, and it works on phones.</p><p class="muted" style="font-size:0.875rem">Production uses a passkey or social-login embedded wallet with gasless transactions. This prototype keeps the devnet key in this browser so you can export it any time.</p><div class="row"><button class="btn primary" type="button" data-act="create-wallet">Create wallet</button><button class="btn ghost" type="button" data-act="import-wallet">Import a key</button></div></div>'
-        + '<div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">Bring your own</h2><p>Connect Phantom, Solflare or Backpack. You sign once to approve a 7-day session key, so games never interrupt you with pop-ups.</p>'
+        + '<div class="grid2"><div class="panel stack"><h2 class="display" style="font-size:1.25rem">ClaudePlay wallet</h2><p>A Solana keypair made in your browser. No extension, no seed phrase to write down first, and it works on phones.</p><p class="muted" style="font-size:0.875rem">Production uses a passkey or social-login embedded wallet with gasless transactions. This prototype keeps the devnet key in this browser so you can export it any time.</p><div class="row"><button class="btn primary" type="button" data-act="create-wallet">Create wallet</button><button class="btn ghost" type="button" data-act="import-wallet">Import a key</button></div></div>'
+        + '<div class="panel stack"><h2 class="display" style="font-size:1.25rem">Bring your own</h2><p>Connect Phantom, Solflare or Backpack. You sign once to approve a 7-day session key, so games never interrupt you with pop-ups.</p>'
         + (inj ? '<div class="row"><button class="btn" type="button" data-act="connect-injected">Connect ' + esc(inj.name) + '</button></div>' : '<p class="muted" style="font-size:0.875rem">No wallet extension can reach this page. Embedded pages often hide extensions, so open ClaudePlay in its own tab to use one.</p>')
         + '</div></div>' + footHTML();
     }
