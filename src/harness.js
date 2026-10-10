@@ -47,6 +47,13 @@
     "  * Input: g.keys.left/right/up/down/jump/action/action2/start are true while held (arrows/WASD, Space = jump, Z/J = action, X/K = action2); g.pressed.<name> is true only on the frame it went down. g.pointer { x, y (world), sx, sy (screen), down, pressed }. g.buttons(['left', 'right', 'jump']) adds on-screen touch buttons that press the same keys on phones; use them for any game that needs keys.",
     "  * g.scene('title', (data) => {...}) and g.go('play', data) clear the world and build a scene. g.start((dt, t) => { game logic; then draw the HUD with g.hud, a 2D context in game pixels }) runs every frame after the world is drawn. g.paused stops physics and timers.",
     '',
+    'MULTIPLAYER WITH SP.room',
+    '- When the request says Players: multiplayer, make a game 2 to 8 people play together over the internet through SP.room. ClaudePlay handles rooms and invite links; the game only exchanges small JSON messages.',
+    "  * SP.room.online is true in a room. SP.room.me is your player id, SP.room.players is [{ id, name }], SP.room.host is the id of the player whose game is the authority (SP.room.isHost), SP.room.name(id) gives a name.",
+    "  * SP.room.send(data, toId) sends a small JSON object to everyone else (or to one player). SP.room.on('message', (data, fromId) => {}), on('join', p), on('leave', p), on('host', id) when the host changes.",
+    '  * Design: the host runs the shared world (enemies, pickups, timers) and sends snapshots about 10 to 15 times a second; every player sends their own inputs or position about 15 times a second. Smooth other players toward their latest positions. Keep each message under 1 KB. Everyone in a room gets the same SP.rand() seed, so levels built from it match.',
+    "  * Show every player's name and score, handle players joining and leaving mid-game, and when SP.room.online is false (playing alone) still make the game fun: computer opponents or a solo mode, plus a hint to use Play with friends.",
+    '',
     'SOUND AND MUSIC WITH SPSound',
     "- window.SPSound is already loaded when your code mentions it, and starts after the first tap or key press. SPSound.sfx('jump'|'coin'|'hit'|'explode'|'shoot'|'powerup'|'lose'|'win'|'click'|'step', { pitch }) plays an effect. SPSound.music({ mood: 'happy'|'chill'|'tense'|'epic'|'spooky'|'retro', key: semitones, bpm, seed }) loops a composed track with bass, chords, melody and drums; call it again to change songs (for example a tense track for a boss) and SPSound.stop() to stop. SPSound.volume('music', 0..1).",
     '',
@@ -75,7 +82,7 @@
      cacheable system prompt. o: { prompt, style, mode, genre, pics, code, error }. */
   function harnessTask(kind, o) {
     const pics = o.pics && o.pics.length ? "\n\nCREATOR'S PICTURES (use with SP.image(name)):\n" + o.pics.map((p) => "- '" + p.name + "': " + p.w + 'x' + p.h + ' px').join('\n') : '';
-    const style = (o.style ? '\nArt style: ' + o.style : '') + (o.mode ? '\nGame type: ' + (o.mode === '3d' ? '3D (use SP3D)' : '2D') : '') + (o.genre ? '\nGenre: ' + o.genre : '') + pics;
+    const style = (o.style ? '\nArt style: ' + o.style : '') + (o.mode ? '\nGame type: ' + (o.mode === '3d' ? '3D (use SP3D)' : '2D') : '') + (o.genre ? '\nGenre: ' + o.genre : '') + (o.players === 'multi' ? '\nPlayers: multiplayer (use SP.room)' : '') + pics;
     if (kind === 'new') return 'GAME IDEA FROM THE CREATOR:\n' + o.prompt + style;
     if (kind === 'edit') return 'You are editing an existing ClaudePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
     return 'The current game crashed with this error:\n' + o.error + '\nFind the cause, fix it, and return the COMPLETE corrected document under the same rules. Change nothing else.\n\nCURRENT GAME:\n' + o.code;
@@ -103,7 +110,7 @@
     const str = (v) => (typeof v === 'string' ? v : '');
     const kind = KINDS.includes(b.kind) ? b.kind : null;
     if (!kind) return { ok: false, error: 'kind must be new, edit or fix' };
-    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), genre: str(b.genre).trim(), mode: MODES.includes(b.mode) ? b.mode : '', code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default' };
+    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), genre: str(b.genre).trim(), mode: MODES.includes(b.mode) ? b.mode : '', players: b.players === 'multi' ? 'multi' : '', code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default' };
     for (const k of Object.keys(LIMITS)) if (req[k].length > LIMITS[k]) return { ok: false, error: k + ' is longer than ' + LIMITS[k] + ' characters' };
     if (kind !== 'fix' && !req.prompt) return { ok: false, error: 'describe the game first' };
     if (kind !== 'new' && !/<html|<!doctype/i.test(req.code)) return { ok: false, error: 'edit and fix need the current game' };

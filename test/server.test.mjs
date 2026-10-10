@@ -415,5 +415,57 @@ redis.close();
   plain.server.close();
 }
 
+// Multiplayer rooms: open, join over Server-Sent Events, relay, leave, host hand-over, limits.
+{
+  const { openRooms, cleanName } = await import('../server/rooms.mjs');
+  ok(cleanName('<scr' + 'ipt>Ken!') === 'scriptKen' && cleanName('') === 'Player', 'room names are cleaned');
+  const { server, base } = await start({ gallery: await openGallery({}), rooms: openRooms({ perSecond: 5 }) });
+  const st = await (await fetch(base + '/api/status')).json();
+  ok(st.gallery, 'server with a gallery');
+  const made = await (await fetch(base + '/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ gid: 'g123' }) })).json();
+  ok(/^[A-HJ-NP-Z2-9]{6}$/.test(made.code) && Number.isInteger(made.seed), 'a room opens with a code and a seed: ' + made.code);
+  // A tiny SSE reader: collects events from a stream until closed.
+  function listen(url) {
+    const ctl = new AbortController(), events = [];
+    const ready = fetch(url, { signal: ctl.signal }).then(async (res) => {
+      if (res.status !== 200) { events.push({ status: res.status, body: await res.json() }); return; }
+      const reader = res.body.getReader(), dec = new TextDecoder(); let buf = '';
+      try { for (;;) { const c = await reader.read(); if (c.done) break; buf += dec.decode(c.value, { stream: true }); let i; while ((i = buf.indexOf('\n\n')) >= 0) { const chunk = buf.slice(0, i); buf = buf.slice(i + 2); const line = chunk.split('\n').find((l) => l.startsWith('data: ')); if (line) events.push(JSON.parse(line.slice(6))); } } } catch (e) { /* aborted */ }
+    }).catch(() => {});
+    return { events, close: () => ctl.abort(), ready };
+  }
+  const wait = async (fn, ms = 2000) => { const t = Date.now(); while (!fn() && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 20)); return fn(); };
+  const A = listen(base + '/api/rooms/' + made.code + '/events?gid=g123&name=Ann');
+  await wait(() => A.events.length);
+  const ha = A.events[0];
+  ok(ha.t === 'hello' && ha.host === ha.you && ha.seed === made.seed && ha.players.length === 1 && ha.players[0].name === 'Ann', 'the first player gets a hello and is the host');
+  const B = listen(base + '/api/rooms/' + made.code + '/events?gid=g123&name=Bo');
+  await wait(() => B.events.length && A.events.length > 1);
+  const hb = B.events[0];
+  ok(hb.t === 'hello' && hb.host === ha.you && hb.players.length === 2, 'the second player sees both players');
+  ok(A.events[1].t === 'join' && A.events[1].id === hb.you && A.events[1].name === 'Bo', 'the host hears the join');
+  const wrongGame = listen(base + '/api/rooms/' + made.code + '/events?gid=other&name=X');
+  await wait(() => wrongGame.events.length);
+  ok(wrongGame.events[0].status === 404, 'a room only opens for its own game');
+  const sendR = (body) => fetch(base + '/api/rooms/' + made.code + '/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  ok((await sendR({ id: ha.you, token: 'nope', msgs: [{ d: 1 }] })).status === 403, 'sending needs the player token');
+  ok((await sendR({ id: ha.you, token: ha.token, msgs: [{ d: { x: 5 } }, { d: 'to bo', to: hb.you }] })).status === 204, 'a player sends messages');
+  await wait(() => B.events.length >= 3);
+  ok(B.events[1].t === 'msg' && B.events[1].from === ha.you && B.events[1].d.x === 5 && B.events[2].d === 'to bo', 'messages reach the other player');
+  ok(!A.events.some((e) => e.t === 'msg'), 'senders do not hear their own messages');
+  ok((await sendR({ id: ha.you, token: ha.token, msgs: [{ d: 'x'.repeat(3000) }] })).status === 413, 'over-large messages are refused');
+  ok((await sendR({ id: ha.you, token: ha.token, msgs: Array.from({ length: 30 }, () => ({ d: 1 })) })).status === 429, 'players are rate limited');
+  A.close();
+  await wait(() => B.events.some((e) => e.t === 'host'));
+  ok(B.events.some((e) => e.t === 'leave' && e.id === ha.you) && B.events.some((e) => e.t === 'host' && e.id === hb.you), 'when the host leaves, the others hear it and the next player hosts');
+  const bad = await fetch(base + '/api/rooms/abc/events');
+  ok(bad.status === 404, 'malformed room codes are refused');
+  B.close(); wrongGame.close();
+  server.close();
+  const solo = await start({});
+  ok((await fetch(solo.base + '/api/rooms', { method: 'POST', body: '{}' })).status === 404, 'no rooms without a shared gallery');
+  solo.server.close();
+}
+
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');
 process.exit(fails ? 1 : 0);

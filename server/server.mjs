@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import { openGallery, fileStore, redisStore, copyGallery } from './gallery.mjs';
 import { chainConfig, makeRpc, openChain } from './chain.mjs';
 import { limiter, memoryKv, openPlans } from './plans.mjs';
+import { openRooms, ROOM_CODE } from './rooms.mjs';
 import { uidOf } from './gallery.mjs';
 import { createHash } from 'node:crypto';
 
@@ -120,6 +121,15 @@ export function createServer(opts = {}) {
     return { plan, who, uid, caps, totals, left };
   }
   const chainHits = new Map();
+  // Multiplayer rooms need the shared gallery, since friends join through a published game's link.
+  const rooms = opts.rooms === false || !gallery ? null : opts.rooms || openRooms();
+  const roomHits = new Map(), streams = new Map();
+  const hit = (map, who, limit, windowMs) => {
+    const now = Date.now(), h = map.get(who);
+    if (map.size > 100000) map.clear();
+    if (!h || now - h.start > windowMs) { map.set(who, { start: now, n: 1 }); return true; }
+    return ++h.n <= limit;
+  };
 
   const visitor = (req) => {
     const fwd = opts.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -141,7 +151,7 @@ export function createServer(opts = {}) {
     let body = await readFile(file);
     if ((client || gallery || chain) && file === join(root, 'index.html')) {
       // Tell the page where to send AI builds, where the shared gallery lives and which Solana network pays.
-      const extra = Object.assign(client ? { ai: 'api/build' } : {}, client && plans.pro ? { pro: true } : {}, gallery ? { gallery: 'api/db' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
+      const extra = Object.assign(client ? { ai: 'api/build' } : {}, client && plans.pro ? { pro: true } : {}, gallery ? { gallery: 'api/db' } : {}, rooms ? { rooms: 'api/rooms' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
       body = body.toString('utf8').replace(/window\.GP_SITE = (\{.*?\});/, (m, json) => 'window.GP_SITE = ' + JSON.stringify(Object.assign(JSON.parse(json), extra)).replace(/</g, '\\u003c') + ';');
     }
     res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
@@ -215,6 +225,39 @@ export function createServer(opts = {}) {
     }
   }
 
+  /* Multiplayer rooms: POST /api/rooms { gid } opens one; GET /api/rooms/<code>/events?gid=&name= streams
+     it (Server-Sent Events); POST /api/rooms/<code>/send { id, token, msgs } relays a player's messages. */
+  async function room(req, res, url) {
+    const who = visitor(req);
+    const parts = url.pathname.split('/').filter(Boolean); // api, rooms, code, action
+    const reply = (r) => (r.status === 204 ? (res.writeHead(204, { 'cache-control': 'no-store' }), res.end()) : send(res, r.status, r.body));
+    if (parts.length === 2 && req.method === 'POST') {
+      if (!hit(roomHits, who, 30, 3600000)) return send(res, 429, { code: 'rate_limited', message: 'Too many rooms opened. Try again later.' });
+      let body;
+      try { body = JSON.parse(await readBody(req, 1024)); } catch (e) { return send(res, 400, { code: 'bad_request', message: 'The request was not valid JSON.' }); }
+      const r = rooms.create(String(body && body.gid || ''));
+      if (r.status === 200) log({ room: 'opened', players: 0 });
+      return reply(r);
+    }
+    const code = parts[2] || '';
+    if (parts.length !== 4 || !ROOM_CODE.test(code)) return send(res, 404, { code: 'not_found', message: 'Unknown room request.' });
+    if (parts[3] === 'events' && req.method === 'GET') {
+      const open = streams.get(who) || 0;
+      if (open >= 12) return send(res, 429, { code: 'rate_limited', message: 'Too many open games on this network.' });
+      const r = rooms.join(code, url.searchParams.get('gid') || '', url.searchParams.get('name') || '', res);
+      if (r) return reply(r);
+      streams.set(who, open + 1);
+      res.on('close', () => { const n = (streams.get(who) || 1) - 1; if (n > 0) streams.set(who, n); else streams.delete(who); });
+      return;
+    }
+    if (parts[3] === 'send' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req, 32 * 1024)); } catch (e) { return send(res, e.tooBig ? 413 : 400, { code: 'bad_request', message: 'The request was not valid.' }); }
+      return reply(rooms.send(code, body));
+    }
+    return send(res, 405, { code: 'bad_request', message: 'Method not allowed.' });
+  }
+
   async function db(req, res, url) {
     const key = String(req.headers['x-gp-key'] || '');
     const reply = (r) => send(res, r.status, r.body);
@@ -246,6 +289,7 @@ export function createServer(opts = {}) {
         return send(res, r.status, r.body);
       }
       if (path.startsWith('/api/db/')) return gallery ? await db(req, res, url) : send(res, 404, { code: 'not_found', message: 'This server has no shared gallery.' });
+      if (path.startsWith('/api/rooms')) return rooms ? await room(req, res, url) : send(res, 404, { code: 'not_found', message: 'This server has no multiplayer rooms.' });
       if (path === '/api/build') return req.method === 'POST' ? await build(req, res) : send(res, 405, { code: 'bad_request', message: 'Use POST.' });
       if (path === '/api/status') {
         // Also Render's health check: report the site as up even if the build-count store is briefly unreachable.

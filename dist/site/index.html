@@ -355,6 +355,8 @@ label.color input { width: 44px; height: 34px; padding: 2px; border: 1px solid v
 /* ---------- screen ---------- */
 .screen { position: relative; background: #05070a; border: 10px solid var(--shell); border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 10; box-shadow: 0 3px 0 var(--shadow); max-width: 100%; }
 .screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: #05070a; }
+.mp-split { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--shell); }
+.mp-split > div { position: relative; min-width: 0; }
 .screen-cover { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(5, 7, 10, .5); border: 0; cursor: pointer; color: #fff; padding: 0; }
 .screen-cover span { display: inline-flex; align-items: center; gap: 10px; background: #fff; color: #05070a; font: 800 1.0625rem/1 var(--body); padding: 14px 20px; border-radius: 4px; }
 .screen:fullscreen { border: 0; border-radius: 0; aspect-ratio: auto; }
@@ -1684,6 +1686,33 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       if (!pics[name]) { var im = new Image(), src = window.SP_PICTURES && Object.prototype.hasOwnProperty.call(window.SP_PICTURES, name) ? window.SP_PICTURES[name] : ''; if (/^data:image\/png;base64,/.test(src)) im.src = src; pics[name] = im; }
       return pics[name];
     };
+    /* Multiplayer: when the page opened this game in a room (o.room), SP.room relays messages between
+       the players through the page. Offline it is a room of one that sends nothing. */
+    var room = o.room || null, handlers = {};
+    function emit(ev, a, b) { (handlers[ev] || []).forEach(function (f) { try { f(a, b); } catch (e) { setTimeout(function () { throw e; }); } }); }
+    window.SP.room = {
+      online: !!room,
+      me: room ? room.me : 'me',
+      host: room ? room.host : 'me',
+      players: room ? room.players.slice() : [{ id: 'me', name: 'You' }],
+      get isHost() { return this.me === this.host; },
+      send: function (data, to) { if (room) post({ t: 'net', d: data, to: to || null }); },
+      on: function (ev, fn) { (handlers[ev] = handlers[ev] || []).push(fn); },
+      name: function (id) { for (var i = 0; i < this.players.length; i++) if (this.players[i].id === id) return this.players[i].name; return 'Player'; },
+    };
+    if (room) {
+      window.addEventListener('message', function (e) {
+        var m = e.data;
+        if (e.source !== parent || !m || m.__ppnet !== 1) return;
+        var R = window.SP.room;
+        if (m.t === 'msg') emit('message', m.d, m.from);
+        else if (m.t === 'join') { if (!R.players.some(function (p) { return p.id === m.id; })) R.players.push({ id: m.id, name: m.name }); emit('join', { id: m.id, name: m.name }); }
+        else if (m.t === 'leave') { R.players = R.players.filter(function (p) { return p.id !== m.id; }); emit('leave', { id: m.id }); }
+        else if (m.t === 'host') { R.host = m.id; emit('host', m.id); }
+        else if (m.t === 'closed') { R.online = false; emit('closed'); }
+      });
+      post({ t: 'net-ready' });
+    }
     window.addEventListener('error', function (e) { post({ t: 'error', v: String(e.message || 'Script error') + (e.lineno ? ' (line ' + e.lineno + ')' : '') }); });
     window.addEventListener('unhandledrejection', function (e) { post({ t: 'error', v: 'Unhandled promise rejection: ' + String((e.reason && e.reason.message) || e.reason) }); });
     window.addEventListener('pointerdown', function () { try { window.focus(); } catch (e) {} });
@@ -2336,7 +2365,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   const GAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:; connect-src 'none'; form-action 'none'";
   function withSDK(code, seed, opts) {
     const o = opts || {};
-    const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute });
+    const room = o.room ? { me: String(o.room.me), host: String(o.room.host), players: (o.room.players || []).map((p) => ({ id: String(p.id), name: String(p.name) })) } : null;
+    const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute, room }).replace(/</g, '\\u003c');
     const tag = '<meta http-equiv="Content-Security-Policy" content="' + GAME_CSP + '">'
       + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + (/SP3D/.test(code) ? '(' + SP3D_LIB.toString() + ')();' : '') + (/SP2D/.test(code) ? '(' + SP2D_LIB.toString() + ')();' : '') + (/SPSound/.test(code) ? '(' + SPSOUND_LIB.toString() + ')();' : '') + SCRIPT_CLOSE;
     const head = code.match(/<head[^>]*>/i);
@@ -2485,6 +2515,13 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     "  * Input: g.keys.left/right/up/down/jump/action/action2/start are true while held (arrows/WASD, Space = jump, Z/J = action, X/K = action2); g.pressed.<name> is true only on the frame it went down. g.pointer { x, y (world), sx, sy (screen), down, pressed }. g.buttons(['left', 'right', 'jump']) adds on-screen touch buttons that press the same keys on phones; use them for any game that needs keys.",
     "  * g.scene('title', (data) => {...}) and g.go('play', data) clear the world and build a scene. g.start((dt, t) => { game logic; then draw the HUD with g.hud, a 2D context in game pixels }) runs every frame after the world is drawn. g.paused stops physics and timers.",
     '',
+    'MULTIPLAYER WITH SP.room',
+    '- When the request says Players: multiplayer, make a game 2 to 8 people play together over the internet through SP.room. ClaudePlay handles rooms and invite links; the game only exchanges small JSON messages.',
+    "  * SP.room.online is true in a room. SP.room.me is your player id, SP.room.players is [{ id, name }], SP.room.host is the id of the player whose game is the authority (SP.room.isHost), SP.room.name(id) gives a name.",
+    "  * SP.room.send(data, toId) sends a small JSON object to everyone else (or to one player). SP.room.on('message', (data, fromId) => {}), on('join', p), on('leave', p), on('host', id) when the host changes.",
+    '  * Design: the host runs the shared world (enemies, pickups, timers) and sends snapshots about 10 to 15 times a second; every player sends their own inputs or position about 15 times a second. Smooth other players toward their latest positions. Keep each message under 1 KB. Everyone in a room gets the same SP.rand() seed, so levels built from it match.',
+    "  * Show every player's name and score, handle players joining and leaving mid-game, and when SP.room.online is false (playing alone) still make the game fun: computer opponents or a solo mode, plus a hint to use Play with friends.",
+    '',
     'SOUND AND MUSIC WITH SPSound',
     "- window.SPSound is already loaded when your code mentions it, and starts after the first tap or key press. SPSound.sfx('jump'|'coin'|'hit'|'explode'|'shoot'|'powerup'|'lose'|'win'|'click'|'step', { pitch }) plays an effect. SPSound.music({ mood: 'happy'|'chill'|'tense'|'epic'|'spooky'|'retro', key: semitones, bpm, seed }) loops a composed track with bass, chords, melody and drums; call it again to change songs (for example a tense track for a boss) and SPSound.stop() to stop. SPSound.volume('music', 0..1).",
     '',
@@ -2513,7 +2550,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
      cacheable system prompt. o: { prompt, style, mode, genre, pics, code, error }. */
   function harnessTask(kind, o) {
     const pics = o.pics && o.pics.length ? "\n\nCREATOR'S PICTURES (use with SP.image(name)):\n" + o.pics.map((p) => "- '" + p.name + "': " + p.w + 'x' + p.h + ' px').join('\n') : '';
-    const style = (o.style ? '\nArt style: ' + o.style : '') + (o.mode ? '\nGame type: ' + (o.mode === '3d' ? '3D (use SP3D)' : '2D') : '') + (o.genre ? '\nGenre: ' + o.genre : '') + pics;
+    const style = (o.style ? '\nArt style: ' + o.style : '') + (o.mode ? '\nGame type: ' + (o.mode === '3d' ? '3D (use SP3D)' : '2D') : '') + (o.genre ? '\nGenre: ' + o.genre : '') + (o.players === 'multi' ? '\nPlayers: multiplayer (use SP.room)' : '') + pics;
     if (kind === 'new') return 'GAME IDEA FROM THE CREATOR:\n' + o.prompt + style;
     if (kind === 'edit') return 'You are editing an existing ClaudePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
     return 'The current game crashed with this error:\n' + o.error + '\nFind the cause, fix it, and return the COMPLETE corrected document under the same rules. Change nothing else.\n\nCURRENT GAME:\n' + o.code;
@@ -2541,7 +2578,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const str = (v) => (typeof v === 'string' ? v : '');
     const kind = KINDS.includes(b.kind) ? b.kind : null;
     if (!kind) return { ok: false, error: 'kind must be new, edit or fix' };
-    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), genre: str(b.genre).trim(), mode: MODES.includes(b.mode) ? b.mode : '', code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default' };
+    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), genre: str(b.genre).trim(), mode: MODES.includes(b.mode) ? b.mode : '', players: b.players === 'multi' ? 'multi' : '', code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default' };
     for (const k of Object.keys(LIMITS)) if (req[k].length > LIMITS[k]) return { ok: false, error: k + ' is longer than ' + LIMITS[k] + ' characters' };
     if (kind !== 'fix' && !req.prompt) return { ok: false, error: 'describe the game first' };
     if (kind !== 'new' && !/<html|<!doctype/i.test(req.code)) return { ok: false, error: 'edit and fix need the current game' };
@@ -3268,21 +3305,23 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   /* ---------------- players (sandboxed iframes) ---------------- */
   function mountPlayer(host, code, opts) {
     unmountPlayer(host.id);
-    const seed = (C.randBytes(4).reduce((a, b) => a * 256 + b, 0)) >>> 0;
+    const seed = opts.seed != null ? opts.seed >>> 0 : (C.randBytes(4).reduce((a, b) => a * 256 + b, 0)) >>> 0;
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock');
     frame.setAttribute('title', opts.title || 'Game');
     frame.setAttribute('allow', 'autoplay');
-    frame.srcdoc = K.withSDK(code, seed, gameOpts());
+    frame.srcdoc = K.withSDK(code, seed, Object.assign(gameOpts(), opts.room ? { room: opts.room.hello } : {}));
     host.querySelectorAll('iframe').forEach((f) => f.remove());
     host.appendChild(frame);
-    const player = { id: host.id, frame, seed, opts, running: false };
+    const player = { id: host.id, frame, seed, opts, running: false, netReady: false, netQueue: [] };
     S.players.set(host.id, player);
+    if (opts.room) opts.room.listen((m) => { if (player.netReady) netDeliver(player, m); else player.netQueue.push(m); });
     return player;
   }
+  function netDeliver(p, m) { try { p.frame.contentWindow.postMessage(Object.assign({ __ppnet: 1 }, m), '*'); } catch (e) { /* the frame is gone */ } }
   function unmountPlayer(id) {
     const p = S.players.get(id);
-    if (p) { try { p.frame.remove(); } catch (e) { /* ignore */ } S.players.delete(id); }
+    if (p) { try { p.frame.remove(); } catch (e) { /* ignore */ } if (p.opts.room) p.opts.room.close(); S.players.delete(id); }
   }
   window.addEventListener('message', (e) => {
     const d = e.data;
@@ -3291,6 +3330,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       if (p.frame.contentWindow !== e.source) continue;
       if (d.t === 'score' && !p.running) { p.running = true; if (p.opts.onStart) p.opts.onStart(); }
       if (d.t === 'over') { if (!p.running && p.opts.onStart) p.opts.onStart(); p.running = false; }
+      if (d.t === 'net-ready' && p.opts.room) { p.netReady = true; p.netQueue.splice(0).forEach((m) => netDeliver(p, m)); }
+      if (d.t === 'net' && p.opts.room) p.opts.room.send(d.d, typeof d.to === 'string' ? d.to : null);
       if (p.opts.onMessage) p.opts.onMessage(d, p);
     }
   });
@@ -3301,6 +3342,70 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (!req) { toast('Fullscreen is not available here.'); return; }
     Promise.resolve(req.call(el)).catch(() => toast('Fullscreen is not available here.'));
   }
+
+  /* ---------------- multiplayer rooms ----------------
+     Games that use SP.room can be played together. On a website served by server/server.mjs a room is
+     a relay on the server (SITE.rooms); in the studio, "Test 2 players" joins two previews through a
+     room inside the page. A room endpoint is { hello: { me, host, players }, seed, listen(fn), send(d, to), close() }. */
+  const isMulti = (code) => /SP\.room\b/.test(code || '');
+  const roomBase = () => String(SITE.rooms || '').replace(/\/?$/, '');
+  function endpoint(hello, seed, sendFn, closeFn) {
+    let fn = null; const early = [];
+    return {
+      hello, seed,
+      listen(f) { fn = f; early.splice(0).forEach(f); },
+      emit(m) { if (m.t === 'join') hello.players.push({ id: m.id, name: m.name }); if (m.t === 'leave') hello.players = hello.players.filter((p) => p.id !== m.id); if (m.t === 'host') hello.host = m.id; if (fn) fn(m); else early.push(m); },
+      send: sendFn, close: closeFn,
+    };
+  }
+  function localRooms(n) {
+    const players = Array.from({ length: n }, (_, i) => ({ id: 'p' + (i + 1), name: 'Player ' + (i + 1) }));
+    const seed = (C.randBytes(4).reduce((a, b) => a * 256 + b, 0)) >>> 0;
+    const eps = players.map((p) => endpoint({ me: p.id, host: 'p1', players: players.slice() }, seed, (d, to) => {
+      eps.forEach((e) => { if (e.hello.me !== p.id && (!to || to === e.hello.me)) setTimeout(() => e.emit({ t: 'msg', from: p.id, d: JSON.parse(JSON.stringify(d === undefined ? null : d)) }), 30); });
+    }, () => {}));
+    return eps;
+  }
+  function joinServerRoom(code, gid, onChange) {
+    return new Promise((ok, fail) => {
+      const url = roomBase() + '/' + encodeURIComponent(code) + '/events?gid=' + encodeURIComponent(gid) + '&name=' + encodeURIComponent(S.wallet ? nameOf(S.wallet.from) : 'Player');
+      const es = new EventSource(url);
+      let ep = null, queue = [], timer = null, closed = false;
+      const flush = async () => {
+        timer = null;
+        if (!queue.length || closed) return;
+        const msgs = queue.splice(0, 40);
+        try { await fetch(roomBase() + '/' + code + '/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: ep.hello.me, token: ep.token, msgs }) }); } catch (e) { /* dropped, like a lost packet */ }
+        if (queue.length && !timer) timer = setTimeout(flush, 50);
+      };
+      es.onmessage = (e) => {
+        let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+        if (m.t === 'hello') {
+          ep = endpoint({ me: m.you, host: m.host, players: m.players }, m.seed, (d, to) => { if (queue.length < 400) queue.push({ d, to }); if (!timer) timer = setTimeout(flush, 50); }, () => { closed = true; es.close(); });
+          ep.token = m.token;
+          ok(ep); onChange(ep);
+        } else if (ep) { ep.emit(m); onChange(ep); }
+      };
+      es.onerror = () => {
+        if (closed) return;
+        closed = true; es.close();
+        if (!ep) fail(new Error('Could not join that room. It may have closed or be full.'));
+        else { ep.emit({ t: 'closed' }); onChange(ep, true); }
+      };
+    });
+  }
+  function roomHTML(g, state) {
+    if (!state) return '';
+    if (state.kind === 'offer') return '<div class="banner info"><b>This game is multiplayer.</b>' + (SITE.rooms ? '<span>Open a room and send friends the link to play together.</span><button class="btn small primary" type="button" data-act="room-open" data-gid="' + esc(g.gid) + '" style="justify-self:start">Play with friends</button>' : '<span>Rooms need the ClaudePlay website. You are playing solo here.</span>') + '</div>';
+    if (state.kind === 'joining') return '<div class="banner info"><b>Joining room ' + esc(state.code) + '…</b></div>';
+    if (state.kind === 'error') return '<div class="banner bad"><b>' + esc(state.message) + '</b><button class="btn small" type="button" data-act="room-leave" data-gid="' + esc(g.gid) + '" style="justify-self:start">Play solo</button></div>';
+    const ep = state.ep, link = location.href.split('#')[0] + '#game-' + g.gid + '&room=' + state.code;
+    return '<div class="banner info"><b>Room ' + esc(state.code) + (state.lost ? ' · disconnected' : ' · ' + ep.hello.players.length + (ep.hello.players.length === 1 ? ' player' : ' players')) + '</b>'
+      + '<span>' + esc(ep.hello.players.map((p) => p.name + (p.id === ep.hello.me ? ' (you)' : '')).join(', ')) + '</span>'
+      + '<label class="field"><span class="sr">Room link</span><input type="text" readonly id="room-link" value="' + esc(link) + '"></label>'
+      + '<div class="row"><button class="btn small" type="button" data-act="room-copy">Copy link</button><button class="btn small ghost" type="button" data-act="room-leave" data-gid="' + esc(g.gid) + '">Leave room</button></div></div>';
+  }
+  function renderRoom(g) { const el = $('#gp-room'); if (el) el.innerHTML = roomHTML(g, S.ui.room); }
 
   /* ---------------- AI harness ---------------- */
   const H = window.PPHarness;
@@ -3555,7 +3660,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     clearTimeout(studioSaveTimer);
     studioSaveTimer = setTimeout(() => {
       const st = S.studio;
-      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
+      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, players: st.players, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
       if (st.versions.length > 6) keep.vi = Math.max(-1, st.vi - (st.versions.length - 6));
       if (!LS.set(KEY.studio, keep) && keep.versions.length > 2) {
         keep.vi = Math.max(-1, keep.vi - (keep.versions.length - 2)); keep.versions = keep.versions.slice(-2);
@@ -3953,17 +4058,31 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     }
     v.innerHTML = '<div class="gp-head"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(g.title) + '</h1><div class="row" id="gp-chips">' + gameChips(g) + '</div></div>'
       + '<div class="gp-grid"><div class="gp-main"><div class="screen" id="gp-screen" data-gid="' + esc(g.gid) + '" style="background:#05070a url(' + K.cover(g) + ') center/cover"></div>'
-      + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-about">' + gameAbout(g) + '</div></div>'
+      + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-room"></div><div id="gp-about">' + gameAbout(g) + '</div></div>'
       + '<aside class="gp-side"><div class="tabs" role="tablist" id="gp-tabs">' + TABS.map(([k, l]) => '<button role="tab" type="button" data-act="tab" data-tab="' + k + '" aria-selected="' + (S.ui.tab === k) + '">' + l + '</button>').join('') + '</div><div class="panel" id="gp-panel">' + gamePanel(g) + '</div></aside></div>' + footHTML();
     const code = await getBlob(g.hash);
     const host = $('#gp-screen');
     if (!host || host.dataset.gid !== g.gid) return;
     if (!code) { host.innerHTML = '<div class="screen-cover" style="cursor:default"><span>The game file is not available on this device.</span></div>'; return; }
-    mountPlayer(host, code, {
-      title: g.title,
+    const play = (room) => mountPlayer(host, code, {
+      title: g.title, room, seed: room ? room.seed : null,
       onStart: () => recordPlay(g.gid).catch(() => {}),
       onMessage: (d, p) => { if (d.t === 'over') onGameOver(g.gid, d, p).catch((e) => toast(e.message, 'bad')); if (d.t === 'error') toast('This game reported an error: ' + d.v, 'bad'); },
     });
+    S.ui.mountSeq = (S.ui.mountSeq || 0) + 1;
+    if (!isMulti(code)) { S.ui.room = null; play(null); return; }
+    const want = S.ui.roomCode;
+    if (!want || !SITE.rooms) { S.ui.room = { kind: 'offer' }; renderRoom(g); play(null); return; }
+    S.ui.room = { kind: 'joining', code: want }; renderRoom(g);
+    const seq = S.ui.mountSeq = (S.ui.mountSeq || 0) + 1;
+    try {
+      const ep = await joinServerRoom(want, g.gid, (e, lost) => { if (S.ui.room && S.ui.room.ep === e) { if (lost) S.ui.room.lost = true; renderRoom(g); } });
+      if (seq !== S.ui.mountSeq || S.route !== 'game' || S.arg !== g.gid || S.ui.roomCode !== want || $('#gp-screen') !== host) { ep.close(); return; }
+      S.ui.room = { kind: 'in', code: want, ep }; renderRoom(g);
+      play(ep);
+    } catch (e) {
+      S.ui.room = { kind: 'error', message: e.message }; renderRoom(g);
+    }
   }
   function updateGame(g) {
     $('#gp-chips').innerHTML = gameChips(g);
@@ -4020,7 +4139,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
           + (has ? '' : '<div class="stack" style="gap:8px"><p class="eyebrow" id="crypto-ideas">Make a crypto game</p><div class="row" role="group" aria-labelledby="crypto-ideas">' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></div>')
           + '<label class="field"><span class="sr">Your idea or change</span><textarea id="st-prompt" data-in="prompt" placeholder="' + (has ? 'Ask for a change: “make the jump higher and add a double-jump power-up”' : 'Block Miner: stack falling transaction blocks before the gas meter runs dry…') + '">' + esc(st.prompt) + '</textarea></label>'
           + '<div class="row" role="group" aria-label="Game type"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + ((st.dim || '2d') === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
-          + '<label class="sr" for="st-genre">Genre</label><select id="st-genre" data-in="genre" style="width:auto"><option value="">Any genre</option>' + GENRES.map((g) => '<option' + (st.genre === g ? ' selected' : '') + '>' + esc(g) + '</option>').join('') + '</select></div>'
+          + '<label class="sr" for="st-genre">Genre</label><select id="st-genre" data-in="genre" style="width:auto"><option value="">Any genre</option>' + GENRES.map((g) => '<option' + (st.genre === g ? ' selected' : '') + '>' + esc(g) + '</option>').join('') + '</select>'
+          + '<button class="chip" type="button" data-act="players" aria-pressed="' + (st.players === 'multi') + '">Multiplayer</button></div>'
           + '<div class="row" role="group" aria-label="Art style">' + STYLES.map((s) => '<button class="chip" type="button" data-act="style" data-style="' + esc(s) + '" aria-pressed="' + (st.style === s) + '">' + esc(s) + '</button>').join('') + '</div>'
           + picsHTML()
           + '<div class="row" id="st-gen">' + genButtons() + '</div><div id="st-plan">' + planHTML() + '</div>'
@@ -4080,6 +4200,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const versions = st.mode === 'ai' && st.versions.length > 1 ? '<div class="versions" role="group" aria-label="Versions">' + st.versions.map((v, i) => '<button class="chip" type="button" data-act="version" data-i="' + i + '" aria-pressed="' + (i === st.vi) + '">v' + (i + 1) + '</button>').join('') + '</div>' : '';
     return '<button class="btn small" type="button" data-act="restart"' + (ready ? '' : ' disabled') + '>Restart</button>'
       + '<button class="btn small ghost" type="button" data-act="fullscreen-studio"' + (ready ? '' : ' disabled') + '>Fullscreen</button>'
+      + (st.mode === 'ai' && isMulti(studioCode()) ? '<button class="btn small" type="button" data-act="mp-test" aria-pressed="' + !!st.mp + '">' + (st.mp ? 'One player' : 'Test 2 players') + '</button>' : '')
       + '<button class="btn small ghost" type="button" data-act="view-code-studio"' + (ready ? '' : ' disabled') + '>View code</button>'
       + (canDownload() ? '<button class="btn small ghost" type="button" data-act="download-studio"' + (ready ? '' : ' disabled') + '>Download .html</button>' : '')
       + versions;
@@ -4119,15 +4240,22 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       const host = $('#st-screen'); if (!host) return;
       const code = studioCode();
       S.studio.error = null; S.studio.lastRun = null;
+      unmountPlayer('st-p1'); unmountPlayer('st-p2');
       if (!code) { unmountPlayer('st-screen'); host.innerHTML = '<div class="screen-cover" style="cursor:default;background:transparent"><span>Your game appears here</span></div>'; rerenderStudioRight(); return; }
+      const onMessage = (d) => {
+        if (d.t === 'error') { S.studio.error = d.v; rerenderStudioRight(); }
+        if (d.t === 'over') { S.studio.lastRun = Math.floor(d.v || 0); rerenderStudioRight(); }
+      };
+      if (S.studio.mp && isMulti(code)) {
+        // Two previews in one room inside the page, so creators can test multiplayer before publishing.
+        unmountPlayer('st-screen');
+        host.innerHTML = '<div class="mp-split"><div id="st-p1"></div><div id="st-p2"></div></div>';
+        localRooms(2).forEach((ep, i) => mountPlayer($('#st-p' + (i + 1)), code, { title: 'Preview, player ' + (i + 1), room: ep, seed: ep.seed, onMessage }));
+        rerenderStudioRight();
+        return;
+      }
       host.innerHTML = '';
-      mountPlayer(host, code, {
-        title: 'Preview',
-        onMessage: (d) => {
-          if (d.t === 'error') { S.studio.error = d.v; rerenderStudioRight(); }
-          if (d.t === 'over') { S.studio.lastRun = Math.floor(d.v || 0); rerenderStudioRight(); }
-        },
-      });
+      mountPlayer(host, code, { title: 'Preview', onMessage });
       rerenderStudioRight();
     }, delay || 0);
   }
@@ -4157,7 +4285,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     S.ctl = ctl;
     try {
       const pics = await stylePics(st.pics, st.style);
-      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', pics, code: kind === 'new' ? '' : H.stripPictures(base || ''), error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
+      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', players: st.players === 'multi' ? 'multi' : '', pics, code: kind === 'new' ? '' : H.stripPictures(base || ''), error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
       const res = await aiBuild(req, {
         signal: ctl.signal,
         onText: ({ text }) => {
@@ -4399,12 +4527,13 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   /* ---------------- navigation ---------------- */
   function nav(route, arg) {
     const hash = route === 'game' ? 'game-' + arg : route;
+    S.ui.roomCode = null;
     if (location.hash.slice(1) !== hash) { try { history.pushState(null, '', '#' + hash); } catch (e) { try { location.hash = hash; } catch (_) { /* ignore */ } } }
     go(route, arg);
   }
   function go(route, arg) {
     const changed = route !== S.route || arg !== S.arg;
-    if (S.route === 'create' && route !== 'create') unmountPlayer('st-screen');
+    if (S.route === 'create' && route !== 'create') { unmountPlayer('st-screen'); unmountPlayer('st-p1'); unmountPlayer('st-p2'); }
     if (S.route === 'game' && (route !== 'game' || arg !== S.arg)) unmountPlayer('gp-screen');
     if (S.route === 'home' && route !== 'home') unmountPlayer('home-screen');
     if (S.route === 'business' && route !== 'business') unmountPlayer('biz-screen');
@@ -4416,12 +4545,19 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
   function parseHash() {
     const h = (location.hash || '').slice(1);
-    if (h.startsWith('game-')) return ['game', h.slice(5)];
+    if (h.startsWith('game-')) { const [gid, room] = h.slice(5).split('&room='); return ['game', gid, room && /^[A-HJ-NP-Z2-9]{6}$/.test(room) ? room : null]; }
     if (['home', 'explore', 'create', 'wallet', 'ledger', 'economy', 'business'].includes(h)) return [h, null];
     return ['home', null];
   }
-  window.addEventListener('hashchange', () => { const [r, a] = parseHash(); if (r !== S.route || a !== S.arg) go(r, a); });
-  window.addEventListener('popstate', () => { const [r, a] = parseHash(); if (r !== S.route || a !== S.arg) go(r, a); });
+  function onHash() {
+    const [r, a, room] = parseHash();
+    const roomChanged = (room || null) !== (S.ui.roomCode || null);
+    S.ui.roomCode = room || null;
+    if (r !== S.route || a !== S.arg) go(r, a);
+    else if (r === 'game' && roomChanged) mountGame();
+  }
+  window.addEventListener('hashchange', onHash);
+  window.addEventListener('popstate', onHash);
 
   /* ---------------- actions ---------------- */
   const gameOf = (el) => S.world && S.world.games.get(el.dataset.gid);
@@ -4590,6 +4726,30 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     'gen-edit': () => generate('edit'),
     'gen-fix': () => generate('fix'),
     'stop': () => { if (S.ctl) S.ctl.abort(); },
+    'room-open': async (el) => {
+      const gid = el.dataset.gid;
+      el.disabled = true;
+      try {
+        const res = await fetch(roomBase(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ gid }) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j.message || 'Could not open a room. Try again.');
+        try { history.replaceState(null, '', '#game-' + gid + '&room=' + j.code); } catch (e) { /* ignore */ }
+        S.ui.roomCode = j.code;
+        await mountGame();
+        toast('Room ' + j.code + ' is open. Copy the link and send it to friends.');
+      } catch (e) { el.disabled = false; toast(e.message, 'bad'); }
+    },
+    'room-copy': async () => {
+      const inp = $('#room-link'); if (!inp) return;
+      try { await navigator.clipboard.writeText(inp.value); toast('Room link copied.'); } catch (e) { inp.focus(); inp.select(); toast('Press Ctrl+C or ⌘C to copy the link.'); }
+    },
+    'room-leave': (el) => {
+      S.ui.roomCode = null;
+      try { history.replaceState(null, '', '#game-' + el.dataset.gid); } catch (e) { /* ignore */ }
+      mountGame();
+    },
+    'players': (el) => { S.studio.players = S.studio.players === 'multi' ? '' : 'multi'; el.setAttribute('aria-pressed', String(S.studio.players === 'multi')); saveStudio(); },
+    'mp-test': () => { S.studio.mp = !S.studio.mp; loadPreview(); },
     'pic-add': () => {
       const inp = document.createElement('input');
       inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/gif,image/webp';
@@ -4811,8 +4971,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (!document.documentElement.lang) document.documentElement.lang = 'en';
     applyPrefs();
     if (reducedMotionQuery && reducedMotionQuery.addEventListener) reducedMotionQuery.addEventListener('change', () => { if (S.prefs.motion === 'system') renderView(true); });
-    const [r, a] = parseHash();
-    S.route = r; S.arg = a;
+    const [r, a, room] = parseHash();
+    S.route = r; S.arg = a; S.ui.roomCode = room || null;
     renderHeader();
     S.starters = await K.starterGames(C.sha256hex);
     loadStudio();

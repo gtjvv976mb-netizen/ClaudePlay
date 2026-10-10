@@ -548,6 +548,33 @@
       if (!pics[name]) { var im = new Image(), src = window.SP_PICTURES && Object.prototype.hasOwnProperty.call(window.SP_PICTURES, name) ? window.SP_PICTURES[name] : ''; if (/^data:image\/png;base64,/.test(src)) im.src = src; pics[name] = im; }
       return pics[name];
     };
+    /* Multiplayer: when the page opened this game in a room (o.room), SP.room relays messages between
+       the players through the page. Offline it is a room of one that sends nothing. */
+    var room = o.room || null, handlers = {};
+    function emit(ev, a, b) { (handlers[ev] || []).forEach(function (f) { try { f(a, b); } catch (e) { setTimeout(function () { throw e; }); } }); }
+    window.SP.room = {
+      online: !!room,
+      me: room ? room.me : 'me',
+      host: room ? room.host : 'me',
+      players: room ? room.players.slice() : [{ id: 'me', name: 'You' }],
+      get isHost() { return this.me === this.host; },
+      send: function (data, to) { if (room) post({ t: 'net', d: data, to: to || null }); },
+      on: function (ev, fn) { (handlers[ev] = handlers[ev] || []).push(fn); },
+      name: function (id) { for (var i = 0; i < this.players.length; i++) if (this.players[i].id === id) return this.players[i].name; return 'Player'; },
+    };
+    if (room) {
+      window.addEventListener('message', function (e) {
+        var m = e.data;
+        if (e.source !== parent || !m || m.__ppnet !== 1) return;
+        var R = window.SP.room;
+        if (m.t === 'msg') emit('message', m.d, m.from);
+        else if (m.t === 'join') { if (!R.players.some(function (p) { return p.id === m.id; })) R.players.push({ id: m.id, name: m.name }); emit('join', { id: m.id, name: m.name }); }
+        else if (m.t === 'leave') { R.players = R.players.filter(function (p) { return p.id !== m.id; }); emit('leave', { id: m.id }); }
+        else if (m.t === 'host') { R.host = m.id; emit('host', m.id); }
+        else if (m.t === 'closed') { R.online = false; emit('closed'); }
+      });
+      post({ t: 'net-ready' });
+    }
     window.addEventListener('error', function (e) { post({ t: 'error', v: String(e.message || 'Script error') + (e.lineno ? ' (line ' + e.lineno + ')' : '') }); });
     window.addEventListener('unhandledrejection', function (e) { post({ t: 'error', v: 'Unhandled promise rejection: ' + String((e.reason && e.reason.message) || e.reason) }); });
     window.addEventListener('pointerdown', function () { try { window.focus(); } catch (e) {} });
@@ -1200,7 +1227,8 @@
   const GAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:; connect-src 'none'; form-action 'none'";
   function withSDK(code, seed, opts) {
     const o = opts || {};
-    const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute });
+    const room = o.room ? { me: String(o.room.me), host: String(o.room.host), players: (o.room.players || []).map((p) => ({ id: String(p.id), name: String(p.name) })) } : null;
+    const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute, room }).replace(/</g, '\\u003c');
     const tag = '<meta http-equiv="Content-Security-Policy" content="' + GAME_CSP + '">'
       + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + (/SP3D/.test(code) ? '(' + SP3D_LIB.toString() + ')();' : '') + (/SP2D/.test(code) ? '(' + SP2D_LIB.toString() + ')();' : '') + (/SPSound/.test(code) ? '(' + SPSOUND_LIB.toString() + ')();' : '') + SCRIPT_CLOSE;
     const head = code.match(/<head[^>]*>/i);

@@ -53,6 +53,24 @@ const c=document.getElementById('c'),x=c.getContext('2d');c.width=innerWidth;c.h
 function loop(){x.fillStyle='#123';x.fillRect(0,0,c.width,c.height);if(cat.complete&&cat.naturalWidth){x.drawImage(cat,40,40,96,96);window.__pic=cat.naturalWidth}requestAnimationFrame(loop)}loop();
 </scr` + `ipt></body></html>`;
 
+// A two-player game on SP.room, streamed when the creator asks for multiplayer.
+const GAMEMP = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Tag Arena</title>
+<meta name="description" content="Chase your friends around the arena.">
+<meta name="gameplay-genre" content="Party">
+<meta name="gameplay-controls" content="Drag to move">
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#201030}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<scr` + `ipt>
+const c=document.getElementById('c'),x=c.getContext('2d');c.width=innerWidth;c.height=innerHeight;SP.ready();
+window.__mp={me:SP.room.me,online:SP.room.online,host:SP.room.isHost,players:SP.room.players.length,got:0};
+SP.room.on('message',(d,from)=>{window.__mp.got++;window.__mp.last=d});
+SP.room.on('join',()=>{window.__mp.players=SP.room.players.length});
+SP.room.on('leave',()=>{window.__mp.players=SP.room.players.length});
+setInterval(()=>SP.room.send({hi:SP.room.me}),150);
+function loop(){x.fillStyle='#201030';x.fillRect(0,0,c.width,c.height);x.fillStyle='#fff';x.font='18px sans-serif';x.fillText('TAG ARENA '+SP.room.players.map(p=>p.name).join(' vs ')+' msgs '+window.__mp.got,16,32);requestAnimationFrame(loop)}loop();
+</scr` + `ipt></body></html>`;
+
 const text = (content) => (typeof content === 'string' ? content : content.map((p) => p.text || '').join('\n'));
 const calls = [];
 const client = { beta: { messages: { stream(params, options) {
@@ -60,7 +78,7 @@ const client = { beta: { messages: { stream(params, options) {
   calls.push({ model: params.model, task: task.slice(0, 200), tail: task.slice(-200), pics: task.match(/- '[a-z0-9_]+': \d+x\d+ px/g) || [], picBlock: task.includes('sp-pictures'), images: Array.isArray(content) ? content.filter((p) => p.type === 'image').length : 0, system: params.system[0].text.slice(0, 60) });
   return {
     async *[Symbol.asyncIterator]() {
-      const doc = task.includes("CREATOR'S PICTURES") ? GAMEPIC : task.includes('Game type: 3D') ? GAME3D : GAME;
+      const doc = task.includes('Players: multiplayer') ? GAMEMP : task.includes("CREATOR'S PICTURES") ? GAMEPIC : task.includes('Game type: 3D') ? GAME3D : GAME;
       for (let i = 0; i < doc.length; i += 300) {
         await new Promise((r) => setTimeout(r, 10));
         if (options.signal.aborted) throw new Error('aborted');
