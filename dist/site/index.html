@@ -768,6 +768,23 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     return out;
   }
 
+  /* ---------- real-network payments ---------- */
+  /* On a real Solana network (input.chain in buildWorld), a collect or tip counts only when its
+     b.chain names a confirmed Solana transaction that the payer signed, that carries the memo
+     "gameplay:<ledger id>", and that pays every expected destination at least its share.
+     p is a lookup result: { ok, signer, transfers: [{ from, to, lamports }], memos }. */
+  function checkPayment(p, payer, expect, memo) {
+    if (!p) return 'Payment not found on Solana yet';
+    if (!p.ok) return 'Payment failed on Solana';
+    if (p.signer !== payer) return 'Payment was not signed by this wallet';
+    if (!(p.memos || []).some((m) => m === memo)) return 'Payment is not linked to this action';
+    const paid = new Map(), want = new Map();
+    for (const t of p.transfers || []) if (t.from === payer) paid.set(t.to, (paid.get(t.to) || 0) + t.lamports);
+    for (const e of expect) if (e.amt > 0) want.set(e.to, (want.get(e.to) || 0) + e.amt);
+    for (const [to, amt] of want) if ((paid.get(to) || 0) < amt) return 'Payment is short';
+    return null;
+  }
+
   /* ---------- verification with a cache ---------- */
   const sigCache = new Map();
   async function verifyTx(tx) {
@@ -806,6 +823,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
 
   async function buildWorld(input) {
     const { accounts = [], protocol = {}, starters = [] } = input;
+    // chain: { treasury, lookup(sigs) -> Map(sig -> result) } when payments run on a real network.
+    const chain = input.chain || null;
     const now = input.now || Date.now();
     const config = protocol.config || null;
     const delisted = (protocol.moderation && protocol.moderation.delisted) || {};
@@ -823,6 +842,20 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     await Promise.all(entries.map(async (e) => {
       e.v = e.kind === 'epoch' ? await verifyEpoch(e.tx, config) : await verifyTx(e.tx);
     }));
+    let paid = new Map();
+    const usedSigs = new Set();
+    if (chain) {
+      const sigs = entries.filter((e) => (e.tx.t === 'collect' || e.tx.t === 'tip') && e.tx.b && typeof e.tx.b.chain === 'string').map((e) => e.tx.b.chain);
+      if (sigs.length) paid = (await chain.lookup([...new Set(sigs)])) || new Map();
+    }
+    const payCheck = (tx, expect) => {
+      const sig = tx.b.chain;
+      if (typeof sig !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(sig)) return 'Missing Solana payment';
+      if (usedSigs.has(sig)) return 'Payment already used';
+      const why = checkPayment(paid.get(sig), tx.from, expect.map((x) => ({ to: x.to === TREASURY ? chain.treasury : x.to, amt: x.amt })), 'gameplay:' + tx.id);
+      if (!why) usedSigs.add(sig);
+      return why;
+    };
     entries.sort((a, b) => (a.tx.ts - b.tx.ts) || (String(a.tx.id || a.tx.n) < String(b.tx.id || b.tx.n) ? -1 : 1));
 
     const wallets = new Map();
@@ -872,6 +905,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       const fail = (why) => { rec.why = why; };
       switch (tx.t) {
         case 'airdrop': {
+          if (chain) { fail('The faucet runs on Solana itself on this network'); break; }
           if (tx.ts - w.lastAirdrop < RULES.AIRDROP_EVERY_MS) { fail('Faucet used in the last 24 hours'); break; }
           w.lastAirdrop = tx.ts; w.sol += RULES.AIRDROP_LAMPORTS;
           rec.moves.push({ from: '@faucet', to: tx.from, amt: RULES.AIRDROP_LAMPORTS, unit: 'SOL' });
@@ -924,12 +958,17 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
           if (delisted[g.gid]) { fail('Game delisted'); break; }
           if (g.cap && g.collects.length >= g.cap) { fail('Sold out'); break; }
           if (Math.floor(num(b.price)) !== g.price) { fail('Price mismatch'); break; }
-          if (w.sol < g.price) { fail('Not enough SOL'); break; }
           const splits = collectSplits(g.price, g, games);
-          w.sol -= g.price;
+          if (chain) {
+            // Balances live on Solana; the ledger records who was paid.
+            if (g.price > 0) { const why = payCheck(tx, splits); if (why) { fail(why); break; } }
+          } else {
+            if (w.sol < g.price) { fail('Not enough SOL'); break; }
+            w.sol -= g.price;
+          }
           for (const s of splits) {
-            if (s.to === TREASURY) { treasury.sol += s.amt; treasury.feesTotal += s.amt; }
-            else { const r = W(s.to); r.sol += s.amt; r.earnedSol += s.amt; }
+            if (s.to === TREASURY) { if (!chain) treasury.sol += s.amt; treasury.feesTotal += s.amt; }
+            else { const r = W(s.to); if (!chain) r.sol += s.amt; r.earnedSol += s.amt; }
             if (s.amt) rec.moves.push({ from: tx.from, to: s.to, amt: s.amt, unit: 'SOL', role: s.role });
             const tg = s.role === 'creator' ? g : null;
             if (tg) tg.revenue += s.amt;
@@ -942,9 +981,10 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
           const g = games.get(b.gid);
           const amt = Math.floor(num(b.amt));
           if (!g || g.starter) { fail('Game not found'); break; }
-          if (!(amt > 0)) { fail('Bad amount'); break; }
-          if (w.sol < amt) { fail('Not enough SOL'); break; }
-          w.sol -= amt; const r = W(g.creator); r.sol += amt; r.earnedSol += amt; g.revenue += amt;
+          if (!(amt > 0) || amt > RULES.MAX_PRICE_LAMPORTS) { fail('Bad amount'); break; }
+          if (chain) { const why = payCheck(tx, [{ to: g.creator, amt }]); if (why) { fail(why); break; } }
+          else { if (w.sol < amt) { fail('Not enough SOL'); break; } w.sol -= amt; }
+          const r = W(g.creator); if (!chain) r.sol += amt; r.earnedSol += amt; g.revenue += amt;
           g.tips.push({ pk: tx.from, amt, ts: tx.ts });
           rec.moves.push({ from: tx.from, to: g.creator, amt, unit: 'SOL', role: 'tip' });
           rec.ok = true; break;
@@ -961,6 +1001,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
         }
         case 'spark_buy': {
           const packs = Math.floor(num(b.packs));
+          if (chain) { fail('Spark packs are not sold on this network yet'); break; }
           if (!(packs >= 1 && packs <= 20)) { fail('Bad pack count'); break; }
           const cost = packs * RULES.SPARK_PACK.lamports;
           if (w.sol < cost) { fail('Not enough SOL'); break; }
@@ -1083,7 +1124,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   root.PPCore = {
     utf8, hex, concat, randBytes, randHex, b58enc, b58dec, sha256hex, ed, canon,
     txMessage, delegationMessage, epochMessage, RULES, LAMPORTS, TREASURY, STARTER,
-    emissionFor, weekKey, collectSplits, verifyTx, verifyEpoch, buildWorld, computeEpoch,
+    emissionFor, weekKey, collectSplits, checkPayment, verifyTx, verifyEpoch, buildWorld, computeEpoch,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -1635,10 +1676,14 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     window.addEventListener('unhandledrejection', function (e) { post({ t: 'error', v: 'Unhandled promise rejection: ' + String((e.reason && e.reason.message) || e.reason) }); });
     window.addEventListener('pointerdown', function () { try { window.focus(); } catch (e) {} });
   }
+  /* Games run offline: this policy blocks every network request a game could make (fetch, images,
+     fonts, form posts), so a game cannot send anything a player types or does to another site. */
+  const GAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:; connect-src 'none'; form-action 'none'";
   function withSDK(code, seed, opts) {
     const o = opts || {};
     const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute });
-    const tag = SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + SCRIPT_CLOSE;
+    const tag = '<meta http-equiv="Content-Security-Policy" content="' + GAME_CSP + '">'
+      + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + SCRIPT_CLOSE;
     const head = code.match(/<head[^>]*>/i);
     if (head) return code.replace(head[0], head[0] + tag);
     const dt = code.match(/<!doctype[^>]*>/i);
@@ -1827,6 +1872,150 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
 
 </script>
 <script>
+/* GamePlay on Solana: builds and reads the one kind of transaction GamePlay sends, a payment made of
+   System Program transfers plus a memo that ties it to a GamePlay ledger entry. No libraries: the
+   legacy transaction format is small enough to write by hand, and test/solana.test.mjs checks it
+   against @solana/web3.js. Shared by the page (window.PPSolana) and the server. Needs PPCore. */
+(function (root) {
+  'use strict';
+  const C = root.PPCore;
+  const SYSTEM = '11111111111111111111111111111111';
+  const MEMO = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
+  // Wallet apps may add a priority fee before signing; that only spends the payer's own fee.
+  const COMPUTE = 'ComputeBudget111111111111111111111111111111';
+  const CLUSTERS = ['devnet', 'testnet', 'mainnet-beta'];
+  const MAX_TX = 1232;
+
+  function isAddress(s) {
+    if (typeof s !== 'string' || s.length < 32 || s.length > 44) return false;
+    try { return C.b58dec(s).length === 32; } catch (e) { return false; }
+  }
+  function shortvec(n) {
+    const out = [];
+    do { let b = n & 0x7f; n >>>= 7; if (n) b |= 0x80; out.push(b); } while (n);
+    return out;
+  }
+  function readShortvec(bytes, at) {
+    let n = 0, shift = 0, b;
+    do { b = bytes[at.i++]; if (b === undefined) throw new Error('truncated'); n |= (b & 0x7f) << shift; shift += 7; } while (b & 0x80);
+    return n;
+  }
+  function u64le(v) {
+    let x = BigInt(v);
+    if (x < 0n || x >= 1n << 64n) throw new Error('lamports out of range');
+    const out = new Uint8Array(8);
+    for (let i = 0; i < 8; i++) { out[i] = Number(x & 0xffn); x >>= 8n; }
+    return out;
+  }
+
+  /* Payment message: payer signs; transfers go to each destination; the memo names the ledger entry.
+     transfers: [{ to, lamports }] (same destination may repeat; amounts are summed). */
+  function buildPayment({ payer, transfers, memo, blockhash }) {
+    if (!isAddress(payer)) throw new Error('Bad payer address');
+    if (!isAddress(blockhash)) throw new Error('Bad blockhash');
+    const sums = new Map();
+    for (const t of transfers || []) {
+      if (!isAddress(t.to)) throw new Error('Bad destination address');
+      const l = Math.floor(Number(t.lamports));
+      if (!(l > 0) || !Number.isSafeInteger(l)) continue;
+      sums.set(t.to, (sums.get(t.to) || 0) + l);
+    }
+    if (!sums.size) throw new Error('Nothing to pay');
+    // Account order: the signer, writable destinations, then the read-only programs.
+    const writable = [...sums.keys()].filter((k) => k !== payer);
+    const keys = [payer, ...writable, SYSTEM].concat(memo ? [MEMO] : []);
+    const idx = (k) => keys.indexOf(k);
+    const ix = [];
+    for (const [to, lamports] of sums) {
+      ix.push([idx(SYSTEM), ...shortvec(2), 0, idx(to), ...shortvec(12), 2, 0, 0, 0, ...u64le(lamports)]);
+    }
+    if (memo) {
+      const data = C.utf8(String(memo));
+      if (data.length > 256) throw new Error('Memo too long');
+      ix.push([idx(MEMO), ...shortvec(0), ...shortvec(data.length), ...data]);
+    }
+    const parts = [1, 0, memo ? 2 : 1, ...shortvec(keys.length)];
+    for (const k of keys) parts.push(...C.b58dec(k));
+    parts.push(...C.b58dec(blockhash), ...shortvec(ix.length));
+    for (const i of ix) parts.push(...i);
+    const message = Uint8Array.from(parts);
+    if (message.length + 65 > MAX_TX) throw new Error('Payment too large for one transaction');
+    return message;
+  }
+  /* A signed (or, with no signature, unsigned) transaction ready to send. */
+  function serializeTx(message, signature) {
+    const sig = signature ? (typeof signature === 'string' ? C.b58dec(signature) : signature) : new Uint8Array(64);
+    if (sig.length !== 64) throw new Error('Bad signature');
+    return C.concat(Uint8Array.from([1]), sig, message);
+  }
+
+  /* Decodes a legacy transaction and checks it is a GamePlay payment: only System transfers,
+     memos and priority-fee settings, one signer. Returns { payer, signature, transfers, memos, message } or throws. */
+  function parsePayment(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length > MAX_TX) throw new Error('Bad transaction size');
+    const at = { i: 0 };
+    const nSig = readShortvec(bytes, at);
+    if (nSig !== 1) throw new Error('A payment has exactly one signer');
+    const signature = bytes.slice(at.i, at.i + 64); at.i += 64;
+    const msgStart = at.i;
+    if (bytes[at.i] & 0x80) throw new Error('Versioned transactions are not accepted');
+    const [reqSig, roSigned, roUnsigned] = [bytes[at.i++], bytes[at.i++], bytes[at.i++]];
+    if (reqSig !== 1 || roSigned !== 0) throw new Error('A payment has exactly one signer');
+    const nKeys = readShortvec(bytes, at);
+    const keys = [];
+    for (let k = 0; k < nKeys; k++) { keys.push(C.b58enc(bytes.slice(at.i, at.i + 32))); at.i += 32; }
+    at.i += 32; // recent blockhash
+    const nIx = readShortvec(bytes, at);
+    if (nIx < 1 || nIx > 10) throw new Error('Unexpected instruction count');
+    const transfers = [], memos = [];
+    for (let n = 0; n < nIx; n++) {
+      const prog = keys[bytes[at.i++]];
+      const nAcc = readShortvec(bytes, at);
+      const accs = [];
+      for (let a = 0; a < nAcc; a++) accs.push(keys[bytes[at.i++]]);
+      const len = readShortvec(bytes, at);
+      const data = bytes.slice(at.i, at.i + len); at.i += len;
+      if (data.length !== len) throw new Error('truncated');
+      if (prog === SYSTEM) {
+        if (len !== 12 || data[0] !== 2 || data[1] || data[2] || data[3] || nAcc !== 2) throw new Error('Only System transfers are accepted');
+        if (accs[0] !== keys[0]) throw new Error('Transfers must come from the signer');
+        let l = 0n; for (let b = 11; b >= 4; b--) l = (l << 8n) | BigInt(data[b]);
+        transfers.push({ from: accs[0], to: accs[1], lamports: Number(l) });
+      } else if (prog === MEMO) {
+        memos.push(new TextDecoder().decode(data));
+      } else if (prog === COMPUTE) {
+        if (nAcc !== 0 || (data[0] !== 2 && data[0] !== 3)) throw new Error('Only compute limits and priority fees are accepted');
+      } else throw new Error('Only System transfers and memos are accepted');
+    }
+    if (at.i !== bytes.length) throw new Error('Trailing bytes');
+    if (roUnsigned < 1 || roUnsigned >= nKeys) throw new Error('Bad header');
+    return { payer: keys[0], signature: C.b58enc(signature), transfers, memos, message: bytes.slice(msgStart) };
+  }
+
+  /* Normalizes a getTransaction(jsonParsed) result into what the ledger checks. */
+  function readParsedTx(sig, r) {
+    if (!r || !r.transaction || !r.meta) return null;
+    const keys = (r.transaction.message.accountKeys || []).map((k) => (typeof k === 'string' ? { pubkey: k, signer: false } : k));
+    const signer = (keys.find((k) => k.signer) || keys[0] || {}).pubkey || null;
+    const transfers = [], memos = [];
+    const scan = (ix) => {
+      if (!ix) return;
+      if (ix.programId === SYSTEM && ix.parsed && ix.parsed.type === 'transfer') {
+        const i = ix.parsed.info || {};
+        transfers.push({ from: i.source, to: i.destination, lamports: Number(i.lamports) });
+      } else if (ix.programId === MEMO) {
+        memos.push(typeof ix.parsed === 'string' ? ix.parsed : String(ix.parsed || ''));
+      }
+    };
+    for (const ix of r.transaction.message.instructions || []) scan(ix);
+    return { sig, ok: r.meta.err == null, slot: r.slot, blockTime: r.blockTime || null, signer, transfers, memos };
+  }
+
+  root.PPSolana = { SYSTEM, MEMO, COMPUTE, CLUSTERS, MAX_TX, isAddress, buildPayment, serializeTx, parsePayment, readParsedTx };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
 /* GamePlay app: views, wallet, storage, players and the AI build harness. */
 (function () {
   'use strict';
@@ -1872,7 +2061,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     no: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>',
   };
 
-  const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1' };
+  const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1', pending: 'pp.pending.v1' };
   const PREF_DEFAULTS = { theme: 'system', text: 'md', motion: 'system', speed: 1, sound: true };
   const ADJ = ['brisk', 'quiet', 'lucky', 'neon', 'sunny', 'swift', 'cosmic', 'mellow', 'bold', 'tiny', 'jolly', 'pixel', 'rapid', 'calm', 'wild', 'zesty'];
   const NOUN = ['lynx', 'otter', 'comet', 'falcon', 'gecko', 'panda', 'koi', 'badger', 'heron', 'moth', 'yak', 'wombat', 'raven', 'ibis', 'tapir', 'newt'];
@@ -2078,7 +2267,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (refreshing) { refreshAgain = true; return; }
     refreshing = true;
     try {
-      S.world = await C.buildWorld({ accounts: worldAccounts(), protocol: protocol(), starters: S.starters });
+      S.world = await C.buildWorld({ accounts: worldAccounts(), protocol: protocol(), starters: S.starters, chain: worldChain });
       renderHeader();
       renderView(false);
     } catch (e) { console.error(e); }
@@ -2106,6 +2295,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     doc.primary = S.wallet.from;
     doc.wallets[S.wallet.from] = doc.wallets[S.wallet.from] || { kind: S.wallet.kind, created: Date.now() };
     await saveMyDoc(doc);
+    loadChainBal();
   }
   async function createWallet(quiet) {
     const k = await C.ed.generate();
@@ -2145,6 +2335,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     renderView(true);
   }
   async function importWallet(text) {
+    if (MAINNET) throw new Error('Keys are not imported on mainnet. Connect your wallet app instead, so your key never touches this page.');
     const raw = String(text || '').trim();
     let bytes;
     if (raw.startsWith('[')) bytes = Uint8Array.from(JSON.parse(raw));
@@ -2159,22 +2350,171 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     toast('Wallet imported: ' + short(S.wallet.from) + '.');
   }
 
+  /* ---------------- Solana network ----------------
+     When server/server.mjs runs with GP_SOLANA_CLUSTER, GP_SITE.chain is set and collects and tips are
+     real Solana payments: the player's wallet pays the creator, the lineage and the treasury directly
+     (GamePlay never holds funds), the memo "gameplay:<ledger id>" ties the payment to its ledger entry,
+     and every page checks the payment on Solana before the entry counts. Without it, the ledger keeps
+     its simulated devSOL balances. */
+  const SOLN = window.PPSolana;
+  const CHAIN = SITE.chain && SITE.chain.api && SOLN.CLUSTERS.includes(SITE.chain.cluster) && SOLN.isAddress(SITE.chain.treasury || '') ? SITE.chain : null;
+  const MAINNET = !!CHAIN && CHAIN.cluster === 'mainnet-beta';
+  const UNIT = MAINNET ? 'SOL' : 'devSOL';
+  const RENT_MIN = 890880; // lamports a brand-new Solana account must receive to exist
+  const CHAIN_DROP = 1e9; // what the server's devnet/testnet faucet drops
+  const b64 = (bytes) => { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); };
+  async function chainApi(path, body) {
+    const res = await fetch(CHAIN.api.replace(/\/?$/, '/') + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.message || 'Solana did not answer. Try again.');
+    return j;
+  }
+  const paySeen = new Map(), payMiss = new Map();
+  async function chainLookup(sigs) {
+    const now = Date.now();
+    const ask = sigs.filter((s) => !paySeen.has(s) && (payMiss.get(s) || 0) < now - 5000);
+    for (let i = 0; i < ask.length; i += 100) {
+      const part = ask.slice(i, i + 100);
+      try {
+        const { txs } = await chainApi('txs', { sigs: part });
+        for (const s of part) { if (txs && txs[s]) paySeen.set(s, txs[s]); else payMiss.set(s, now); }
+      } catch (e) { /* unknown for now: those entries wait for the next refresh */ }
+    }
+    return new Map(sigs.filter((s) => paySeen.has(s)).map((s) => [s, paySeen.get(s)]));
+  }
+  const worldChain = CHAIN ? { treasury: CHAIN.treasury, lookup: chainLookup } : null;
+  /* Balance: on a real network it is read from Solana; otherwise it is the simulated ledger's. */
+  const solOf = (w) => (CHAIN ? S.chainBal || 0 : w ? w.sol : 0);
+  async function loadChainBal() {
+    if (!CHAIN || !S.wallet) return;
+    try { S.chainBal = (await chainApi('balance/' + S.wallet.from)).lamports; renderHeader(); } catch (e) { /* keep the last value */ }
+  }
+  /* Wallet Standard: wallet apps announce themselves to the page. */
+  const STD = [];
+  (function discoverWallets() {
+    const api = { register: (...ws) => { for (const w of ws) if (w && w.features && !STD.includes(w)) STD.push(w); return () => {}; } };
+    window.addEventListener('wallet-standard:register-wallet', (e) => { try { e.detail(api); } catch (err) { /* ignore */ } });
+    try { window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: api })); } catch (e) { /* ignore */ }
+  })();
+  async function injectedPay(message) {
+    const main = S.wallet.from;
+    const unsigned = SOLN.serializeTx(message);
+    const chainId = 'solana:' + (MAINNET ? 'mainnet' : CHAIN.cluster);
+    const canPay = (w) => w.features['solana:signTransaction'] || w.features['solana:signAndSendTransaction'];
+    const std = STD.find((w) => canPay(w) && (w.accounts || []).some((a) => a.address === main))
+      || STD.find((w) => canPay(w) && w.features['standard:connect'] && String(S.wallet.label).startsWith(w.name));
+    if (std) {
+      let acct = (std.accounts || []).find((a) => a.address === main);
+      if (!acct && std.features['standard:connect']) {
+        const r = await std.features['standard:connect'].connect();
+        acct = ((r && r.accounts) || []).find((a) => a.address === main);
+      }
+      if (!acct) throw new Error('Switch your wallet app to ' + short(main) + ' and try again.');
+      const st = std.features['solana:signTransaction'];
+      if (st) {
+        const [out] = await st.signTransaction({ account: acct, transaction: unsigned, chain: chainId });
+        return (await chainApi('send', { tx: b64(new Uint8Array(out.signedTransaction)) })).signature;
+      }
+      const [out] = await std.features['solana:signAndSendTransaction'].signAndSendTransaction({ account: acct, transaction: unsigned, chain: chainId });
+      return C.b58enc(new Uint8Array(out.signature));
+    }
+    const inj = injectedProvider();
+    if (inj && typeof inj.p.request === 'function') {
+      const r = await inj.p.request({ method: 'signAndSendTransaction', params: { message: C.b58enc(message) } });
+      if (r && r.signature) return r.signature;
+    }
+    throw new Error('Your wallet app cannot pay from this page. Try Phantom, Solflare or Backpack.');
+  }
+  async function waitConfirmed(sig) {
+    for (let i = 0; i < 60; i++) {
+      const s = await chainApi('status/' + sig).catch(() => ({}));
+      if (s.err) throw new Error('The payment failed on Solana.');
+      if (s.status === 'confirmed' || s.status === 'finalized') return;
+      await new Promise((r) => setTimeout(r, i < 10 ? 1000 : 2000));
+    }
+    throw new Error('Solana has not confirmed the payment yet. GamePlay will record it once it lands.');
+  }
+  /* Pays `transfers` ([{ to, amt }]) from the wallet with the memo for ledger entry `id`. */
+  async function walletPay(transfers, id) {
+    const payer = S.wallet.from;
+    const list = transfers.filter((t) => t.amt > 0).map((t) => ({ to: t.to === C.TREASURY ? CHAIN.treasury : t.to, lamports: t.amt }));
+    for (const t of list) {
+      if (t.to === payer || t.lamports >= RENT_MIN) continue;
+      const { lamports } = await chainApi('balance/' + t.to);
+      if (!lamports) throw new Error(short(t.to) + ' has never been funded on Solana, and a first payment to a wallet must be at least ' + fmtSOL(RENT_MIN) + ' SOL. Pick a bigger amount.');
+    }
+    const { blockhash } = await chainApi('blockhash');
+    const message = SOLN.buildPayment({ payer, transfers: list, memo: 'gameplay:' + id, blockhash });
+    let sig;
+    if (S.wallet.kind === 'embedded') {
+      const s = await S.wallet.sign(message);
+      sig = (await chainApi('send', { tx: b64(SOLN.serializeTx(message, s)) })).signature;
+    } else sig = await injectedPay(message);
+    return sig;
+  }
+  /* Collect or tip: check the action first with a stand-in payment, pay on Solana, then record it.
+     A payment whose ledger entry was not saved yet is kept in this browser and retried on the next visit. */
+  async function payAndAppend(type, body, transfers) {
+    if (!CHAIN) return signAndAppend(type, body);
+    if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Real SOL is paid from your own wallet app. Connect Phantom, Solflare or Backpack in Wallet.');
+    const id = C.randHex(8), stand = '1'.repeat(64), from = S.wallet.from;
+    const dry = { treasury: CHAIN.treasury, lookup: async (sigs) => {
+      const m = await chainLookup(sigs.filter((s) => s !== stand));
+      m.set(stand, { ok: true, signer: from, transfers: transfers.map((t) => ({ from, to: t.to === C.TREASURY ? CHAIN.treasury : t.to, lamports: t.amt })), memos: ['gameplay:' + id] });
+      return m;
+    } };
+    await signAndAppend(type, Object.assign({}, body, { chain: stand }), { id, chain: dry, dry: true });
+    if (S.wallet.kind !== 'embedded') toast('Approve the payment in your wallet app.');
+    const sig = await walletPay(transfers, id);
+    const pend = LS.get(KEY.pending) || [];
+    pend.push({ id, type, body: Object.assign({}, body, { chain: sig }), from, at: Date.now() });
+    LS.set(KEY.pending, pend.slice(-20));
+    await waitConfirmed(sig);
+    const out = await signAndAppend(type, Object.assign({}, body, { chain: sig }), { id });
+    LS.set(KEY.pending, (LS.get(KEY.pending) || []).filter((p) => p.id !== id));
+    loadChainBal();
+    return out;
+  }
+  async function chainAirdrop() {
+    const { signature } = await chainApi('airdrop', { to: S.wallet.from });
+    await waitConfirmed(signature);
+    await loadChainBal();
+  }
+  async function retryPending() {
+    if (!CHAIN || !S.wallet) return;
+    for (const p of LS.get(KEY.pending) || []) {
+      if (p.from !== S.wallet.from) continue;
+      if (S.world.log.some((r) => r.tx.id === p.id && r.ok)) { LS.set(KEY.pending, (LS.get(KEY.pending) || []).filter((x) => x.id !== p.id)); continue; }
+      try {
+        await signAndAppend(p.type, p.body, { id: p.id });
+        LS.set(KEY.pending, (LS.get(KEY.pending) || []).filter((x) => x.id !== p.id));
+        toast('Recorded your earlier ' + p.type + ' payment.');
+      } catch (e) {
+        if (Date.now() - p.at > 86400000) LS.set(KEY.pending, (LS.get(KEY.pending) || []).filter((x) => x.id !== p.id));
+      }
+    }
+  }
+
   /* ---------------- transactions ---------------- */
   let lastTs = 0;
-  async function signAndAppend(type, body) {
+  /* opts: { id } a preset ledger id (payments carry it in their memo); { dry, chain } checks the
+     action against a stand-in payment without saving it. */
+  async function signAndAppend(type, body, opts) {
+    opts = opts || {};
     if (!S.wallet) throw new Error('Create a wallet first.');
     const doc = myDoc();
     const n = doc.txs.filter((t) => t.from === S.wallet.from).length + 1;
     lastTs = Math.max(Date.now(), lastTs + 1);
-    const tx = { id: C.randHex(8), t: type, from: S.wallet.from, pk: S.wallet.pk, ts: lastTs, n, b: body };
+    const tx = { id: opts.id || C.randHex(8), t: type, from: S.wallet.from, pk: S.wallet.pk, ts: lastTs, n, b: body };
     if (S.wallet.del) tx.del = S.wallet.del;
     tx.sig = await S.wallet.sign(C.txMessage(tx));
     doc.txs.push(tx);
     doc.primary = S.wallet.from;
     doc.wallets[S.wallet.from] = doc.wallets[S.wallet.from] || { kind: S.wallet.kind, created: Date.now() };
-    const w = await C.buildWorld({ accounts: worldAccounts(doc), protocol: protocol(), starters: S.starters });
+    const w = await C.buildWorld({ accounts: worldAccounts(doc), protocol: protocol(), starters: S.starters, chain: opts.chain || worldChain });
     const rec = w.log.find((r) => r.tx.id === tx.id);
     if (!rec || !rec.ok) throw new Error(rec ? rec.why : 'Transaction rejected.');
+    if (opts.dry) return { tx, rec };
     if (doc.txs.length > 600) toast('Your account is close to the prototype limit of 600 transactions.', 'bad');
     S.world = w;
     await saveMyDoc(doc);
@@ -2349,7 +2689,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const chip = $('#wchip');
     if (!S.wallet) { chip.innerHTML = '<span class="dot off"></span><span>Get a wallet</span>'; return; }
     const w = myWallet();
-    chip.innerHTML = '<span class="dot"></span><span class="addr">' + esc(short(S.wallet.from)) + '</span><span class="bal"><span title="devSOL">' + I.sol + fmtSOL(w ? w.sol : 0) + '</span><span title="Sparks">' + I.spark + fmtInt(w ? w.sparks : 0) + '</span><span title="GPLY">' + I.park + fmtInt(w ? w.park : 0) + '</span></span>';
+    chip.innerHTML = '<span class="dot"></span><span class="addr">' + esc(short(S.wallet.from)) + '</span><span class="bal"><span title="' + UNIT + '">' + I.sol + fmtSOL(solOf(w)) + '</span><span title="Sparks">' + I.spark + fmtInt(w ? w.sparks : 0) + '</span><span title="GPLY">' + I.park + fmtInt(w ? w.park : 0) + '</span></span>';
   }
   function footHTML() {
     const where = S.mode === 'shared' ? 'Connected to the shared gallery'
@@ -2836,7 +3176,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     return '<div class="panel stack" id="st-publish"><p class="eyebrow">Publish</p>'
       + (ai ? '<label class="field">Title<input id="pub-title" type="text" maxlength="40" data-in="pub-title" value="' + esc(st.title || meta.title || '') + '" placeholder="Game title"></label>' : '')
       + '<label class="field">Description<input id="pub-desc" type="text" maxlength="200" data-in="pub-desc" value="' + esc(st.desc || meta.desc || '') + '" placeholder="One line players see on the cartridge"></label>'
-      + '<div class="grid2"><label class="field">Collect price <small>devSOL, 0 for a free collect</small><input id="pub-price" type="number" min="0" max="100" step="0.01" data-in="pub-price" value="' + esc(st.price) + '"></label>'
+      + '<div class="grid2"><label class="field">Collect price <small>' + UNIT + ', 0 for a free collect</small><input id="pub-price" type="number" min="0" max="100" step="0.01" data-in="pub-price" value="' + esc(st.price) + '"></label>'
       + '<label class="field">Editions <small>0 for an open edition</small><input id="pub-cap" type="number" min="0" max="100000" step="1" data-in="pub-cap" value="' + esc(st.cap) + '"></label></div>'
       + '<p class="muted" style="font-size:0.875rem">Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
       + '<div class="row"><button class="btn primary" type="button" data-act="publish"' + (ready && !st.busy ? '' : ' disabled') + '>Sign &amp; publish</button>' + (ready ? '' : '<span class="muted">Build a game first.</span>') + '</div></div>';
@@ -3014,15 +3354,16 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     }
     const w = myWallet() || { sol: 0, sparks: 0, park: 0, weeks: new Set(), lastAirdrop: 0, earnedSol: 0, earnedPark: 0, sparksEarned: 0, txs: [] };
     const now = Date.now();
-    const nextDrop = w.lastAirdrop + R.AIRDROP_EVERY_MS;
+    const nextDrop = CHAIN ? 0 : w.lastAirdrop + R.AIRDROP_EVERY_MS;
+    const dropAmt = CHAIN ? CHAIN_DROP : R.AIRDROP_LAMPORTS;
     const claimed = w.weeks.has(C.weekKey(now));
     const games = S.world ? [...S.world.games.values()].filter((g) => g.creator === S.wallet.from) : [];
     const owned = S.world ? [...S.world.games.values()].filter((g) => g.collects.some((c) => c.pk === S.wallet.from)) : [];
     const recent = S.world ? S.world.log.filter((r) => r.ok && (r.tx.from === S.wallet.from || r.moves.some((m) => m.to === S.wallet.from))).slice(-12).reverse() : [];
     return '<div class="gp-head"><p class="eyebrow">Wallet</p><h1>' + esc(nameOf(S.wallet.from)) + '</h1></div>'
       + '<div class="grid3">'
-      + '<div class="panel balance"><span class="unit">devSOL</span><span class="amt">' + fmtSOL(w.sol) + '</span><span class="muted" style="font-size:0.875rem">For collects and tips. Earned ' + fmtSOL(w.earnedSol) + ' SOL so far.</span><div class="row"><button class="btn small" type="button" data-act="airdrop"' + (now < nextDrop ? ' disabled' : '') + '>' + (now < nextDrop ? 'Faucet in ' + Math.ceil((nextDrop - now) / 3600000) + 'h' : 'Get ' + R.AIRDROP_LAMPORTS / C.LAMPORTS + ' devSOL') + '</button></div></div>'
-      + '<div class="panel balance"><span class="unit">Sparks</span><span class="amt">' + fmtInt(w.sparks) + '</span><span class="muted" style="font-size:0.875rem">Pay for AI builds. Not transferable. ' + fmtInt(w.sparksEarned) + ' earned from players.</span><div class="row"><button class="btn small" type="button" data-act="claim"' + (claimed ? ' disabled' : '') + '>' + (claimed ? 'Claimed this week' : 'Claim ' + R.WEEKLY_SPARKS + ' free') + '</button><button class="btn small ghost" type="button" data-act="buy-sparks">Buy ' + R.SPARK_PACK.sparks + ' for ' + R.SPARK_PACK.lamports / C.LAMPORTS + ' SOL</button></div></div>'
+      + '<div class="panel balance"><span class="unit">' + UNIT + '</span><span class="amt">' + fmtSOL(solOf(w)) + '</span><span class="muted" style="font-size:0.875rem">For collects and tips. Earned ' + fmtSOL(w.earnedSol) + ' SOL so far.</span>' + (MAINNET ? '<p class="muted" style="font-size:0.875rem">Real SOL on Solana mainnet, paid straight from your wallet app.</p>' : '<div class="row"><button class="btn small" type="button" data-act="airdrop"' + (now < nextDrop ? ' disabled' : '') + '>' + (now < nextDrop ? 'Faucet in ' + Math.ceil((nextDrop - now) / 3600000) + 'h' : 'Get ' + dropAmt / C.LAMPORTS + ' devSOL') + '</button></div>') + '</div>'
+      + '<div class="panel balance"><span class="unit">Sparks</span><span class="amt">' + fmtInt(w.sparks) + '</span><span class="muted" style="font-size:0.875rem">Pay for AI builds. Not transferable. ' + fmtInt(w.sparksEarned) + ' earned from players.</span><div class="row"><button class="btn small" type="button" data-act="claim"' + (claimed ? ' disabled' : '') + '>' + (claimed ? 'Claimed this week' : 'Claim ' + R.WEEKLY_SPARKS + ' free') + '</button>' + (CHAIN ? '' : '<button class="btn small ghost" type="button" data-act="buy-sparks">Buy ' + R.SPARK_PACK.sparks + ' for ' + R.SPARK_PACK.lamports / C.LAMPORTS + ' SOL</button>') + '</div></div>'
       + '<div class="panel balance"><span class="unit">GPLY</span><span class="amt">' + fmtInt(w.park) + '</span><span class="muted" style="font-size:0.875rem">Earned in epoch rewards. Burn it to boost games or for Sparks.</span><div class="row"><button class="btn small ghost" type="button" data-act="convert"' + (w.park >= R.CONVERT.park ? '' : ' disabled') + '>Burn ' + R.CONVERT.park + ' for ' + R.CONVERT.sparks + ' Sparks</button></div></div>'
       + '</div>'
       + '<div class="grid2" style="margin-top:18px"><div class="panel stack"><p class="eyebrow">Identity</p><dl class="kv">'
@@ -3200,7 +3541,11 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     'export-key': () => modal('<h2>Your secret key</h2><p>Anyone with this key controls this wallet. It is a devnet key in a prototype, so treat it as a test key, and keep it if you want to use this wallet on another device.</p><pre class="code" id="sk-box">' + esc(S.wallet.secret) + '</pre><div class="row"><button class="btn" type="button" data-act="copy-key">Copy key</button><button class="btn ghost" type="button" data-act="modal-close">Done</button></div>'),
     'copy-key': () => copyText(S.wallet.secret, 'Secret key'),
     'copy-address': () => copyText(S.wallet.from, 'Address'),
-    'airdrop': async () => { await ensureWallet(); await signAndAppend('airdrop', {}); toast('Received ' + R.AIRDROP_LAMPORTS / C.LAMPORTS + ' devSOL from the faucet.'); },
+    'airdrop': async () => {
+      await ensureWallet();
+      if (CHAIN) { await chainAirdrop(); toast('Received ' + CHAIN_DROP / C.LAMPORTS + ' devSOL from the ' + CHAIN.cluster + ' faucet.'); return; }
+      await signAndAppend('airdrop', {}); toast('Received ' + R.AIRDROP_LAMPORTS / C.LAMPORTS + ' devSOL from the faucet.');
+    },
     'claim': async () => { await ensureWallet(); await signAndAppend('spark_claim', {}); toast('Claimed ' + R.WEEKLY_SPARKS + ' Sparks.'); },
     'buy-sparks': async () => { await ensureWallet(); await signAndAppend('spark_buy', { packs: 1 }); toast('Bought ' + R.SPARK_PACK.sparks + ' Sparks.'); },
     'convert': async () => { await signAndAppend('convert', { lots: 1 }); toast('Burned ' + R.CONVERT.park + ' GPLY for ' + R.CONVERT.sparks + ' Sparks.'); },
@@ -3209,34 +3554,35 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       await ensureWallet();
       const w = myWallet();
       const splits = C.collectSplits(g.price, g, S.world.games);
-      const short_ = (w ? w.sol : 0) < g.price;
-      const dropReady = !w || Date.now() - w.lastAirdrop >= R.AIRDROP_EVERY_MS;
+      const short_ = solOf(w) < g.price;
+      const dropReady = CHAIN ? !MAINNET : !w || Date.now() - w.lastAirdrop >= R.AIRDROP_EVERY_MS;
+      const dropAmt = CHAIN ? CHAIN_DROP : R.AIRDROP_LAMPORTS;
       const label = { creator: 'Creator', parent: 'Parent creator', grandparent: 'Grandparent', protocol: 'Protocol fee' };
       modal('<h2>Collect ' + esc(g.title) + '</h2><p>You get edition #' + (g.collects.length + 1) + (g.cap ? ' of ' + fmtInt(g.cap) : '') + ', recorded to your wallet. The game stays free to play for everyone.</p>'
         + '<div class="table-wrap"><table class="data"><tbody>' + splits.map((s) => '<tr><td>' + label[s.role] + (s.to !== C.TREASURY ? ' <span class="muted">' + esc(nameOf(s.to)) + '</span>' : '') + '</td><td class="n">' + fmtSOL(s.amt) + ' SOL</td></tr>').join('') + '<tr><td><b>Total</b></td><td class="n"><b>' + fmtSOL(g.price) + ' SOL</b></td></tr></tbody></table></div>'
-        + (short_ ? '<div class="banner warn"><b>You have ' + fmtSOL(w ? w.sol : 0) + ' devSOL.</b>' + (dropReady ? '<span>Get free devSOL from the faucet first.</span><button class="btn small" type="button" data-act="airdrop-then-collect" data-gid="' + esc(g.gid) + '" style="justify-self:start">Get ' + R.AIRDROP_LAMPORTS / C.LAMPORTS + ' devSOL and collect</button>' : '<span>The faucet refills every 24 hours.</span>') + '</div>' : '')
+        + (short_ ? '<div class="banner warn"><b>You have ' + fmtSOL(solOf(w)) + ' ' + UNIT + '.</b>' + (dropReady ? '<span>Get free devSOL from the faucet first.</span><button class="btn small" type="button" data-act="airdrop-then-collect" data-gid="' + esc(g.gid) + '" style="justify-self:start">Get ' + dropAmt / C.LAMPORTS + ' devSOL and collect</button>' : MAINNET ? '<span>Add SOL to your wallet app first.</span>' : '<span>The faucet refills every 24 hours.</span>') + '</div>' : '')
         + '<div class="row"><button class="btn primary" type="button" data-act="confirm-collect" data-gid="' + esc(g.gid) + '"' + (short_ ? ' disabled' : '') + '>Sign and pay ' + fmtSOL(g.price) + ' SOL</button><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
     },
-    'airdrop-then-collect': async (el) => { await signAndAppend('airdrop', {}); await ACT['confirm-collect'](el); },
+    'airdrop-then-collect': async (el) => { if (CHAIN) await chainAirdrop(); else await signAndAppend('airdrop', {}); await ACT['confirm-collect'](el); },
     'confirm-collect': async (el) => {
       const g = gameOf(el); if (!g) return;
       closeModal();
-      const { tx } = await signAndAppend('collect', { gid: g.gid, price: g.price });
+      const { tx } = await payAndAppend('collect', { gid: g.gid, price: g.price }, C.collectSplits(g.price, g, S.world.games));
       toast('Collected ' + g.title + '. Payment split to ' + (g.parent ? 'creator and lineage' : 'the creator') + '.', null, short(tx.sig, 6, 6));
     },
     'tip': async (el) => {
       const g = gameOf(el); if (!g) return;
       await ensureWallet();
       const w = myWallet();
-      modal('<h2>Tip ' + esc(nameOf(g.creator)) + '</h2><p>Tips go 100% to the creator of ' + esc(g.title) + '. You have ' + fmtSOL(w ? w.sol : 0) + ' devSOL.</p><div class="row">'
-        + [0.01, 0.05, 0.1, 0.25].map((a) => '<button class="btn" type="button" data-act="confirm-tip" data-gid="' + esc(g.gid) + '" data-amt="' + a + '"' + ((w ? w.sol : 0) < a * C.LAMPORTS ? ' disabled' : '') + '>' + a + ' SOL</button>').join('')
-        + '</div>' + ((w ? w.sol : 0) < 0.01 * C.LAMPORTS ? '<p class="muted">Get devSOL from the faucet in your <a href="#wallet" data-nav="wallet">wallet</a> first.</p>' : '') + '<div class="row"><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
+      modal('<h2>Tip ' + esc(nameOf(g.creator)) + '</h2><p>Tips go 100% to the creator of ' + esc(g.title) + '. You have ' + fmtSOL(solOf(w)) + ' ' + UNIT + '.</p><div class="row">'
+        + [0.01, 0.05, 0.1, 0.25].map((a) => '<button class="btn" type="button" data-act="confirm-tip" data-gid="' + esc(g.gid) + '" data-amt="' + a + '"' + (solOf(w) < a * C.LAMPORTS ? ' disabled' : '') + '>' + a + ' SOL</button>').join('')
+        + '</div>' + (solOf(w) < 0.01 * C.LAMPORTS ? '<p class="muted">' + (MAINNET ? 'Add SOL to your wallet app first.' : 'Get devSOL from the faucet in your <a href="#wallet" data-nav="wallet">wallet</a> first.') + '</p>' : '') + '<div class="row"><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
     },
     'confirm-tip': async (el) => {
       const g = gameOf(el); if (!g) return;
       closeModal();
       const amt = Math.round(Number(el.dataset.amt) * C.LAMPORTS);
-      await signAndAppend('tip', { gid: g.gid, amt });
+      await payAndAppend('tip', { gid: g.gid, amt }, [{ to: g.creator, amt }]);
       toast('Tipped ' + fmtSOL(amt) + ' SOL to ' + nameOf(g.creator) + '.');
     },
     'boost': async (el) => {
@@ -3534,8 +3880,9 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     renderHeader();
     S.starters = await K.starterGames(C.sha256hex);
     loadStudio();
-    S.world = await C.buildWorld({ accounts: worldAccounts(), protocol: protocol(), starters: S.starters });
+    S.world = await C.buildWorld({ accounts: worldAccounts(), protocol: protocol(), starters: S.starters, chain: worldChain });
     await loadWallet();
+    loadChainBal();
     renderHeader();
     renderView(true);
     const cl = window.claude;
@@ -3588,6 +3935,10 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       renderHeader();
       renderView(true);
       scheduleRefresh();
+    }
+    if (CHAIN) {
+      setInterval(() => { if (!document.hidden) loadChainBal(); }, 15000);
+      setTimeout(() => retryPending().catch(() => {}), 5000);
     }
     S.ready = true;
   }

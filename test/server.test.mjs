@@ -1,6 +1,8 @@
 // Tests for server/server.mjs with a fake Anthropic client. Run `node build.mjs` first.
 import { createServer, buildParams, pickModel, limiter } from '../server/server.mjs';
 import { openGallery, uidOf } from '../server/gallery.mjs';
+import { chainConfig, openChain } from '../server/chain.mjs';
+import { fakeRpc } from './fake_rpc.mjs';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -205,6 +207,65 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
   const r1 = await small.put('accounts/' + uidOf(A), { v: 1 }, A, '1.2.3.4');
   const r2 = await small.put('accounts/' + uidOf(B), { v: 1 }, B, '1.2.3.4');
   ok(r1.status === 200 && r2.status === 429, 'new accounts per address are limited');
+}
+
+// ---- Solana network: settings, the RPC proxy and its payment filter ----
+{
+  const C = globalThis.PPCore, SOL = globalThis.PPSolana;
+  const T = C.b58enc(C.randBytes(32));
+  ok(chainConfig({}) === null, 'no cluster: simulated ledger');
+  const thrown = (env) => { try { chainConfig(env); return null; } catch (e) { return e.message; } };
+  ok(/devnet, testnet or mainnet-beta/.test(thrown({ GP_SOLANA_CLUSTER: 'localnet', GP_TREASURY: T })), 'unknown cluster refused');
+  ok(/GP_TREASURY/.test(thrown({ GP_SOLANA_CLUSTER: 'devnet', GP_TREASURY: 'not-an-address' })), 'treasury must be an address');
+  ok(/GP_TREASURY/.test(thrown({ GP_SOLANA_CLUSTER: 'devnet', GP_TREASURY: C.b58enc(C.randBytes(64)) })), 'a secret key is not accepted as the treasury');
+  ok(/real money/.test(thrown({ GP_SOLANA_CLUSTER: 'mainnet-beta', GP_TREASURY: T })), 'mainnet refused without GP_ALLOW_MAINNET=yes');
+  let warned = ''; ok(chainConfig({ GP_SOLANA_CLUSTER: 'devnet' }, (m) => { warned = m; }) === null && /GP_TREASURY/.test(warned), 'devnet with no treasury yet starts on the simulated ledger');
+  ok(/GP_TREASURY/.test(thrown({ GP_SOLANA_CLUSTER: 'mainnet-beta', GP_ALLOW_MAINNET: 'yes' })), 'mainnet never starts without a treasury');
+  ok(chainConfig({ GP_SOLANA_CLUSTER: 'mainnet-beta', GP_TREASURY: T, GP_ALLOW_MAINNET: 'yes' }).rpcUrl.includes('mainnet'), 'mainnet starts only when explicitly allowed');
+  ok(chainConfig({ GP_SOLANA_CLUSTER: 'devnet', GP_TREASURY: T }).rpcUrl === 'https://api.devnet.solana.com', 'devnet uses the public RPC by default');
+
+  const fake = fakeRpc();
+  const chain = openChain({ cluster: 'devnet', treasury: T, rpc: fake.rpc });
+  const { server, base } = await start({ client: null, chain, root: new URL('../dist/site', import.meta.url).pathname });
+  const api = (m, path, body) => fetch(base + '/api/chain/' + path, body ? { method: m, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { method: m });
+  const page = await (await fetch(base + '/')).text();
+  ok(page.includes('"chain":{"api":"api/chain","cluster":"devnet","treasury":"' + T + '"}'), 'page is told the network and treasury');
+  ok((await (await fetch(base + '/api/status')).json()).chain === 'devnet', 'status reports the network');
+  const k = await C.ed.generate(); const payer = await C.ed.signer(k.secret64);
+  const creator = C.b58enc(C.randBytes(32));
+  const drop = await api('POST', 'airdrop', { to: payer.pk });
+  ok(drop.status === 200 && fake.balances.get(payer.pk) === 1e9, 'faucet drops devnet SOL');
+  await api('POST', 'airdrop', { to: payer.pk });
+  ok((await api('POST', 'airdrop', { to: payer.pk })).status === 429, 'faucet is limited to two drops a day');
+  ok((await (await api('GET', 'balance/' + payer.pk)).json()).lamports === 2e9, 'balance');
+  const { blockhash } = await (await api('GET', 'blockhash')).json();
+  const id = C.randHex(8);
+  const msg = SOL.buildPayment({ payer: payer.pk, transfers: [{ to: creator, lamports: 1e9 }, { to: T, lamports: 1e6 }], memo: 'gameplay:' + id, blockhash });
+  const tx = SOL.serializeTx(msg, await payer.sign(msg));
+  const sent = await (await api('POST', 'send', { tx: Buffer.from(tx).toString('base64') })).json();
+  ok(sent.signature && fake.balances.get(creator) === 1e9, 'a GamePlay payment is relayed');
+  const st = await (await api('GET', 'status/' + sent.signature)).json();
+  ok(st.status === 'finalized' && !st.err, 'payment status');
+  const look = await (await api('POST', 'txs', { sigs: [sent.signature, C.b58enc(C.randBytes(64)), 'junk'] })).json();
+  const got = look.txs[sent.signature];
+  ok(got && got.ok && got.signer === payer.pk && got.memos[0] === 'gameplay:' + id && got.transfers.length === 2 && Object.keys(look.txs).length === 2, 'payments are read back for every page to check');
+  const before = fake.calls.filter((c) => c === 'getTransaction').length;
+  await api('POST', 'txs', { sigs: [sent.signature] });
+  ok(fake.calls.filter((c) => c === 'getTransaction').length === before, 'finalized payments are cached');
+  const noMemo = SOL.buildPayment({ payer: payer.pk, transfers: [{ to: creator, lamports: 5 }], blockhash });
+  const r1 = await api('POST', 'send', { tx: Buffer.from(SOL.serializeTx(noMemo, await payer.sign(noMemo))).toString('base64') });
+  ok(r1.status === 400, 'payments without a GamePlay memo are not relayed');
+  ok((await api('POST', 'send', { tx: 'AAAA' })).status === 400, 'junk transactions are not relayed');
+  const small = SOL.buildPayment({ payer: payer.pk, transfers: [{ to: C.b58enc(C.randBytes(32)), lamports: 5 }], memo: 'gameplay:' + C.randHex(8), blockhash });
+  const r2 = await api('POST', 'send', { tx: Buffer.from(SOL.serializeTx(small, await payer.sign(small))).toString('base64') });
+  ok(r2.status === 502 && /rent/.test((await r2.json()).message), 'Solana errors come back readable');
+  ok((await api('GET', 'balance/xyz')).status === 400 && (await api('GET', 'nope')).status === 404, 'bad chain requests are refused');
+  server.close();
+  const main = openChain({ cluster: 'mainnet-beta', treasury: T, rpc: fake.rpc });
+  ok((await main.handle('POST', 'airdrop', { to: payer.pk }, 'x')).status === 404, 'no faucet on mainnet');
+  const plain = await start({ client: null });
+  ok((await fetch(plain.base + '/api/chain/blockhash')).status === 404, 'chain API is off without a cluster');
+  plain.server.close();
 }
 
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');

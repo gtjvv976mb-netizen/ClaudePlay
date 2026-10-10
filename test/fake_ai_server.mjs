@@ -1,7 +1,10 @@
 // Runs server/server.mjs with a fake Claude client, for the browser tests: `node test/fake_ai_server.mjs 8766`.
 // Every build streams the same small game; GET /__calls lists what the page asked for.
+// `node test/fake_ai_server.mjs 8767 chain` also runs payments on a fake Solana devnet (GET /__chain).
 import { createServer } from '../server/server.mjs';
 import { openGallery } from '../server/gallery.mjs';
+import { openChain } from '../server/chain.mjs';
+import { fakeRpc } from './fake_rpc.mjs';
 
 const GAME = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Block Miner</title>
@@ -38,11 +41,14 @@ const client = { beta: { messages: { stream(params, options) {
 } } } };
 
 const gallery = await openGallery({ adminKey: 'owner_' + 'x'.repeat(40) });
-const server = createServer({ client, daily: 50, gallery });
+const fake = process.argv[3] === 'chain' ? fakeRpc() : null;
+const chain = fake ? openChain({ cluster: 'devnet', treasury: 'GPTreasury1111111111111111111111111111111111', rpc: fake.rpc }) : null;
+const server = createServer({ client, daily: 50, gallery, chain });
 const handle = server.listeners('request')[0];
 server.removeAllListeners('request');
 server.on('request', (req, res) => {
   if (req.url === '/__calls') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(calls)); }
+  if (req.url === '/__chain' && fake) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ treasury: chain.site.treasury, balances: Object.fromEntries(fake.balances), sent: [...fake.txs.values()].filter((t) => t.p).length })); }
   return handle(req, res);
 });
 server.listen(Number(process.argv[2]) || 8766, '127.0.0.1', () => console.log('fake AI server ready'));
