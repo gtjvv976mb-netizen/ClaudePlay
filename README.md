@@ -25,14 +25,15 @@ A static host (like GitHub Pages) serves the site with the AI studio off, and ea
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/gtjvv976mb-netizen/GamePlay)
 
-1. Click the button and sign in to Render with GitHub.
-2. Paste your Anthropic API key (from https://console.anthropic.com/settings/keys) when Render asks for `ANTHROPIC_API_KEY`. For `GP_TREASURY`, paste the public address of a Solana wallet you control (it receives the 5% protocol fee), or leave it blank to start on the simulated ledger. Then click *Deploy Blueprint*.
-3. When the deploy finishes, open the `onrender.com` link Render shows. Build a game from one of the crypto ideas to check it works.
-4. In the service's *Logs*, find the line `Owner link (keep it private)`. Open your site with that `?admin=…` ending once, in your own browser: that browser can then settle the weekly rewards (Economy page) and delist games.
+1. Make a free database for published games: sign up at https://console.upstash.com, create a Redis database (free plan, any region near your Render region), and keep its *REST API* tab open.
+2. Click the button and sign in to Render with GitHub.
+3. Paste the database's `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` when Render asks. Paste your Anthropic API key (from https://console.anthropic.com/settings/keys) when Render asks for `ANTHROPIC_API_KEY`. For `GP_TREASURY`, paste the public address of a Solana wallet you control (it receives the 5% protocol fee), or leave it blank to start on the simulated ledger. Then click *Deploy Blueprint*.
+4. When the deploy finishes, open the `onrender.com` link Render shows. Build a game from one of the crypto ideas to check it works.
+5. In the service's *Logs*, find the line `Owner link (keep it private)`. Open your site with that `?admin=…` ending once, in your own browser: that browser can then settle the weekly rewards (Economy page) and delist games.
 
 **Your own domain.** `render.yaml` lists `claudeplay.si` (change it to yours). At your registrar, add an `A` record for `@` pointing to `216.24.57.1` and a `CNAME` record for `www` pointing to your service's `onrender.com` address, and delete any `AAAA` records. Then click *Verify* next to the domain in the service's *Settings → Custom Domains*. Render issues the HTTPS certificate itself.
 
-`render.yaml` uses Render's Starter instance with a 1 GB disk for the gallery (Render shows the price before you confirm; a disk needs a paid instance). For a free trial, set `plan: free` and remove the `disk` block: everything works, but published games reset on every deploy or restart. It also sets 12 AI builds per visitor per day and 300 for the whole site, so a public link can't run up your bill; change those in the *Environment* tab. The button needs this repository to be public; for a private one, use *New → Blueprint* in the Render dashboard and pick the repository.
+Everything above is free: Render's free instance (750 hours a month, enough for one site running all month), Upstash's free Redis (250 MB and 500,000 commands a month), and Render's HTTPS certificate. The free instance sleeps after 15 minutes without visitors, so the first visit after a quiet spell takes about a minute. To avoid that, switch the service to a paid instance in Render. What still costs money: your Claude API usage for AI builds (billed by Anthropic) and your domain renewal. `render.yaml` also sets 12 AI builds per visitor per day and 300 for the whole site, so a public link can't run up your bill; change those in the *Environment* tab. The button needs this repository to be public; for a private one, use *New → Blueprint* in the Render dashboard and pick the repository.
 
 ### Anywhere else
 
@@ -44,7 +45,7 @@ node build.mjs
 ANTHROPIC_API_KEY=sk-ant-... npm start      # http://localhost:8787
 ```
 
-The server serves `dist/site`, keeps the shared gallery in `GP_DATA_DIR` (default `./data`), and streams AI builds from Claude: Sonnet 5.5 builds new games and Haiku 5.5 applies changes and bug fixes. Each visitor gets 12 builds a day by default. `server/server.mjs` lists the settings (`GP_DATA_DIR`, `GP_ADMIN_KEY`, `GP_DAILY_BUILDS`, `GP_DAILY_TOTAL`, `GP_MAX_ACTIVE`, `GP_MODEL_NEW`, `GP_MODEL_EDIT`, and `GP_TRUST_PROXY=1` behind a proxy). Without an API key it still serves the site and the shared gallery, with the AI studio off.
+The server serves `dist/site`, keeps the shared gallery in Upstash Redis when `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set, or else in `GP_DATA_DIR` (default `./data`; on the first start with Redis, games already there move over), and streams AI builds from Claude: Sonnet 5.5 builds new games and Haiku 5.5 applies changes and bug fixes. Each visitor gets 12 builds a day by default. `server/server.mjs` lists the settings (`GP_DATA_DIR`, `GP_ADMIN_KEY`, `GP_DAILY_BUILDS`, `GP_DAILY_TOTAL`, `GP_MAX_ACTIVE`, `GP_MODEL_NEW`, `GP_MODEL_EDIT`, and `GP_TRUST_PROXY=1` behind a proxy). Without an API key it still serves the site and the shared gallery, with the AI studio off.
 
 The front page and the studio offer crypto game ideas (Block Miner, Rug Pull Runner, Gas Fee Dodger and more). The build instructions keep crypto make-believe inside games: tokens are points, nothing asks for a wallet or seed phrase, and there is no betting. ClaudePlay itself signs scores and handles collects on Solana devnet.
 

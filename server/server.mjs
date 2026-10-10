@@ -18,6 +18,8 @@
 //   GP_TRUST_PROXY=1     read the visitor address from the first X-Forwarded-For entry (set this
 //                        behind a proxy that overwrites that entry, as Render does)
 //   GP_DATA_DIR          folder for the shared gallery (./data); put it on a persistent disk
+//   UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN: keep the gallery in a free Upstash Redis database
+//                        instead (for hosts without a disk, like Render's free plan)
 //   GP_SOLANA_CLUSTER, GP_SOLANA_RPC, GP_TREASURY, GP_ALLOW_MAINNET: real Solana payments, see chain.mjs
 //   GP_ADMIN_KEY         any long secret; the server prints an owner link at startup. Open it once
 //                        to settle reward epochs and delist games from that browser
@@ -25,7 +27,7 @@ import { createServer as httpServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openGallery } from './gallery.mjs';
+import { openGallery, fileStore, redisStore, copyGallery } from './gallery.mjs';
 import { chainConfig, makeRpc, openChain } from './chain.mjs';
 import { createHash } from 'node:crypto';
 
@@ -244,7 +246,20 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // The owner's gallery key is derived from GP_ADMIN_KEY so it is URL-safe whatever the secret looks like.
   const ownerKey = env.GP_ADMIN_KEY && env.GP_ADMIN_KEY.length >= 16 ? 'owner' + createHash('sha256').update('gameplay-owner:' + env.GP_ADMIN_KEY).digest('hex').slice(0, 40) : null;
   if (env.GP_ADMIN_KEY && !ownerKey) console.warn('GP_ADMIN_KEY must be at least 16 characters; ignoring it.');
-  const gallery = await openGallery({ dir: resolve(env.GP_DATA_DIR || join(here, '..', 'data')), adminKey: ownerKey });
+  // The gallery lives in Upstash Redis when it is configured (hosts without a disk, like Render's free
+  // plan), otherwise in GP_DATA_DIR. On the first start with Redis, games already in GP_DATA_DIR move over.
+  const dataDir = resolve(env.GP_DATA_DIR || join(here, '..', 'data'));
+  let store = fileStore(dataDir);
+  if (env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN) {
+    const redis = redisStore(env.UPSTASH_REDIS_REST_URL, env.UPSTASH_REDIS_REST_TOKEN);
+    const moved = await copyGallery(fileStore(dataDir), redis);
+    if (moved && (moved.docs || moved.blobs)) console.log('Moved ' + moved.docs + ' gallery documents and ' + moved.blobs + ' game files from ' + dataDir + ' to Redis');
+    store = redis;
+    console.log('The shared gallery is saved in Upstash Redis');
+  } else if (env.RENDER && !env.GP_DATA_DIR) {
+    console.warn('No UPSTASH_REDIS_REST_URL/TOKEN and no disk: published games will be lost on every restart. See the README.');
+  }
+  const gallery = await openGallery({ store, adminKey: ownerKey });
   if (ownerKey) console.log('Owner link (keep it private): <your site address>/?admin=' + ownerKey);
   const cc = chainConfig(env, (m) => console.warn(m)); // throws on a bad or unconfirmed mainnet setup, so the server never starts half-configured
   const chain = cc ? openChain({ cluster: cc.cluster, treasury: cc.treasury, rpc: makeRpc(cc.rpcUrl) }) : null;
@@ -263,5 +278,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   });
   const save = () => gallery.flush().then(() => process.exit(0));
   process.on('SIGTERM', save); process.on('SIGINT', save);
-  server.listen(port, () => console.log('GamePlay is running on http://localhost:' + port + (client ? ' with the AI studio on' : '')));
+  server.listen(port, () => console.log('ClaudePlay is running on http://localhost:' + port + (client ? ' with the AI studio on' : '')));
 }
