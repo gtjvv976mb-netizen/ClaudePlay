@@ -652,6 +652,83 @@ async def scenario_mainnet(browser):
     finally:
         proc.terminate()
 
+# Games written against the built-in engines (SP2D + SPSound, SP3D textures), run through withSDK.
+ENGINE_2D = r"""<!doctype html><html><head><meta charset="utf-8"><title>Coin Hopper</title></head><body><script>
+const g = SP2D.create({ width: 480, height: 270, background: '#1b2a4a', gravity: 1400, pixelArt: true });
+SPSound.music({ mood: 'happy', seed: 3 });
+let score = 0, p;
+g.scene('play', () => {
+  g.level([
+    '...............................',
+    '..........C....C...............',
+    '.........===..===......C.......',
+    '...C..................====.....',
+    '..===......E...................',
+    '...............C.....E.........',
+    '.P..C......#####...#####.......',
+    '###############################',
+  ], 32, { '#': { color: '#6b8f4e' }, '=': { color: '#8b6b3e', oneWay: true },
+    P: (x, y) => { p = g.add({ x, y, w: 22, h: 28, body: true, color: '#ffd84d', tag: 'player' }); },
+    C: (x, y) => g.add({ x: x + 8, y: y + 8, size: 16, shape: 'circle', color: '#ffe066', tag: 'coin' }),
+    E: (x, y) => g.add({ x, y: y + 4, w: 26, h: 24, body: true, vx: 60, color: '#ff5d73', tag: 'enemy' }) });
+  g.camera.follow(p);
+  g.overlap('player', 'coin', (a, c) => { c.remove(); score += 10; SP.score(score); SPSound.sfx('coin'); g.burst(c.x, c.y, { color: '#ffe066' }); });
+  g.overlap('player', 'enemy', () => { SPSound.sfx('hit'); g.camera.shake(8); });
+});
+g.buttons(['left', 'right', 'jump']);
+g.go('play');
+SP.ready();
+g.start((dt) => {
+  for (const e of g.all('enemy')) if (e.hitWall) e.vx = -e.vx || 60;
+  p.vx = (g.keys.right ? 200 : 0) - (g.keys.left ? 200 : 0);
+  if ((g.pressed.jump || g.pressed.up) && p.onGround) { p.vy = -560; SPSound.sfx('jump'); }
+  g.hud.fillStyle = '#fff'; g.hud.font = 'bold 16px sans-serif'; g.hud.textAlign = 'left'; g.hud.fillText('COINS ' + score, 10, 20);
+  window.__state = { x: p.x, y: p.y, ground: p.onGround, score, frames: (window.__state ? window.__state.frames : 0) + 1, cam: g.camera.x };
+});
+</script></body></html>
+"""
+ENGINE_3D = r"""<!doctype html><html><head><title>T</title></head><body><script>
+const cv = document.createElement('canvas'); cv.width = 32; cv.height = 32; const cx = cv.getContext('2d'); cx.fillStyle = '#f00'; cx.fillRect(0,0,16,16); cx.fillStyle='#00f'; cx.fillRect(16,16,16,16);
+const g = SP3D.create({ background: '#223' });
+g.camera.y = 3; g.camera.z = 6;
+const b = g.add('box', { image: cv, size: 2, y: 1 });
+const s = g.add('sprite', { image: cv, x: 2.5, y: 1, size: 1.5 });
+g.add('plane', { sx: 20, sz: 20, color: '#3a6', image: cv, repeat: 5 });
+g.start((dt) => { b.ry += dt; window.__f = (window.__f || 0) + 1; });
+</script></body></html>
+"""
+
+async def run_in_frame(page, code):
+    await page.evaluate("""(code) => { document.body.innerHTML = ''; const f = document.createElement('iframe'); f.style.cssText = 'width:960px;height:540px;border:0'; f.sandbox = 'allow-scripts'; f.srcdoc = PPKits.withSDK(code, 1, {}); document.body.appendChild(f); }""", code)
+    await page.wait_for_timeout(1200)
+    return page.frames[1]
+
+async def scenario_engines(browser):
+    ctx, page, errs = await new_page(browser, viewport={'width': 960, 'height': 540})
+    await page.goto(BASE)
+    await page.wait_for_function('window.PPKits')
+    check('SP2D_LIB' not in await page.evaluate("PPKits.withSDK('<html><head></head><body>plain</body></html>', 1, {})"), 'engines are only added to games that use them')
+    fr = await run_in_frame(page, ENGINE_2D)
+    st = await fr.evaluate('window.__state')
+    check(st and st['ground'] and st['frames'] > 10, f'SP2D: the level loads and the player stands on solid tiles ({st})')
+    await page.mouse.click(480, 100)
+    await page.keyboard.down('ArrowRight'); await page.wait_for_timeout(900)
+    await page.keyboard.press('Space'); await page.wait_for_timeout(250)
+    mid = await fr.evaluate('window.__state')
+    await page.wait_for_timeout(500); await page.keyboard.up('ArrowRight')
+    end = await fr.evaluate('window.__state')
+    check(end['x'] > st['x'] + 150 and end['cam'] > 0, f'SP2D: arrow keys move the player and the camera follows ({end})')
+    check(mid['y'] < st['y'] - 20 and not mid['ground'], f'SP2D: Space jumps ({mid})')
+    check(end['score'] >= 10, 'SP2D: overlap callbacks collect a coin')
+    check(await fr.evaluate('SPSound.playing') and await fr.evaluate("SPSound.context.state") == 'running', 'SPSound: music plays after the first tap')
+    await page.screenshot(path=f'{OUT}/40-engine-2d.png')
+    fr = await run_in_frame(page, ENGINE_3D)
+    check(await fr.evaluate('window.__f || 0') > 10, 'SP3D: textured shapes and camera-facing sprites render')
+    await page.screenshot(path=f'{OUT}/41-engine-3d.png')
+    real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e and '404' not in e]
+    check(not real, 'no console/page errors in engine games ' + str(real[:5]))
+    await ctx.close()
+
 async def scenario_a11y(browser):
     for scheme, theme in (('light', None), ('dark', None), ('light', 'contrast')):
         ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900}, color_scheme=scheme)
@@ -672,7 +749,7 @@ async def main():
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader'])
         only = os.environ.get('E2E_ONLY', '').split(',')
-        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_mainnet, scenario_a11y):
+        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_mainnet, scenario_engines, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
             try:
                 await sc(browser)

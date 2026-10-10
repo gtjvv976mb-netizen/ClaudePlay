@@ -1696,8 +1696,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     var SHAPES = {};
     function geo(name) {
       if (SHAPES[name]) return SHAPES[name];
-      var p = [], n = [], idx = [];
-      function v(x, y, z, nx, ny, nz) { p.push(x, y, z); n.push(nx, ny, nz); return p.length / 3 - 1; }
+      var p = [], n = [], uv = [], idx = [];
+      function v(x, y, z, nx, ny, nz, u, w) { p.push(x, y, z); n.push(nx, ny, nz); uv.push(u || 0, w || 0); return p.length / 3 - 1; }
       function quad(a, b, c, d) { idx.push(a, b, c, a, c, d); }
       var i, j, S = 24, R = 12;
       if (name === 'box') {
@@ -1706,23 +1706,25 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
           var f = F[i], b = p.length / 3;
           for (j = 0; j < 4; j++) {
             var su = (j === 1 || j === 2) ? 0.5 : -0.5, sv = j >= 2 ? 0.5 : -0.5;
-            v(f[0] * 0.5 + f[3] * su + f[6] * sv, f[1] * 0.5 + f[4] * su + f[7] * sv, f[2] * 0.5 + f[5] * su + f[8] * sv, f[0], f[1], f[2]);
+            v(f[0] * 0.5 + f[3] * su + f[6] * sv, f[1] * 0.5 + f[4] * su + f[7] * sv, f[2] * 0.5 + f[5] * su + f[8] * sv, f[0], f[1], f[2], su + 0.5, 0.5 - sv);
           }
           quad(b, b + 1, b + 2, b + 3);
         }
       } else if (name === 'plane') {
-        v(-0.5, 0, 0.5, 0, 1, 0); v(0.5, 0, 0.5, 0, 1, 0); v(0.5, 0, -0.5, 0, 1, 0); v(-0.5, 0, -0.5, 0, 1, 0); quad(0, 1, 2, 3);
+        v(-0.5, 0, 0.5, 0, 1, 0, 0, 1); v(0.5, 0, 0.5, 0, 1, 0, 1, 1); v(0.5, 0, -0.5, 0, 1, 0, 1, 0); v(-0.5, 0, -0.5, 0, 1, 0, 0, 0); quad(0, 1, 2, 3);
+      } else if (name === 'sprite') {
+        v(-0.5, -0.5, 0, 0, 0, 1, 0, 1); v(0.5, -0.5, 0, 0, 0, 1, 1, 1); v(0.5, 0.5, 0, 0, 0, 1, 1, 0); v(-0.5, 0.5, 0, 0, 0, 1, 0, 0); quad(0, 1, 2, 3);
       } else if (name === 'sphere') {
         for (i = 0; i <= R; i++) for (j = 0; j <= S; j++) {
           var th = i * Math.PI / R, ph = j * 2 * Math.PI / S, x = Math.sin(th) * Math.cos(ph), y = Math.cos(th), z = Math.sin(th) * Math.sin(ph);
-          v(x * 0.5, y * 0.5, z * 0.5, x, y, z);
+          v(x * 0.5, y * 0.5, z * 0.5, x, y, z, j / S, i / R);
         }
         for (i = 0; i < R; i++) for (j = 0; j < S; j++) { var a = i * (S + 1) + j; quad(a, a + 1, a + S + 2, a + S + 1); }
       } else if (name === 'cylinder' || name === 'cone') {
         var top = name === 'cone' ? 0 : 0.5, sl = name === 'cone' ? 0.5 : 0;
         for (j = 0; j <= S; j++) {
           var an = j * 2 * Math.PI / S, c = Math.cos(an), s = Math.sin(an), l = Math.sqrt(1 + sl * sl);
-          v(c * 0.5, -0.5, s * 0.5, c / l, sl / l, s / l); v(c * top, 0.5, s * top, c / l, sl / l, s / l);
+          v(c * 0.5, -0.5, s * 0.5, c / l, sl / l, s / l, j / S, 1); v(c * top, 0.5, s * top, c / l, sl / l, s / l, j / S, 0);
         }
         for (j = 0; j < S; j++) quad(j * 2, j * 2 + 2, j * 2 + 3, j * 2 + 1);
         var cb = v(0, -0.5, 0, 0, -1, 0), ct = top ? v(0, 0.5, 0, 0, 1, 0) : -1;
@@ -1739,11 +1741,11 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       } else if (name === 'torus') {
         for (i = 0; i <= R; i++) for (j = 0; j <= S; j++) {
           var u = i * 2 * Math.PI / R, w = j * 2 * Math.PI / S, cx = Math.cos(w), sx = Math.sin(w), cu = Math.cos(u), su2 = Math.sin(u);
-          v((0.35 + 0.15 * cu) * cx, 0.15 * su2, (0.35 + 0.15 * cu) * sx, cu * cx, su2, cu * sx);
+          v((0.35 + 0.15 * cu) * cx, 0.15 * su2, (0.35 + 0.15 * cu) * sx, cu * cx, su2, cu * sx, j / S, i / R);
         }
         for (i = 0; i < R; i++) for (j = 0; j < S; j++) { var t = i * (S + 1) + j; quad(t, t + S + 1, t + S + 2, t + 1); }
       } else return geo('box');
-      SHAPES[name] = { p: new Float32Array(p), n: new Float32Array(n), i: new Uint16Array(idx) };
+      SHAPES[name] = { p: new Float32Array(p), n: new Float32Array(n), u: new Float32Array(uv), i: new Uint16Array(idx) };
       return SHAPES[name];
     }
     function hex(c) {
@@ -1783,8 +1785,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       var f = 1 / Math.tan(fov * Math.PI / 360), nf = 1 / (near - far);
       return new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]);
     }
-    var VS = 'attribute vec3 aP;attribute vec3 aN;uniform mat4 uVP;uniform mat4 uM;uniform mat3 uNM;varying vec3 vN;varying float vD;void main(){vec4 w=uM*vec4(aP,1.0);vN=normalize(uNM*aN);gl_Position=uVP*w;vD=gl_Position.w;}';
-    var FS = 'precision mediump float;varying vec3 vN;varying float vD;uniform vec3 uC;uniform vec3 uL;uniform vec3 uLC;uniform vec3 uA;uniform float uE;uniform float uO;uniform vec3 uF;uniform vec2 uFR;void main(){float d=max(dot(normalize(vN),-uL),0.0);vec3 c=uC*(uA+uLC*d*(1.0-uE))+uC*uE;float f=clamp((vD-uFR.x)/max(uFR.y-uFR.x,0.001),0.0,1.0);gl_FragColor=vec4(mix(c,uF,f),uO);}';
+    var VS = 'attribute vec3 aP;attribute vec3 aN;attribute vec2 aU;uniform mat4 uVP;uniform mat4 uM;uniform mat3 uNM;uniform vec2 uR;varying vec3 vN;varying float vD;varying vec2 vU;void main(){vec4 w=uM*vec4(aP,1.0);vN=normalize(uNM*aN);vU=aU*uR;gl_Position=uVP*w;vD=gl_Position.w;}';
+    var FS = 'precision mediump float;varying vec3 vN;varying float vD;varying vec2 vU;uniform vec3 uC;uniform vec3 uL;uniform vec3 uLC;uniform vec3 uA;uniform float uE;uniform float uO;uniform vec3 uF;uniform vec2 uFR;uniform sampler2D uT;uniform float uTx;void main(){vec4 t=uTx>0.5?texture2D(uT,fract(vU)):vec4(1.0);if(t.a<0.05)discard;vec3 b=uC*t.rgb;float d=max(dot(normalize(vN),-uL),0.0);vec3 c=b*(uA+uLC*d*(1.0-uE))+b*uE;float f=clamp((vD-uFR.x)/max(uFR.y-uFR.x,0.001),0.0,1.0);gl_FragColor=vec4(mix(c,uF,f),uO*t.a);}';
 
     function create(opts) {
       opts = opts || {};
@@ -1798,12 +1800,26 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       if (!gl) throw new Error('This device cannot show 3D games (WebGL is off).');
       function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
       var prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog); gl.useProgram(prog);
-      var L = {}; ['uVP', 'uM', 'uNM', 'uC', 'uL', 'uLC', 'uA', 'uE', 'uO', 'uF', 'uFR'].forEach(function (k) { L[k] = gl.getUniformLocation(prog, k); });
-      var aP = gl.getAttribLocation(prog, 'aP'), aN = gl.getAttribLocation(prog, 'aN');
+      var L = {}; ['uVP', 'uM', 'uNM', 'uC', 'uL', 'uLC', 'uA', 'uE', 'uO', 'uF', 'uFR', 'uT', 'uTx', 'uR'].forEach(function (k) { L[k] = gl.getUniformLocation(prog, k); });
+      var aP = gl.getAttribLocation(prog, 'aP'), aN = gl.getAttribLocation(prog, 'aN'), aU = gl.getAttribLocation(prog, 'aU');
+      /* Pictures as textures: m.image is a picture name (SP.image) or an Image/canvas. Uploaded once it has loaded. */
+      var texCache = typeof Map === 'function' ? new Map() : null;
+      function texOf(img) {
+        if (typeof img === 'string') img = SP.image(img);
+        if (!img || !texCache || !(img.width || img.naturalWidth) || img.complete === false) return null;
+        var t = texCache.get(img);
+        if (t) return t;
+        t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, opts.pixelArt ? gl.NEAREST : gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        texCache.set(img, t); return t;
+      }
       var bufs = {};
       function buf(name) {
         if (bufs[name]) return bufs[name];
-        var g = geo(name), b = { p: gl.createBuffer(), n: gl.createBuffer(), i: gl.createBuffer(), count: g.i.length };
+        var g = geo(name), b = { p: gl.createBuffer(), n: gl.createBuffer(), u: gl.createBuffer(), i: gl.createBuffer(), count: g.i.length };
+        gl.bindBuffer(gl.ARRAY_BUFFER, b.u); gl.bufferData(gl.ARRAY_BUFFER, g.u, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, b.p); gl.bufferData(gl.ARRAY_BUFFER, g.p, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, b.n); gl.bufferData(gl.ARRAY_BUFFER, g.n, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b.i); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, g.i, gl.STATIC_DRAW);
@@ -1868,7 +1884,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
           gl.uniform3f(L.uL, lt.x / ll, lt.y / ll, lt.z / ll); gl.uniform3fv(L.uLC, lc); gl.uniform3f(L.uA, lt.ambient, lt.ambient, lt.ambient);
           gl.uniform3fv(L.uF, fog ? hex(fog.color || G.background) : bg); gl.uniform2f(L.uFR, fog ? fog.near : 1e6, fog ? fog.far : 1e7);
           var draw = [], shadows = [];
-          for (i = 0; i < list.length; i++) { var m = list[i]; if (!m.visible) continue; var vis = true; for (var p = m.parent; p; p = p.parent) if (!p.visible) vis = false; if (!vis) continue; var w = world(m); draw.push([m, w]); if (m.shadow) shadows.push([m, w]); }
+          for (i = 0; i < list.length; i++) { var m = list[i]; if (!m.visible) continue; if (m.shape === 'sprite' && !m.parent) m.ry = Math.atan2(c.x - m.x, c.z - m.z); var vis = true; for (var p = m.parent; p; p = p.parent) if (!p.visible) vis = false; if (!vis) continue; var w = world(m); draw.push([m, w]); if (m.shadow) shadows.push([m, w]); }
           for (i = 0; i < parts.length; i++) draw.push([parts[i].m, trs(parts[i].m)]);
           for (i = 0; i < shadows.length; i++) {
             var sm = shadows[i][1], sx = Math.hypot(sm[0], sm[1], sm[2]), sz = Math.hypot(sm[8], sm[9], sm[10]);
@@ -1881,12 +1897,16 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
             if (cur !== b2) {
               gl.bindBuffer(gl.ARRAY_BUFFER, b2.p); gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP, 3, gl.FLOAT, false, 0, 0);
               gl.bindBuffer(gl.ARRAY_BUFFER, b2.n); gl.enableVertexAttribArray(aN); gl.vertexAttribPointer(aN, 3, gl.FLOAT, false, 0, 0);
+              gl.bindBuffer(gl.ARRAY_BUFFER, b2.u); gl.enableVertexAttribArray(aU); gl.vertexAttribPointer(aU, 2, gl.FLOAT, false, 0, 0);
               gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b2.i); cur = b2;
             }
+            var tx = o.image ? texOf(o.image) : null;
+            if (tx) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tx); gl.uniform1i(L.uT, 0); }
+            gl.uniform1f(L.uTx, tx ? 1 : 0); gl.uniform2f(L.uR, o.repeat || 1, o.repeat || 1);
             gl.uniformMatrix4fv(L.uM, false, wm); gl.uniformMatrix3fv(L.uNM, false, normalMat(wm));
-            gl.uniform3fv(L.uC, hex(o.color)); gl.uniform1f(L.uE, o.emissive || 0); gl.uniform1f(L.uO, o.opacity == null ? 1 : o.opacity);
+            gl.uniform3fv(L.uC, hex(o.image && o.color == null ? '#ffffff' : o.color)); gl.uniform1f(L.uE, o.emissive || 0); gl.uniform1f(L.uO, o.opacity == null ? 1 : o.opacity);
             gl.depthMask(!(o.opacity < 1));
-            if (o.shape === 'plane') gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+            if (o.shape === 'plane' || o.shape === 'sprite') gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
             gl.drawElements(gl.TRIANGLES, b2.count, gl.UNSIGNED_SHORT, 0);
           }
           gl.depthMask(true);
@@ -1927,12 +1947,398 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
   /* Games run offline: this policy blocks every network request a game could make (fetch, images,
      fonts, form posts), so a game cannot send anything a player types or does to another site. */
+  /* ---------------- SP2D: a small 2D game engine for AI-built games ----------------
+     Injected (with the SDK, not hashed) into any game whose code mentions SP2D. The best ideas of
+     Phaser and KAPLAY in a few KB: objects with sprites, shapes or text, arcade physics against
+     solid tiles, tile-map levels from strings, a following camera with shake, overlap callbacks,
+     tweens, timers, particles, scenes, keyboard + pointer input with on-screen touch buttons, a HUD. */
+  function SP2D_LIB() {
+    var EASE = {
+      linear: function (t) { return t; },
+      in: function (t) { return t * t; },
+      out: function (t) { return 1 - (1 - t) * (1 - t); },
+      inOut: function (t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; },
+      back: function (t) { var c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); },
+      bounce: function (t) { var n = 7.5625, d = 2.75; if (t < 1 / d) return n * t * t; if (t < 2 / d) return n * (t -= 1.5 / d) * t + 0.75; if (t < 2.5 / d) return n * (t -= 2.25 / d) * t + 0.9375; return n * (t -= 2.625 / d) * t + 0.984375; },
+    };
+    var KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', Space: 'jump', KeyZ: 'action', KeyX: 'action2', Enter: 'start', KeyJ: 'action', KeyK: 'action2', ShiftLeft: 'action2' };
+    function overlap(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+    function create(opts) {
+      opts = opts || {};
+      var canvas = document.createElement('canvas'), x = canvas.getContext('2d');
+      canvas.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;display:block;touch-action:none;';
+      document.body.appendChild(canvas);
+      document.documentElement.style.cssText += ';margin:0;height:100%;overflow:hidden;'; document.body.style.cssText += ';margin:0;height:100%;overflow:hidden;';
+      var list = [], tiles = null, tweens = [], timers = [], parts = [], pairs = [], scenes = {}, btns = [], frameFn = null, shakeT = 0, shakeA = 0;
+      var dpr = 1, sw = 1, sh = 1, scale = 1, ox = 0, oy = 0, lastT = 0, acc = 0, STEP = 1 / 120;
+      var held = {}, pressed = {}, pointer = { x: 0, y: 0, sx: 0, sy: 0, down: false, pressed: false };
+      var G = {
+        canvas: canvas, ctx: x, hud: x,
+        width: opts.width || 0, height: opts.height || 0,
+        background: opts.background || '#101828',
+        gravity: opts.gravity == null ? 0 : opts.gravity,
+        pixelArt: !!opts.pixelArt,
+        camera: { x: 0, y: 0, zoom: 1, target: null, lerp: 0.12, bounds: null,
+          follow: function (o, lerp) { this.target = o; if (lerp != null) this.lerp = lerp; },
+          shake: function (amount, secs) { shakeA = Math.max(shakeA, amount || 6); shakeT = Math.max(shakeT, secs || 0.25); } },
+        keys: held, pressed: pressed, pointer: pointer, time: 0, paused: false,
+        add: function (o) {
+          var m = { x: 0, y: 0, w: 0, h: 0, vx: 0, vy: 0, ax: 0, ay: 0, shape: 'rect', color: '#ffffff', alpha: 1, rotation: 0, scale: 1, flipX: false, z: 0,
+            visible: true, body: false, solid: false, gravity: 1, bounce: 0, drag: 0, maxSpeed: 0, onGround: false, hud: false, tags: [], alive: true, anchor: 0 };
+          for (var k in o) m[k] = o[k];
+          if (typeof m.tags === 'string') m.tags = m.tags.split(/\s+/);
+          if (m.tag) m.tags.push(m.tag);
+          if (typeof m.image === 'string') m.image = SP.image(m.image);
+          if (m.size) { m.w = m.w || m.size; m.h = m.h || m.size; }
+          if (m.shape === 'text') { m.font = m.font || 'bold 20px system-ui,sans-serif'; m.align = m.align || 'center'; }
+          if (!m.w) m.w = m.r ? m.r * 2 : 16; if (!m.h) m.h = m.r ? m.r * 2 : 16;
+          m.is = function (t) { return m.tags.indexOf(t) >= 0; };
+          m.remove = function () { m.alive = false; };
+          m.hits = function (t) { var all = typeof t === 'string' ? G.all(t) : [t]; for (var i = 0; i < all.length; i++) if (all[i] !== m && all[i].alive && overlap(m, all[i])) return all[i]; return null; };
+          m.center = function () { return { x: m.x + m.w / 2, y: m.y + m.h / 2 }; };
+          m.moveTo = function (px, py, speed) { var dx = px - (m.x + m.w / 2), dy = py - (m.y + m.h / 2), d = Math.hypot(dx, dy) || 1; m.vx = dx / d * speed; m.vy = dy / d * speed; };
+          list.push(m); return m;
+        },
+        all: function (tag) { var out = []; for (var i = 0; i < list.length; i++) if (list[i].alive && (!tag || list[i].is(tag))) out.push(list[i]); return out; },
+        first: function (tag) { for (var i = 0; i < list.length; i++) if (list[i].alive && list[i].is(tag)) return list[i]; return null; },
+        /* A level from strings: one character per tile. legend maps a character to tile settings
+           ({ color, image, solid, oneWay, tag }) or to a function (x, y) that spawns objects there. */
+        level: function (rows, size, legend) {
+          size = size || 32; legend = legend || {};
+          var t = { size: size, rows: rows.length, cols: 0, grid: [], list: [] };
+          for (var r = 0; r < rows.length; r++) {
+            t.grid.push([]); t.cols = Math.max(t.cols, rows[r].length);
+            for (var c = 0; c < rows[r].length; c++) {
+              var ch = rows[r][c], d = legend[ch], cell = null;
+              if (typeof d === 'function') d(c * size, r * size, ch);
+              else if (d) { cell = { x: c * size, y: r * size, w: size, h: size, col: c, row: r, ch: ch, color: d.color || '#5b6b8c', image: typeof d.image === 'string' ? SP.image(d.image) : d.image || null, solid: d.solid !== false, oneWay: !!d.oneWay, tags: d.tag ? [d.tag] : [], draw: d.draw || null }; t.list.push(cell); }
+              t.grid[r].push(cell);
+            }
+          }
+          t.at = function (px, py) { var row = t.grid[Math.floor(py / size)]; return row ? row[Math.floor(px / size)] || null : null; };
+          t.remove = function (cell) { if (!cell) return; t.grid[cell.row][cell.col] = null; var i = t.list.indexOf(cell); if (i >= 0) t.list.splice(i, 1); };
+          t.width = t.cols * size; t.height = t.rows * size;
+          G.camera.bounds = { x: 0, y: 0, w: t.width, h: t.height };
+          tiles = t; return t;
+        },
+        get tiles() { return tiles; },
+        /* Calls fn(a, b) every frame that an object tagged a overlaps one tagged b. */
+        overlap: function (a, b, fn) { pairs.push({ a: a, b: b, fn: fn }); },
+        tween: function (o, to, ms, ease, done) {
+          var tw = { o: o, from: {}, to: to, ms: ms || 300, t: 0, ease: EASE[ease] || (typeof ease === 'function' ? ease : EASE.out), done: done };
+          for (var k in to) tw.from[k] = o[k];
+          tweens.push(tw); return tw;
+        },
+        after: function (secs, fn) { var t = { t: secs, fn: fn, every: 0 }; timers.push(t); return t; },
+        every: function (secs, fn) { var t = { t: secs, fn: fn, every: secs }; timers.push(t); return t; },
+        burst: function (px, py, o) {
+          o = o || {};
+          for (var i = 0; i < (o.count || 14); i++) {
+            var a = SP.rand() * Math.PI * 2, s = (o.speed || 160) * (0.4 + SP.rand() * 0.8);
+            parts.push({ x: px, y: py, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: o.life || 0.6, t: 0, size: o.size || 4, color: o.color || '#ffd84d', g: o.gravity || 0, hud: !!o.hud });
+          }
+        },
+        /* On-screen touch buttons that press the same keys as the keyboard, shown on touch screens:
+           names from 'left', 'right', 'up', 'down', 'jump', 'action', 'action2'. */
+        buttons: function (names) { btns = (names || ['left', 'right', 'jump']).map(function (n) { return { name: n, x: 0, y: 0, r: 0, ids: {} }; }); layoutButtons(); },
+        scene: function (name, fn) { scenes[name] = fn; },
+        go: function (name, data) { G.clear(); if (scenes[name]) scenes[name](data); },
+        clear: function () { list.length = 0; tiles = null; tweens.length = 0; timers.length = 0; parts.length = 0; pairs.length = 0; G.camera.target = null; G.camera.bounds = null; G.camera.x = 0; G.camera.y = 0; },
+        toWorld: function (px, py) { return { x: (px - G.width / 2) / G.camera.zoom + G.camera.x + G.width / 2, y: (py - G.height / 2) / G.camera.zoom + G.camera.y + G.height / 2 }; },
+        start: function (fn) { frameFn = fn; lastT = 0; if (!G.running) { G.running = true; requestAnimationFrame(loop); } },
+      };
+      var touchy = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+      function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        sw = window.innerWidth || 1; sh = window.innerHeight || 1;
+        canvas.width = Math.round(sw * dpr); canvas.height = Math.round(sh * dpr);
+        if (opts.width && opts.height) { scale = Math.min(sw / opts.width, sh / opts.height); ox = (sw - opts.width * scale) / 2; oy = (sh - opts.height * scale) / 2; G.width = opts.width; G.height = opts.height; }
+        else { scale = 1; ox = 0; oy = 0; G.width = sw; G.height = sh; }
+        layoutButtons();
+      }
+      function layoutButtons() {
+        var r = Math.max(28, Math.min(46, Math.min(G.width, G.height) * 0.08)), pad = r * 0.5;
+        var left = btns.filter(function (b) { return /^(left|right|up|down)$/.test(b.name); }), right = btns.filter(function (b) { return !/^(left|right|up|down)$/.test(b.name); });
+        left.forEach(function (b, i) { b.r = r; b.x = pad + r + i * (r * 2.3); b.y = G.height - pad - r; });
+        right.forEach(function (b, i) { b.r = r; b.x = G.width - pad - r - i * (r * 2.3); b.y = G.height - pad - r; });
+      }
+      function toGame(e) { return { x: (e.clientX - ox) / scale, y: (e.clientY - oy) / scale }; }
+      function press(name) { if (!held[name]) pressed[name] = true; held[name] = true; }
+      function hitButtons(id, p, on) {
+        var any = false;
+        btns.forEach(function (b) {
+          var inside = touchy && Math.hypot(p.x - b.x, p.y - b.y) < b.r * 1.25;
+          if (on && inside) { b.ids[id] = 1; press(b.name); any = true; }
+          if (!on || !inside) { if (b.ids[id]) { delete b.ids[id]; if (!Object.keys(b.ids).length) held[b.name] = false; } }
+        });
+        return any;
+      }
+      addEventListener('keydown', function (e) { var k = KEYMAP[e.code]; if (k) { press(k); e.preventDefault(); } if (e.code === 'Space' || e.code === 'Enter') press('start'); });
+      addEventListener('keyup', function (e) { var k = KEYMAP[e.code]; if (k) held[k] = false; if (e.code === 'Space' || e.code === 'Enter') held.start = false; });
+      addEventListener('blur', function () { for (var k in held) held[k] = false; });
+      canvas.addEventListener('pointerdown', function (e) {
+        var p = toGame(e); pointer.sx = p.x; pointer.sy = p.y;
+        if (hitButtons(e.pointerId, p, true)) return;
+        var w = G.toWorld(p.x, p.y); pointer.x = w.x; pointer.y = w.y; pointer.down = true; pointer.pressed = true; press('start');
+        try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      canvas.addEventListener('pointermove', function (e) { var p = toGame(e); pointer.sx = p.x; pointer.sy = p.y; var w = G.toWorld(p.x, p.y); pointer.x = w.x; pointer.y = w.y; if (btns.length && e.pointerType !== 'mouse') hitButtons(e.pointerId, p, e.buttons > 0); });
+      function up(e) { hitButtons(e.pointerId, toGame(e), false); pointer.down = false; held.start = false; }
+      canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
+      addEventListener('resize', resize);
+      resize();
+
+      function solidAt(m, axis) {
+        if (!tiles) return null;
+        var s = tiles.size, c0 = Math.floor(m.x / s), c1 = Math.floor((m.x + m.w - 0.01) / s), r0 = Math.floor(m.y / s), r1 = Math.floor((m.y + m.h - 0.01) / s);
+        for (var r = r0; r <= r1; r++) for (var c = c0; c <= c1; c++) {
+          var cell = tiles.grid[r] && tiles.grid[r][c];
+          if (!cell || !cell.solid) continue;
+          if (cell.oneWay && !(axis === 'y' && m.vy > 0 && m.prevBottom <= cell.y + 0.01)) continue;
+          return cell;
+        }
+        return null;
+      }
+      function solids() { var out = []; for (var i = 0; i < list.length; i++) if (list[i].alive && list[i].solid) out.push(list[i]); return out; }
+      function physics(dt) {
+        var walls = solids();
+        for (var i = 0; i < list.length; i++) {
+          var m = list[i];
+          if (!m.alive) continue;
+          m.vx += m.ax * dt; m.vy += (m.ay + (m.body ? G.gravity * m.gravity : 0)) * dt;
+          if (m.drag) { var f = Math.max(0, 1 - m.drag * dt); m.vx *= f; if (!m.body || !G.gravity) m.vy *= f; }
+          if (m.maxSpeed) { var sp = Math.hypot(m.vx, m.vy); if (sp > m.maxSpeed) { m.vx *= m.maxSpeed / sp; m.vy *= m.maxSpeed / sp; } }
+          if (!m.body) { m.x += m.vx * dt; m.y += m.vy * dt; continue; }
+          m.prevBottom = m.y + m.h;
+          m.x += m.vx * dt;
+          var hit = solidAt(m, 'x') || hitWall(m, walls);
+          if (hit) { if (m.vx > 0) m.x = hit.x - m.w; else if (m.vx < 0) m.x = hit.x + hit.w; m.vx = -m.vx * m.bounce; m.hitWall = hit; } else m.hitWall = null;
+          m.y += m.vy * dt; m.onGround = false;
+          hit = solidAt(m, 'y') || hitWall(m, walls);
+          if (hit) {
+            if (m.vy > 0) { m.y = hit.y - m.h; m.onGround = true; } else if (m.vy < 0) m.y = hit.y + hit.h;
+            m.vy = Math.abs(m.vy) < 40 ? 0 : -m.vy * m.bounce; m.hitTile = hit;
+          }
+        }
+      }
+      function hitWall(m, walls) { for (var i = 0; i < walls.length; i++) if (walls[i] !== m && overlap(m, walls[i])) return walls[i]; return null; }
+      function update(dt) {
+        G.time += dt;
+        for (var s = 0; s < 4 && acc >= STEP; s++, acc -= STEP) physics(STEP);
+        if (acc > STEP * 4) acc = 0;
+        for (var p = 0; p < pairs.length; p++) {
+          var A = G.all(pairs[p].a), B = G.all(pairs[p].b);
+          for (var i = 0; i < A.length; i++) for (var j = 0; j < B.length; j++) if (A[i] !== B[j] && A[i].alive && B[j].alive && overlap(A[i], B[j])) pairs[p].fn(A[i], B[j]);
+        }
+        for (var t = tweens.length - 1; t >= 0; t--) {
+          var tw = tweens[t]; tw.t += dt * 1000; var k = Math.min(1, tw.t / tw.ms), e = tw.ease(k);
+          for (var key in tw.to) tw.o[key] = tw.from[key] + (tw.to[key] - tw.from[key]) * e;
+          if (k >= 1) { tweens.splice(t, 1); if (tw.done) tw.done(); }
+        }
+        for (var n = timers.length - 1; n >= 0; n--) { var tm = timers[n]; tm.t -= dt; if (tm.t <= 0) { if (tm.every) tm.t += tm.every; else timers.splice(n, 1); tm.fn(); } }
+        for (var q = parts.length - 1; q >= 0; q--) { var pa = parts[q]; pa.t += dt; pa.vy += pa.g * dt; pa.x += pa.vx * dt; pa.y += pa.vy * dt; if (pa.t >= pa.life) parts.splice(q, 1); }
+        for (var r = list.length - 1; r >= 0; r--) if (!list[r].alive) list.splice(r, 1);
+        var c = G.camera;
+        if (c.target) {
+          var tx = c.target.x + c.target.w / 2 - G.width / 2, ty = c.target.y + c.target.h / 2 - G.height / 2;
+          c.x += (tx - c.x) * Math.min(1, c.lerp * 60 * dt); c.y += (ty - c.y) * Math.min(1, c.lerp * 60 * dt);
+        }
+        if (c.bounds) {
+          var vw = G.width / c.zoom, vh = G.height / c.zoom, cx = c.x + G.width / 2, cy = c.y + G.height / 2;
+          cx = c.bounds.w <= vw ? c.bounds.x + c.bounds.w / 2 : Math.max(c.bounds.x + vw / 2, Math.min(c.bounds.x + c.bounds.w - vw / 2, cx));
+          cy = c.bounds.h <= vh ? c.bounds.y + c.bounds.h / 2 : Math.max(c.bounds.y + vh / 2, Math.min(c.bounds.y + c.bounds.h - vh / 2, cy));
+          c.x = cx - G.width / 2; c.y = cy - G.height / 2;
+        }
+        if (shakeT > 0) shakeT -= dt; else shakeA = 0;
+      }
+      function drawObj(m) {
+        if (!m.visible || m.alpha <= 0) return;
+        x.save(); x.globalAlpha = Math.max(0, Math.min(1, m.alpha));
+        x.translate(m.x + m.w / 2, m.y + m.h / 2);
+        if (m.rotation) x.rotate(m.rotation);
+        if (m.scale !== 1) x.scale(m.scale, m.scale);
+        if (m.flipX) x.scale(-1, 1);
+        if (m.draw) m.draw(x, m);
+        else if (m.image) { if (m.image.complete && m.image.naturalWidth) x.drawImage(m.image, -m.w / 2, -m.h / 2, m.w, m.h); else { x.fillStyle = m.color; x.fillRect(-m.w / 2, -m.h / 2, m.w, m.h); } }
+        else if (m.shape === 'circle') { x.fillStyle = m.color; x.beginPath(); x.arc(0, 0, Math.min(m.w, m.h) / 2, 0, Math.PI * 2); x.fill(); }
+        else if (m.shape === 'text') { x.fillStyle = m.color; x.font = m.font; x.textAlign = m.align; x.textBaseline = 'middle'; x.fillText(String(m.text == null ? '' : m.text), 0, 0); }
+        else if (m.shape === 'triangle') { x.fillStyle = m.color; x.beginPath(); x.moveTo(0, -m.h / 2); x.lineTo(m.w / 2, m.h / 2); x.lineTo(-m.w / 2, m.h / 2); x.closePath(); x.fill(); }
+        else { x.fillStyle = m.color; if (m.radius) { x.beginPath(); if (x.roundRect) x.roundRect(-m.w / 2, -m.h / 2, m.w, m.h, m.radius); else x.rect(-m.w / 2, -m.h / 2, m.w, m.h); x.fill(); } else x.fillRect(-m.w / 2, -m.h / 2, m.w, m.h); }
+        x.restore();
+      }
+      function render() {
+        x.setTransform(dpr, 0, 0, dpr, 0, 0);
+        x.imageSmoothingEnabled = !G.pixelArt;
+        x.fillStyle = opts.letterbox || '#000'; x.fillRect(0, 0, sw, sh);
+        x.translate(ox, oy); x.scale(scale, scale);
+        x.save(); x.beginPath(); x.rect(0, 0, G.width, G.height); x.clip();
+        x.fillStyle = G.background; x.fillRect(0, 0, G.width, G.height);
+        var c = G.camera, kx = shakeA ? (SP.rand() - 0.5) * shakeA * 2 : 0, ky = shakeA ? (SP.rand() - 0.5) * shakeA * 2 : 0;
+        x.save();
+        x.translate(G.width / 2 + kx, G.height / 2 + ky); x.scale(c.zoom, c.zoom); x.translate(-G.width / 2 - c.x, -G.height / 2 - c.y);
+        var vx0 = c.x - G.width, vy0 = c.y - G.height, vx1 = c.x + G.width * 2, vy1 = c.y + G.height * 2;
+        if (tiles) for (var i = 0; i < tiles.list.length; i++) {
+          var t = tiles.list[i];
+          if (t.x + t.w < vx0 || t.x > vx1 || t.y + t.h < vy0 || t.y > vy1) continue;
+          if (t.draw) t.draw(x, t);
+          else if (t.image && t.image.complete && t.image.naturalWidth) x.drawImage(t.image, t.x, t.y, t.w, t.h);
+          else { x.fillStyle = t.color; x.fillRect(t.x, t.y, t.w + 0.5, t.h + 0.5); }
+        }
+        var world = list.filter(function (m) { return !m.hud; }).sort(function (a, b) { return a.z - b.z; });
+        for (var j = 0; j < world.length; j++) drawObj(world[j]);
+        for (var p = 0; p < parts.length; p++) { var pa = parts[p]; if (pa.hud) continue; x.globalAlpha = 1 - pa.t / pa.life; x.fillStyle = pa.color; x.fillRect(pa.x - pa.size / 2, pa.y - pa.size / 2, pa.size, pa.size); }
+        x.globalAlpha = 1;
+        x.restore();
+        var hud = list.filter(function (m) { return m.hud; }).sort(function (a, b) { return a.z - b.z; });
+        for (var h = 0; h < hud.length; h++) drawObj(hud[h]);
+        for (var q = 0; q < parts.length; q++) { var pb = parts[q]; if (!pb.hud) continue; x.globalAlpha = 1 - pb.t / pb.life; x.fillStyle = pb.color; x.fillRect(pb.x - pb.size / 2, pb.y - pb.size / 2, pb.size, pb.size); }
+        x.globalAlpha = 1;
+      }
+      function drawButtons() {
+        if (!touchy || !btns.length) return;
+        var label = { left: '◀', right: '▶', up: '▲', down: '▼', jump: '⤒', action: 'A', action2: 'B' };
+        btns.forEach(function (b) {
+          x.globalAlpha = held[b.name] ? 0.55 : 0.32; x.fillStyle = '#ffffff'; x.beginPath(); x.arc(b.x, b.y, b.r, 0, Math.PI * 2); x.fill();
+          x.globalAlpha = 0.9; x.fillStyle = '#111111'; x.font = 'bold ' + Math.round(b.r * 0.8) + 'px system-ui,sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(label[b.name] || b.name[0].toUpperCase(), b.x, b.y + 1);
+        });
+        x.globalAlpha = 1;
+      }
+      function loop(now) {
+        requestAnimationFrame(loop);
+        var dt = lastT ? Math.min(0.05, (now - lastT) / 1000) : 1 / 60; lastT = now;
+        if (!G.paused) { acc += dt; update(dt); }
+        render();
+        if (frameFn) { x.save(); frameFn(G.paused ? 0 : dt, G.time); x.restore(); }
+        drawButtons();
+        x.restore();
+        for (var k in pressed) pressed[k] = false;
+        pointer.pressed = false;
+      }
+      return G;
+    }
+    window.SP2D = { create: create, ease: EASE, overlap: overlap, dist: function (a, b) { return Math.hypot(a.x + a.w / 2 - b.x - b.w / 2, a.y + a.h / 2 - b.y - b.h / 2); } };
+  }
+  /* ---------------- SPSound: sound effects and music made in code ----------------
+     Injected into any game whose code mentions SPSound. Ready-made effects and a procedural music
+     maker (bass, chords, melody and drums from a mood), all Web Audio, started on the first input. */
+  function SPSOUND_LIB() {
+    var AC = window.AudioContext || window.webkitAudioContext, ctx = null, master = null, musicBus = null, sfxBus = null, song = null, vol = { master: 0.8, music: 0.45, sfx: 0.8 };
+    function ensure() {
+      if (!AC) return null;
+      if (!ctx) {
+        ctx = new AC(); master = ctx.createGain(); master.gain.value = vol.master; master.connect(ctx.destination);
+        musicBus = ctx.createGain(); musicBus.gain.value = vol.music; musicBus.connect(master);
+        sfxBus = ctx.createGain(); sfxBus.gain.value = vol.sfx; sfxBus.connect(master);
+      }
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { addEventListener(ev, function () { ensure(); if (song && !song.timer) schedule(song); }, { capture: true }); });
+    var noiseBuf = null;
+    function noise() {
+      if (noiseBuf) return noiseBuf;
+      noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+      var d = noiseBuf.getChannelData(0); for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      return noiseBuf;
+    }
+    function tone(bus, t, o) {
+      var g = ctx.createGain(), dur = o.dur || 0.15, peak = o.vol == null ? 0.3 : o.vol;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + (o.attack || 0.005)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      var src;
+      if (o.wave === 'noise') { src = ctx.createBufferSource(); src.buffer = noise(); }
+      else { src = ctx.createOscillator(); src.type = o.wave || 'square'; src.frequency.setValueAtTime(o.freq || 440, t); if (o.to) src.frequency.exponentialRampToValueAtTime(Math.max(20, o.to), t + dur); }
+      var out = g;
+      if (o.filter) { var f = ctx.createBiquadFilter(); f.type = o.filterType || 'lowpass'; f.frequency.value = o.filter; src.connect(f); f.connect(g); } else src.connect(g);
+      g.connect(bus); src.start(t); src.stop(t + dur + 0.05);
+      return out;
+    }
+    var SFX = {
+      jump: [{ wave: 'square', freq: 300, to: 700, dur: 0.16, vol: 0.2 }],
+      coin: [{ wave: 'square', freq: 988, dur: 0.07, vol: 0.18 }, { wave: 'square', freq: 1319, dur: 0.22, vol: 0.18, at: 0.07 }],
+      hit: [{ wave: 'sawtooth', freq: 220, to: 60, dur: 0.18, vol: 0.25 }, { wave: 'noise', dur: 0.12, vol: 0.2, filter: 1800 }],
+      explode: [{ wave: 'noise', dur: 0.6, vol: 0.45, filter: 900 }, { wave: 'sine', freq: 120, to: 30, dur: 0.5, vol: 0.4 }],
+      shoot: [{ wave: 'square', freq: 880, to: 220, dur: 0.12, vol: 0.14 }],
+      powerup: [0, 1, 2, 3].map(function (i) { return { wave: 'triangle', freq: 523 * Math.pow(1.26, i), dur: 0.12, vol: 0.22, at: i * 0.07 }; }),
+      lose: [0, 1, 2].map(function (i) { return { wave: 'triangle', freq: 392 / Math.pow(1.19, i), dur: 0.28, vol: 0.25, at: i * 0.2 }; }),
+      win: [0, 1, 2, 3].map(function (i) { return { wave: 'square', freq: [523, 659, 784, 1047][i], dur: i === 3 ? 0.45 : 0.12, vol: 0.18, at: i * 0.1 }; }),
+      click: [{ wave: 'sine', freq: 1200, dur: 0.04, vol: 0.15 }],
+      step: [{ wave: 'noise', dur: 0.05, vol: 0.08, filter: 600 }],
+    };
+    /* Plays a named effect ('jump', 'coin', 'hit', 'explode', 'shoot', 'powerup', 'lose', 'win',
+       'click', 'step') or a custom one ({ wave, freq, to, dur, vol }). opts.pitch scales the pitch. */
+    function sfx(name, opts) {
+      if (!ensure() || window.SP && SP.muted) return;
+      var parts = typeof name === 'string' ? SFX[name] : [].concat(name);
+      if (!parts) return;
+      var p = (opts && opts.pitch) || 1, t = ctx.currentTime + 0.005;
+      parts.forEach(function (o) { var q = {}; for (var k in o) q[k] = o[k]; if (q.freq) q.freq *= p; if (q.to) q.to *= p; tone(sfxBus, t + (o.at || 0), q); });
+    }
+    var NOTES = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+    function freqOf(n) { if (typeof n === 'number') return 440 * Math.pow(2, (n - 69) / 12); var m = /^([A-G])(#|b)?(-?\d)$/.exec(n); if (!m) return 0; return freqOf(12 * (+m[3] + 1) + NOTES[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0)); }
+    var MOODS = {
+      happy: { bpm: 128, scale: [0, 2, 4, 5, 7, 9, 11], prog: [0, 4, 5, 3], root: 60, lead: 'square', drums: 'four' },
+      chill: { bpm: 88, scale: [0, 2, 3, 5, 7, 8, 10], prog: [0, 5, 3, 4], root: 57, lead: 'triangle', drums: 'soft' },
+      tense: { bpm: 140, scale: [0, 1, 3, 5, 7, 8, 10], prog: [0, 0, 5, 6], root: 52, lead: 'sawtooth', drums: 'drive' },
+      epic: { bpm: 112, scale: [0, 2, 3, 5, 7, 8, 10], prog: [0, 5, 2, 6], root: 50, lead: 'sawtooth', drums: 'four' },
+      spooky: { bpm: 96, scale: [0, 1, 4, 5, 7, 8, 11], prog: [0, 1, 0, 5], root: 50, lead: 'sine', drums: 'soft' },
+      retro: { bpm: 150, scale: [0, 2, 4, 7, 9], prog: [0, 3, 4, 3], root: 60, lead: 'square', drums: 'drive' },
+    };
+    /* Builds a 4-bar loop from a mood with a seeded random melody, so a game's song is the same every run. */
+    function compose(o) {
+      var m = MOODS[o.mood] || MOODS.happy, seed = (o.seed == null ? 7 : o.seed) >>> 0;
+      function rnd() { seed = (seed + 0x6D2B79F5) | 0; var t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+      var root = m.root + (o.key || 0), deg = function (d, oct) { var s = m.scale, n = s.length; return root + s[((d % n) + n) % n] + 12 * (Math.floor(d / n) + (oct || 0)); };
+      var steps = [], degs = m.prog.map(function (p) { return Math.round(p * m.scale.length / 7); });
+      var pos = 2;
+      for (var bar = 0; bar < 4; bar++) {
+        var chord = degs[bar];
+        for (var s = 0; s < 16; s++) {
+          var st = { bass: s % 4 === 0 ? deg(chord, -2) : null, chord: s === 0 ? [deg(chord), deg(chord + 2), deg(chord + 4)] : null, lead: null, kick: false, snare: false, hat: false };
+          if (s % 2 === 0 && rnd() < 0.62) { pos += Math.round((rnd() - 0.5) * 4); pos = Math.max(-2, Math.min(9, pos)); if (s % 8 === 0) pos = chord + [0, 2, 4][Math.floor(rnd() * 3)]; st.lead = deg(pos, 1); }
+          if (m.drums === 'four') { st.kick = s % 4 === 0; st.snare = s % 8 === 4; st.hat = s % 2 === 0; }
+          else if (m.drums === 'drive') { st.kick = s % 4 === 0 || s === 10; st.snare = s % 8 === 4; st.hat = true; }
+          else { st.kick = s === 0 || s === 8; st.hat = s % 4 === 2; }
+          steps.push(st);
+        }
+      }
+      return { bpm: o.bpm || m.bpm, steps: steps, lead: o.lead || m.lead };
+    }
+    function playStep(st, t, len, s) {
+      if (st.bass) tone(musicBus, t, { wave: 'triangle', freq: freqOf(st.bass), dur: len * 3.5, vol: 0.32 });
+      if (st.chord) st.chord.forEach(function (n) { tone(musicBus, t, { wave: 'sine', freq: freqOf(n), dur: len * 15, vol: 0.06, attack: 0.08 }); });
+      if (st.lead) tone(musicBus, t, { wave: s.lead, freq: freqOf(st.lead), dur: len * 1.8, vol: 0.09, filter: 2600 });
+      if (st.kick) tone(musicBus, t, { wave: 'sine', freq: 150, to: 40, dur: 0.16, vol: 0.5 });
+      if (st.snare) tone(musicBus, t, { wave: 'noise', dur: 0.12, vol: 0.18, filter: 3000, filterType: 'highpass' });
+      if (st.hat) tone(musicBus, t, { wave: 'noise', dur: 0.03, vol: 0.06, filter: 7000, filterType: 'highpass' });
+    }
+    function schedule(s) {
+      if (!ensure() || s.timer) return;
+      var len = 60 / s.bpm / 4, next = ctx.currentTime + 0.06, i = 0;
+      s.timer = setInterval(function () {
+        if (song !== s) { clearInterval(s.timer); return; }
+        while (next < ctx.currentTime + 0.2) { playStep(s.steps[i % s.steps.length], next, len, s); next += len; i++; }
+      }, 40);
+    }
+    /* Starts looping music: { mood: 'happy'|'chill'|'tense'|'epic'|'spooky'|'retro', key (semitones), bpm, seed }
+       or your own song { bpm, steps: [{ bass, lead, chord: [notes], kick, snare, hat }, ...] } with
+       notes as names ('C4', 'F#3') or MIDI numbers. Music starts once the player first taps or presses a key. */
+    function music(o) {
+      stop();
+      o = o || {};
+      song = o.steps ? { bpm: o.bpm || 120, steps: o.steps.map(function (st) { return st || {}; }), lead: o.lead || 'square' } : compose(o);
+      if (ctx && ctx.state === 'running') schedule(song);
+      return song;
+    }
+    function stop() { if (song && song.timer) clearInterval(song.timer); song = null; }
+    function volume(kind, v) { if (v == null) { v = kind; kind = 'master'; } vol[kind] = Math.max(0, Math.min(1, +v || 0)); if (ctx) { var b = kind === 'music' ? musicBus : kind === 'sfx' ? sfxBus : master; b.gain.value = vol[kind]; } }
+    window.SPSound = { sfx: sfx, music: music, stop: stop, volume: volume, note: freqOf, moods: Object.keys(MOODS), effects: Object.keys(SFX), get playing() { return !!(song && song.timer); }, get context() { return ctx; } };
+  }
   const GAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:; connect-src 'none'; form-action 'none'";
   function withSDK(code, seed, opts) {
     const o = opts || {};
     const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute });
     const tag = '<meta http-equiv="Content-Security-Policy" content="' + GAME_CSP + '">'
-      + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + (/SP3D/.test(code) ? '(' + SP3D_LIB.toString() + ')();' : '') + SCRIPT_CLOSE;
+      + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + (/SP3D/.test(code) ? '(' + SP3D_LIB.toString() + ')();' : '') + (/SP2D/.test(code) ? '(' + SP2D_LIB.toString() + ')();' : '') + (/SPSound/.test(code) ? '(' + SPSOUND_LIB.toString() + ')();' : '') + SCRIPT_CLOSE;
     const head = code.match(/<head[^>]*>/i);
     if (head) return code.replace(head[0], head[0] + tag);
     const dt = code.match(/<!doctype[^>]*>/i);
@@ -2045,8 +2451,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     '',
     'HARD RULES',
     '- No external resources: no linked scripts or stylesheets, no CDNs, no web fonts, no image or audio files, no fetch/XHR/WebSocket, no localStorage or cookies, no alert/confirm/prompt, no iframes, no form submission.',
-    '- 2D games: draw with Canvas 2D (or DOM). 3D games: use SP3D (below). Make all art procedurally: shapes, gradients, particles, detailed drawn sprites.',
-    '- Sound: Web Audio only, started after the first player input. Add short sound effects and a simple looping background melody that fits the mood.',
+    '- 2D games: use SP2D (below) for most games (platformers, top-down, shooters, puzzles on a grid); plain Canvas 2D or DOM is fine for unusual ones. 3D games: use SP3D (below). Make all art procedurally: shapes, gradients, particles, detailed drawn sprites, or the creator\'s pictures.',
+    '- Sound: use SPSound (below) for sound effects and looping background music that fits the mood; raw Web Audio only for something it cannot do.',
     '- Fill the whole viewport, handle window resize and devicePixelRatio, never show scrollbars.',
     '- Support keyboard AND touch/pointer. On touch screens use taps, drags or on-screen buttons. Prevent page scrolling and zooming during play.',
     '- Flow: title screen (game name + "Tap or press Space to start") -> play -> game over screen with the final score -> restart without reloading.',
@@ -2056,18 +2462,31 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     '  * SP.gameOver(n) exactly once when a run ends, with the final score.',
     '  * SP.ready() once when the title screen first shows.',
     '  * SP.input(code) for each player action (for example "jump" or "left"), used for replay logs.',
-    "- Creator's pictures: when the request lists CREATOR'S PICTURES, they are already in the page. SP.image('name') returns an Image of that picture (it may still be loading: draw it only when img.complete && img.naturalWidth, else a simple shape). Use them for the parts the creator asked for, drawn with ctx.drawImage at any size (set ctx.imageSmoothingEnabled = false for pixel art). Never write out or recreate the picture data yourself. In 3D games, draw pictures on the HUD or as billboards at g.project() positions.",
+    "- Creator's pictures: when the request lists CREATOR'S PICTURES, they are already in the page. SP.image('name') returns an Image of that picture (it may still be loading: draw it only when img.complete && img.naturalWidth, else a simple shape). Use them for the parts the creator asked for, drawn with ctx.drawImage at any size (set ctx.imageSmoothingEnabled = false for pixel art). Never write out or recreate the picture data yourself. With SP2D pass image: 'name' to g.add; with SP3D use image: 'name' on a 'sprite' (or any shape as a texture).",
     '- Keep the document under 120 KB, with all JavaScript in one inline script at the end of the body, and no console errors. Use the room: real levels, enemy variety, power-ups and progression beat a thin prototype.',
     '',
     '3D GAMES WITH SP3D',
     '- When the game type is 3D, use window.SP3D, a small WebGL engine that is already loaded. Do not write raw WebGL. It creates its own full-screen canvas plus a 2D HUD canvas on top and handles resize and devicePixelRatio.',
     "  * const g = SP3D.create({ background: '#87ceeb', fog: { near: 30, far: 90 } });",
     '  * g.camera = { x, y, z, tx, ty, tz, fov } (position and look-at target; set fields, do not replace the object). g.light = { x, y, z (direction), color, ambient }.',
-    "  * const m = g.add(shape, { x, y, z, rx, ry, rz, size or sx/sy/sz, color: '#hex', emissive: 0..1, opacity: 0..1, shadow: true, parent: otherObject }). Shapes: 'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane' (flat on the ground, sized with sx/sz). Each shape is 1 unit across before scaling. Change m.x, m.ry, m.color, m.visible and so on at any time; m.remove(); m.world() gives its world position. Build characters and vehicles from several shapes with parent.",
+    "  * const m = g.add(shape, { x, y, z, rx, ry, rz, size or sx/sy/sz, color: '#hex', emissive: 0..1, opacity: 0..1, shadow: true, parent: otherObject, image: 'pictureName' or a canvas, repeat: n }). Shapes: 'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane' (flat on the ground, sized with sx/sz), 'sprite' (an upright picture that always faces the camera, good for characters and items made from the creator's pictures). image textures the shape (repeat tiles it); transparent parts of a picture are cut out. Each shape is 1 unit across before scaling. Change m.x, m.ry, m.color, m.visible and so on at any time; m.remove(); m.world() gives its world position. Build characters and vehicles from several shapes with parent.",
     '  * g.start((dt, t) => { update the game; draw the HUD with g.hud, a 2D context in CSS pixels, size g.width x g.height }) runs every frame and then renders.',
     '  * g.burst(x, y, z, { color, count, speed, size, life }) for particle effects. g.project(x, y, z) gives screen { x, y } for labels. g.ground(screenX, screenY, height) gives the point on a horizontal plane under a tap. SP3D.hit(a, b, pad) checks box overlap; SP3D.dist(a, b) is distance. g.clear() removes everything.',
     '  * Use y as up. Keep the camera following the player smoothly. Keep it under about 400 objects; reuse objects instead of adding new ones every frame.',
     '  * Touch controls for 3D: on-screen buttons drawn on the HUD, or drag to steer.',
+    '',
+    '2D GAMES WITH SP2D',
+    '- window.SP2D is a small 2D engine that is already loaded when your code mentions it. It creates its own full-screen canvas.',
+    "  * const g = SP2D.create({ width: 480, height: 270, background: '#hex', gravity: 1400, pixelArt: true }). width/height set a fixed game resolution scaled to fit any screen (omit both to use the window size). All positions are in game pixels, y down.",
+    "  * const o = g.add({ x, y, w, h (or size), shape: 'rect'|'circle'|'triangle'|'text', color, image: 'pictureName' or a canvas, text, font, radius, tag: 'player' (or tags: 'a b'), body: true (moves with gravity and collides with solids), solid: true (a wall others stand on), vx, vy, ax, ay, gravity: 1, bounce: 0..1, drag, maxSpeed, z, alpha, rotation, scale, flipX, hud: true (fixed on screen), draw: (ctx, o) => {...} (custom drawing centered on the object) }). o.onGround, o.hitWall, o.remove(), o.hits('tag'), o.is('tag'), o.center(), o.moveTo(x, y, speed). Change any field at any time.",
+    "  * g.level(['#....C', '#P...#', '######'], 32, { '#': { color: '#hex' or image, solid: true, oneWay: false }, P: (x, y) => spawn the player there, C: (x, y) => spawn a coin }) builds a tile level from strings (one character per tile; solid tiles collide with bodies, oneWay tiles only from above) and sets the camera bounds. g.tiles.at(x, y) and g.tiles.remove(cell) for breakable tiles.",
+    "  * g.overlap('player', 'coin', (p, c) => {...}) runs every frame two tagged objects overlap. g.all('tag'), g.first('tag').",
+    "  * g.camera.follow(obj), g.camera.zoom, g.camera.shake(px, seconds). g.tween(obj, { y: 100, alpha: 0 }, ms, 'out'|'in'|'inOut'|'back'|'bounce'|'linear', done). g.after(seconds, fn), g.every(seconds, fn). g.burst(x, y, { color, count, speed, size, life, gravity }) for particles.",
+    "  * Input: g.keys.left/right/up/down/jump/action/action2/start are true while held (arrows/WASD, Space = jump, Z/J = action, X/K = action2); g.pressed.<name> is true only on the frame it went down. g.pointer { x, y (world), sx, sy (screen), down, pressed }. g.buttons(['left', 'right', 'jump']) adds on-screen touch buttons that press the same keys on phones; use them for any game that needs keys.",
+    "  * g.scene('title', (data) => {...}) and g.go('play', data) clear the world and build a scene. g.start((dt, t) => { game logic; then draw the HUD with g.hud, a 2D context in game pixels }) runs every frame after the world is drawn. g.paused stops physics and timers.",
+    '',
+    'SOUND AND MUSIC WITH SPSound',
+    "- window.SPSound is already loaded when your code mentions it, and starts after the first tap or key press. SPSound.sfx('jump'|'coin'|'hit'|'explode'|'shoot'|'powerup'|'lose'|'win'|'click'|'step', { pitch }) plays an effect. SPSound.music({ mood: 'happy'|'chill'|'tense'|'epic'|'spooky'|'retro', key: semitones, bpm, seed }) loops a composed track with bass, chords, melody and drums; call it again to change songs (for example a tense track for a boss) and SPSound.stop() to stop. SPSound.volume('music', 0..1).",
     '',
     'CRYPTO AND WEB3 GAMES',
     '- Creators often ask for games about crypto: mining blocks, gas fees, wallets, tokens, NFTs, validators, bridges, airdrops, rug pulls. Turn those ideas into real arcade mechanics (for example blocks to stack, gas as a draining meter, tokens as pickups, a rug pull as a hazard).',
