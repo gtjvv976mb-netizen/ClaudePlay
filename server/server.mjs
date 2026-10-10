@@ -10,10 +10,15 @@
 // Settings (environment variables):
 //   PORT                 port to listen on (8787)
 //   GP_ROOT              folder to serve (dist/site)
-//   GP_MODEL_NEW         model for new games (claude-sonnet-5-5)
-//   GP_MODEL_EDIT        model for changes and bug fixes (claude-haiku-5-5)
-//   GP_DAILY_BUILDS      AI builds per visitor per day (12)
-//   GP_DAILY_TOTAL       AI builds per day across the whole site, to cap spend (0 = no cap)
+//   GP_MODEL_FREE        model for every build on the free plan (claude-haiku-5-5)
+//   GP_MODEL_NEW         Pro: model for new games and "best" builds (claude-sonnet-5-5)
+//   GP_MODEL_EDIT        Pro: model for changes and bug fixes (claude-haiku-5-5)
+//   GP_DAILY_BUILDS      free AI builds per visitor per day (3)
+//   GP_DAILY_TOTAL       free AI builds per day across the whole site, to cap spend (0 = no cap)
+//   GP_PRO_PRICE_SOL     price of a Pro pass in SOL, paid to GP_TREASURY (0.1; 0 = no Pro). Needs real
+//                        Solana payments (GP_SOLANA_CLUSTER + GP_TREASURY); see plans.mjs
+//   GP_PRO_DAYS          how long a Pro pass lasts (30)
+//   GP_PRO_BUILDS        Pro AI builds per day (10)
 //   GP_MAX_ACTIVE        AI builds running at once across all visitors (4)
 //   GP_TRUST_PROXY=1     read the visitor address from the first X-Forwarded-For entry (set this
 //                        behind a proxy that overwrites that entry, as Render does)
@@ -29,6 +34,8 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openGallery, fileStore, redisStore, copyGallery } from './gallery.mjs';
 import { chainConfig, makeRpc, openChain } from './chain.mjs';
+import { limiter, memoryKv, openPlans } from './plans.mjs';
+import { uidOf } from './gallery.mjs';
 import { createHash } from 'node:crypto';
 
 await import('../src/harness.js');
@@ -41,37 +48,12 @@ const MAX_TOKENS = 64000;
 // Models that accept server-side refusal fallbacks ("default" routes by refusal category).
 const FALLBACK_OK = /^claude-(sonnet-5-5|opus-5|fable-5)/;
 
-/* Per-visitor daily build counts and concurrency, kept in memory. */
-export function limiter({ daily, maxActive, total }) {
-  const days = new Map();
-  const site = { day: '', n: 0 };
-  const busy = new Set();
-  let active = 0;
-  const today = () => new Date().toISOString().slice(0, 10);
-  return {
-    left(who) { const d = days.get(who); return Math.max(0, daily - (d && d.day === today() ? d.n : 0)); },
-    take(who) {
-      if (busy.has(who)) return { ok: false, code: 'rate_limited', message: 'You already have a build running. Wait for it to finish.' };
-      if (active >= maxActive) return { ok: false, code: 'rate_limited', message: 'The AI studio is busy right now. Try again in a minute.' };
-      const day = today();
-      const d = days.get(who);
-      const n = d && d.day === day ? d.n : 0;
-      if (n >= daily) return { ok: false, code: 'daily_limit', message: 'You have used today’s ' + daily + ' free AI builds. Come back tomorrow, or tune a kit meanwhile.' };
-      if (site.day !== day) { site.day = day; site.n = 0; }
-      if (total && site.n >= total) return { ok: false, code: 'daily_limit', message: 'The AI studio has reached today’s build limit for this site. Come back tomorrow, or tune a kit meanwhile.' };
-      site.n++;
-      if (days.size > 50000) for (const [k, v] of days) if (v.day !== day) days.delete(k);
-      days.set(who, { day, n: n + 1 });
-      busy.add(who); active++;
-      return { ok: true, release() { busy.delete(who); active--; } };
-    },
-    refund(who) { const d = days.get(who); if (d && d.n > 0) d.n--; if (site.n > 0) site.n--; },
-  };
-}
-
-export function pickModel(req, models) {
+/* Free builds all use the free model; Pro uses Sonnet for new games and "best" builds. */
+export function pickModel(req, models, plan = 'pro') {
+  if (plan !== 'pro') return models.free;
   return req.kind === 'new' || req.tier === 'complex' ? models.new : models.edit;
 }
+const KEY_OK = /^[A-Za-z0-9_-]{32,128}$/;
 
 /* The Messages API request for one build. HARNESS is the system prompt, so it caches across builds. */
 export function buildParams(req, model) {
@@ -94,17 +76,31 @@ function apiError(err) {
 }
 
 /* Creates the server. Options: root, client (an Anthropic client, or null for no AI), models,
-   daily, total, maxActive, trustProxy, log, gallery (from openGallery(), or null for none). */
+   daily, total, maxActive, trustProxy, log, gallery (from openGallery(), or null for none),
+   chain (from openChain()), kv (build counts and Pro passes; in memory if omitted),
+   pro ({ price (lamports), days, daily }, used when chain is set). */
 export function createServer(opts = {}) {
   const root = resolve(opts.root || join(here, '..', 'dist', 'site'));
   const client = opts.client || null;
   const pick = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
-  const models = Object.assign({ new: 'claude-sonnet-5-5', edit: 'claude-haiku-5-5' }, pick(opts.models));
-  const daily = opts.daily || 12;
-  const limits = limiter({ daily, total: opts.total || 0, maxActive: opts.maxActive || 4 });
+  const models = Object.assign({ free: 'claude-haiku-5-5', new: 'claude-sonnet-5-5', edit: 'claude-haiku-5-5' }, pick(opts.models));
+  const daily = opts.daily || 3;
+  const kv = opts.kv || memoryKv();
+  const limits = limiter({ total: opts.total || 0, maxActive: opts.maxActive || 4, kv });
   const log = opts.log || (() => {});
   const gallery = opts.gallery || null;
   const chain = opts.chain || null;
+  const pro = opts.pro || {};
+  const plans = openPlans({ kv, chain, price: pro.price, days: pro.days, daily: pro.daily });
+  const uidFrom = (req) => { const k = String(req.headers['x-gp-key'] || ''); return KEY_OK.test(k) ? uidOf(k) : null; };
+  /* The caller's plan, daily allowance and builds left today. */
+  async function planInfo(req) {
+    const uid = uidFrom(req);
+    const plan = await plans.planOf(uid);
+    const who = plan === 'pro' ? 'u:' + uid : visitor(req);
+    const cap = plan === 'pro' ? plans.pro.daily : daily;
+    return { plan, who, uid, cap, left: Math.max(0, cap - (await limits.used(who))) };
+  }
   const chainHits = new Map();
 
   const visitor = (req) => {
@@ -127,7 +123,7 @@ export function createServer(opts = {}) {
     let body = await readFile(file);
     if ((client || gallery || chain) && file === join(root, 'index.html')) {
       // Tell the page where to send AI builds, where the shared gallery lives and which Solana network pays.
-      const extra = Object.assign(client ? { ai: 'api/build' } : {}, gallery ? { gallery: 'api/db' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
+      const extra = Object.assign(client ? { ai: 'api/build' } : {}, client && plans.pro ? { pro: true } : {}, gallery ? { gallery: 'api/db' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
       body = body.toString('utf8').replace(/window\.GP_SITE = (\{.*?\});/, (m, json) => 'window.GP_SITE = ' + JSON.stringify(Object.assign(JSON.parse(json), extra)).replace(/</g, '\\u003c') + ';');
     }
     res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
@@ -150,12 +146,21 @@ export function createServer(opts = {}) {
     try { body = JSON.parse(await readBody(req)); } catch (e) { return send(res, e.tooBig ? 413 : 400, { code: e.tooBig ? 'prompt_too_large' : 'bad_request', message: e.tooBig ? 'The game is too large to change in one request. Start a new build.' : 'The request was not valid JSON.' }); }
     const checked = H.checkRequest(body);
     if (!checked.ok) return send(res, 400, { code: 'bad_request', message: 'The request was not valid: ' + checked.error + '.' });
-    const who = visitor(req);
-    const slot = limits.take(who);
-    if (!slot.ok) return send(res, 429, { code: slot.code, message: slot.message });
-
     const r = checked.req;
-    const model = pickModel(r, models);
+    let info, slot;
+    try {
+      info = await planInfo(req);
+      if (info.plan !== 'pro' && r.tier === 'complex' && plans.pro) return send(res, 402, { code: 'pro_required', message: 'Best builds use Claude Sonnet 5.5 and are part of Pro. Switch to a standard build, or get Pro.' });
+      slot = await limits.take(info.who, info.cap, info.plan === 'pro'
+        ? { site: false, limitMessage: 'You have used today’s ' + info.cap + ' Pro builds. They reset tomorrow.' }
+        : { limitMessage: 'You have used today’s ' + info.cap + ' free AI builds. Come back tomorrow' + (plans.pro ? ', get Pro for more,' : '') + ' or tune a kit meanwhile.' });
+    } catch (e) {
+      log({ error: 'limits: ' + (e && e.message) });
+      return send(res, 503, { code: 'unavailable', message: 'The AI studio cannot check your build allowance right now. Try again in a minute.' });
+    }
+    if (!slot.ok) return send(res, 429, { code: slot.code, message: slot.message });
+    const refund = () => slot.refund().catch((e) => log({ error: 'refund: ' + (e && e.message) }));
+    const model = pickModel(r, models, info.plan);
     const ctl = new AbortController();
     let finished = false, sentText = false;
     res.on('close', () => { if (!finished) ctl.abort(); });
@@ -169,16 +174,16 @@ export function createServer(opts = {}) {
       }
       const msg = await stream.finalMessage();
       if (msg.stop_reason === 'refusal') {
-        limits.refund(who);
+        await refund();
         line({ t: 'error', code: 'refused', message: 'Claude declined this request. Rephrase the idea and try again.' });
       } else {
-        line({ t: 'done', truncated: msg.stop_reason === 'max_tokens', model: msg.model || model, left: limits.left(who) });
+        line({ t: 'done', truncated: msg.stop_reason === 'max_tokens', model: msg.model || model, plan: info.plan, left: slot.left });
       }
-      log({ kind: r.kind, model, ms: Date.now() - started, stop: msg.stop_reason, out: msg.usage && msg.usage.output_tokens });
+      log({ kind: r.kind, plan: info.plan, model, ms: Date.now() - started, stop: msg.stop_reason, out: msg.usage && msg.usage.output_tokens });
     } catch (err) {
-      if (ctl.signal.aborted) { limits.refund(who); log({ kind: r.kind, model, cancelled: true }); }
+      if (ctl.signal.aborted) { await refund(); log({ kind: r.kind, model, cancelled: true }); }
       else {
-        if (!sentText) limits.refund(who);
+        if (!sentText) await refund();
         const e = apiError(err);
         log({ kind: r.kind, model, error: err && (err.status || err.message) });
         line({ t: 'error', code: e.code, message: e.message });
@@ -222,7 +227,19 @@ export function createServer(opts = {}) {
       }
       if (path.startsWith('/api/db/')) return gallery ? await db(req, res, url) : send(res, 404, { code: 'not_found', message: 'This server has no shared gallery.' });
       if (path === '/api/build') return req.method === 'POST' ? await build(req, res) : send(res, 405, { code: 'bad_request', message: 'Use POST.' });
-      if (path === '/api/status') return send(res, 200, { ai: !!client, gallery: !!gallery, chain: chain ? chain.site.cluster : null, models: client ? models : null, daily, left: limits.left(visitor(req)) });
+      if (path === '/api/status') {
+        // Also Render's health check: report the site as up even if the build-count store is briefly unreachable.
+        const info = await planInfo(req).catch((e) => { log({ error: 'limits: ' + (e && e.message) }); return { plan: 'free', cap: daily, left: 0 }; });
+        return send(res, 200, { ai: !!client, gallery: !!gallery, chain: chain ? chain.site.cluster : null, models: client ? models : null, plan: info.plan, daily: info.cap, left: info.left, until: info.plan === 'pro' ? await plans.until(info.uid) : 0, pro: client ? await plans.offer(info.uid) : null });
+      }
+      if (path === '/api/pro') {
+        if (req.method !== 'POST') return send(res, 405, { code: 'bad_request', message: 'Use POST.' });
+        let body;
+        try { body = JSON.parse(await readBody(req, 4096)); } catch (e) { return send(res, 400, { code: 'bad_request', message: 'The request was not valid JSON.' }); }
+        const r = await plans.claim(uidFrom(req), body && body.sig);
+        if (r.status === 200) log({ pro: 'claimed', until: new Date(r.body.until).toISOString() });
+        return send(res, r.status, r.body);
+      }
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { code: 'bad_request', message: 'Method not allowed.' });
       return await serveFile(req, res);
     } catch (e) {
@@ -264,12 +281,17 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const cc = chainConfig(env, (m) => console.warn(m)); // throws on a bad or unconfirmed mainnet setup, so the server never starts half-configured
   const chain = cc ? openChain({ cluster: cc.cluster, treasury: cc.treasury, rpc: makeRpc(cc.rpcUrl) }) : null;
   if (cc) console.log('Payments run on Solana ' + cc.cluster + '; protocol fees go to ' + cc.treasury);
+  const proSol = env.GP_PRO_PRICE_SOL === undefined || env.GP_PRO_PRICE_SOL === '' ? 0.1 : Number(env.GP_PRO_PRICE_SOL);
+  if (!(proSol >= 0 && proSol <= 1000)) throw new Error('GP_PRO_PRICE_SOL must be a number of SOL, like 0.1 (0 turns Pro off)');
+  if (chain && client && proSol > 0) console.log('Pro passes cost ' + proSol + ' SOL for ' + (Number(env.GP_PRO_DAYS) || 30) + ' days, paid to ' + cc.treasury);
   const server = createServer({
     gallery,
     chain,
     root: env.GP_ROOT,
     client,
-    models: { new: env.GP_MODEL_NEW || undefined, edit: env.GP_MODEL_EDIT || undefined },
+    kv: store.kv,
+    pro: { price: Math.round(proSol * 1e9), days: Number(env.GP_PRO_DAYS) || undefined, daily: Number(env.GP_PRO_BUILDS) || undefined },
+    models: { free: env.GP_MODEL_FREE || undefined, new: env.GP_MODEL_NEW || undefined, edit: env.GP_MODEL_EDIT || undefined },
     daily: Number(env.GP_DAILY_BUILDS) || undefined,
     total: Number(env.GP_DAILY_TOTAL) || undefined,
     maxActive: Number(env.GP_MAX_ACTIVE) || undefined,

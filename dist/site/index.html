@@ -2061,7 +2061,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     no: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>',
   };
 
-  const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1', pending: 'pp.pending.v1' };
+  const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1', pending: 'pp.pending.v1', pro: 'pp.pro.v1' };
   const PREF_DEFAULTS = { theme: 'system', text: 'md', motion: 'system', speed: 1, sound: true };
   const ADJ = ['brisk', 'quiet', 'lucky', 'neon', 'sunny', 'swift', 'cosmic', 'mellow', 'bold', 'tiny', 'jolly', 'pixel', 'rapid', 'calm', 'wild', 'zesty'];
   const NOUN = ['lynx', 'otter', 'comet', 'falcon', 'gecko', 'panda', 'koi', 'badger', 'heron', 'moth', 'yak', 'wombat', 'raven', 'ibis', 'tapir', 'newt'];
@@ -2605,7 +2605,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const aborted = () => !!(opts.signal && opts.signal.aborted);
     let res;
     try {
-      res = await fetch(SITE.ai, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req), signal: opts.signal });
+      res = await fetch(SITE.ai, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, keyHeader()), body: JSON.stringify(req), signal: opts.signal });
     } catch (e) {
       throw aborted() ? { code: 'cancelled' } : { code: 'offline', message: 'Could not reach the ClaudePlay server. Check your connection and try again.' };
     }
@@ -2636,8 +2636,56 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       throw e;
     }
     if (!done) throw { code: 'failed', message: 'The build stopped early. Try again.' };
+    if (S.plan && typeof done.left === 'number') S.plan.left = done.left;
     return { text, truncated: !!done.truncated };
   }
+
+  /* ---------------- Free and Pro plans ----------------
+     On a website served by server/server.mjs, AI builds come in two plans: free (a few builds a day on a
+     low-cost model) and Pro, a pass paid in SOL from the player's wallet straight to the site owner's
+     treasury. The memo "gameplay:<pro id>" ties the payment to this browser's gallery account, and the
+     server checks it on Solana before turning Pro on. */
+  const apiUrl = (name) => String(SITE.ai || '').replace(/build$/, name);
+  const keyHeader = () => { const k = SITE.gallery ? LS.get(KEY.gallery) : null; return k ? { 'x-gp-key': k } : {}; };
+  const modelName = (id) => String(id || '').replace(/^claude-/, 'Claude ').replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/-(\d+)$/, ' $1').replace(/ (\w)/, (m, c) => ' ' + c.toUpperCase());
+  const shortDate = (ts) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  async function loadPlan() {
+    if (ENV !== 'web' || !SITE.ai) return;
+    try {
+      const res = await fetch(apiUrl('status'), { headers: keyHeader() });
+      if (!res.ok) return;
+      S.plan = await res.json();
+    } catch (e) { return; }
+    const pend = LS.get(KEY.pro);
+    if (pend && pend.sig && S.plan.pro && S.plan.plan !== 'pro' && Date.now() - pend.at < 2 * 86400000) {
+      try { await claimPro(pend.sig, 1); return; } catch (e) { /* tried again on the next visit */ }
+    }
+    renderPlan();
+  }
+  async function claimPro(sig, tries) {
+    for (let i = 0; ; i++) {
+      const res = await fetch(apiUrl('pro'), { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, keyHeader()), body: JSON.stringify({ sig }) });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) { LS.del(KEY.pro); await loadPlan(); return j.until; }
+      if (res.status === 409 && j.code === 'pending' && i + 1 < tries) { await new Promise((r) => setTimeout(r, 2000)); continue; }
+      if (res.status !== 409 || j.code === 'used') LS.del(KEY.pro);
+      throw new Error(j.message || 'Could not turn Pro on. Try again.');
+    }
+  }
+  function planHTML() {
+    const p = S.plan;
+    if (ENV !== 'web' || !p || !p.ai) return '';
+    const builds = fmtInt(p.left) + ' of ' + fmtInt(p.daily) + ' AI builds left today';
+    const m = p.models || {};
+    if (p.plan === 'pro') {
+      return '<p class="muted"><b>Pro</b> until ' + esc(shortDate(p.until)) + ' · ' + builds + ' · new games use ' + esc(modelName(m.new)) + '.'
+        + (p.pro && p.pro.memo ? ' <button class="btn small ghost" type="button" data-act="get-pro">Add ' + p.pro.days + ' days</button>' : '') + '</p>';
+    }
+    return '<div class="stack" style="gap:6px"><p class="muted"><b>Free plan</b> · ' + builds + ' · built with ' + esc(modelName(m.free)) + '.</p>'
+      + (p.pro && p.pro.memo ? '<div class="row"><button class="btn small" type="button" data-act="get-pro">Get Pro · ' + fmtSOL(p.pro.price) + ' ' + UNIT + ' for ' + p.pro.days + ' days</button><span class="muted">' + esc(modelName(m.new)) + ' and ' + p.pro.daily + ' builds a day</span></div>' : '')
+      + '</div>';
+  }
+  function renderPlan() { const el = $('#st-plan'); if (el) el.innerHTML = planHTML(); const q = $('#st-gen'); if (q && !S.studio.busy) q.innerHTML = genButtons(); }
   function extractHTML(text) {
     let t = String(text || '').trim();
     const fence = t.match(/```(?:html)?\s*([\s\S]*?)```/i);
@@ -3141,7 +3189,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
           + (has ? '' : '<div class="stack" style="gap:8px"><p class="eyebrow" id="crypto-ideas">Make a crypto game</p><div class="row" role="group" aria-labelledby="crypto-ideas">' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></div>')
           + '<label class="field"><span class="sr">Your idea or change</span><textarea id="st-prompt" data-in="prompt" placeholder="' + (has ? 'Ask for a change: “make the jump higher and add a double-jump power-up”' : 'Block Miner: stack falling transaction blocks before the gas meter runs dry…') + '">' + esc(st.prompt) + '</textarea></label>'
           + '<div class="row" role="group" aria-label="Art style">' + STYLES.map((s) => '<button class="chip" type="button" data-act="style" data-style="' + esc(s) + '" aria-pressed="' + (st.style === s) + '">' + esc(s) + '</button>').join('') + '</div>'
-          + '<div class="row" id="st-gen">' + genButtons() + '</div>'
+          + '<div class="row" id="st-gen">' + genButtons() + '</div><div id="st-plan">' + planHTML() + '</div>'
           + '<details><summary class="muted" style="cursor:pointer">Starter ideas to remix</summary><div class="stack" style="margin-top:10px">' + IDEAS.map((t) => '<button class="btn small ghost" type="button" data-act="idea" style="white-space:normal;text-align:left;justify-content:flex-start">' + esc(t) + '</button>').join('') + '</div></details>'
           + '</div>';
       }
@@ -3177,7 +3225,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (st.busy) return '<button class="btn" type="button" data-act="stop">Stop</button><span class="muted" id="st-phase">' + esc((st.stream && st.stream.phase) || 'Thinking…') + '</span>';
     return '<button class="btn primary" type="button" data-act="gen-new">Build new game · ' + R.GEN_COST.new + ' Sparks</button>'
       + (has ? '<button class="btn" type="button" data-act="gen-edit">Apply change · ' + R.GEN_COST.edit + ' Sparks</button>' : '')
-      + '<select id="st-quality" data-in="quality" aria-label="Build quality" style="width:auto"><option value="default"' + (st.quality === 'default' ? ' selected' : '') + '>Standard build</option><option value="complex"' + (st.quality === 'complex' ? ' selected' : '') + '>Best build (slower)</option></select>';
+      + '<select id="st-quality" data-in="quality" aria-label="Build quality" style="width:auto"><option value="default"' + (st.quality === 'default' ? ' selected' : '') + '>Standard build</option><option value="complex"' + (st.quality === 'complex' ? ' selected' : '') + '>' + (S.plan && S.plan.pro && S.plan.plan !== 'pro' ? 'Best build (Pro)' : 'Best build (slower)') + '</option></select>';
   }
   function publishPanel() {
     const st = S.studio;
@@ -3215,6 +3263,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<section class="st-right" id="st-right"><div class="screen" id="st-screen"></div><div class="toolbar" id="st-tools">' + studioTools() + '</div><div id="st-status">' + studioStatus() + '</div></section></div>' + footHTML();
     loadPreview();
     renderStream();
+    loadPlan();
   }
   function updateStudio() {
     const sp = $('#st-sparks'); if (sp) sp.textContent = fmtInt(studioSparks());
@@ -3305,6 +3354,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     } finally {
       st.busy = false; st.stream = null; S.ctl = null;
       rerenderStudioLeft(); rerenderStudioRight(); saveStudio();
+      if (S.plan) loadPlan();
     }
   }
   async function publish() {
@@ -3606,6 +3656,28 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       modal('<h2>Boost ' + esc(g.title) + '</h2><p>Burning GPLY lifts a cartridge in the Boosted sort. Burned GPLY leaves the supply for good. You have ' + fmtInt(have) + ' GPLY.</p><div class="row">'
         + [10, 50, 250].map((a) => '<button class="btn" type="button" data-act="confirm-boost" data-gid="' + esc(g.gid) + '" data-amt="' + a + '"' + (have < a ? ' disabled' : '') + '>Burn ' + a + '</button>').join('')
         + '</div>' + (have < 10 ? '<p class="muted">You earn GPLY when an epoch settles: make games people play, or place on a leaderboard.</p>' : '') + '<div class="row"><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
+    },
+    'get-pro': async () => {
+      const p = S.plan && S.plan.pro; if (!p || !p.memo) return;
+      await ensureWallet();
+      if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Real SOL is paid from your own wallet app. Connect Phantom, Solflare or Backpack in Wallet.');
+      await loadChainBal();
+      const bal = solOf(myWallet()), short_ = bal < p.price + 10000;
+      modal('<h2>Get ClaudePlay Pro</h2><p>' + fmtSOL(p.price) + ' ' + UNIT + ' for ' + p.days + ' days: new games and best builds made with ' + esc(modelName(S.plan.models && S.plan.models.new)) + ', and ' + p.daily + ' AI builds a day.</p>'
+        + '<p class="muted">Your wallet pays the site owner directly on Solana' + (MAINNET ? ', in real SOL' : '') + '. Pro belongs to this browser’s ClaudePlay account. You have ' + fmtSOL(bal) + ' ' + UNIT + '.</p>'
+        + (short_ ? '<p class="muted">' + (MAINNET ? 'Add SOL to your wallet app first.' : 'Get devSOL from the faucet in your <a href="#wallet" data-nav="wallet">wallet</a> first.') + '</p>' : '')
+        + '<div class="row"><button class="btn primary" type="button" data-act="confirm-pro"' + (short_ ? ' disabled' : '') + '>Pay ' + fmtSOL(p.price) + ' ' + UNIT + '</button><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
+    },
+    'confirm-pro': async () => {
+      const p = S.plan && S.plan.pro; if (!p || !p.memo) return;
+      closeModal();
+      if (S.wallet.kind !== 'embedded') toast('Approve the payment in your wallet app.');
+      const sig = await walletPay([{ to: p.treasury, amt: p.price }], p.memo.slice('gameplay:'.length));
+      LS.set(KEY.pro, { sig, at: Date.now() });
+      await waitConfirmed(sig);
+      const until = await claimPro(sig, 6);
+      await loadChainBal();
+      toast('Pro is on until ' + shortDate(until) + '.');
     },
     'confirm-boost': async (el) => { const g = gameOf(el); closeModal(); await signAndAppend('boost', { gid: g.gid, amt: Number(el.dataset.amt) }); toast('Burned ' + el.dataset.amt + ' GPLY to boost ' + g.title + '.'); },
     'remix': async (el) => { await startRemix(el.dataset.gid); },

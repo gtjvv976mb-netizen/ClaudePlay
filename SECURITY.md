@@ -30,6 +30,8 @@ ClaudePlay never holds funds and the server never holds a private key.
 | 15 | On mainnet, the site's wording still said balances were test tokens and no real funds moved. | **Fixed.** The footer, front page, FAQ and earnings copy say plainly that collects and tips are real SOL. |
 | 16 | On mainnet, real SOL could be paid to a creator whose key lives only in their browser's storage, and is lost if they clear it. | **Fixed.** On mainnet, publishing needs a wallet app, and the page refuses to pay a creator whose wallet is a browser key. |
 | 17 | The public mainnet RPC rate-limits and often refuses to relay transactions from servers, so payments would fail. | **Fixed.** Mainnet will not start without `GP_SOLANA_RPC`. |
+| 18 | Pro passes are paid in SOL to the treasury. A payment could be claimed twice, for the wrong account, or for less than the price. | **Fixed.** `claim()` in server/plans.mjs requires a successful transaction whose signer paid `GP_TREASURY` at least the price, with the memo `gameplay:<pro id>` derived from the claiming account; each signature unlocks Pro once (`kv.once`). Tests: `test/server.test.mjs`. |
+| 19 | Daily AI build limits were kept in memory, so a restart (Render's free plan sleeps) reset them and let a visitor exceed the cap. | **Fixed.** Counts live in Upstash Redis (or `kv.json`) with atomic increments. Free builds count per network address and toward the site-wide cap; set a monthly spend limit in the Anthropic Console as the hard backstop. |
 
 ## Owner checklist before mainnet
 

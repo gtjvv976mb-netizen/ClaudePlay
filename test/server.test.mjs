@@ -1,5 +1,6 @@
 // Tests for server/server.mjs with a fake Anthropic client. Run `node build.mjs` first.
-import { createServer, buildParams, pickModel, limiter } from '../server/server.mjs';
+import { createServer, buildParams, pickModel } from '../server/server.mjs';
+import { limiter, memoryKv, proId } from '../server/plans.mjs';
 import { openGallery, uidOf, fileStore, redisStore, copyGallery } from '../server/gallery.mjs';
 import { fakeRedis } from './fake_redis.mjs';
 import { chainConfig, openChain } from '../server/chain.mjs';
@@ -48,9 +49,11 @@ async function readLines(res) {
 const post = (base, body, headers) => fetch(base + '/api/build', { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, headers), body: typeof body === 'string' ? body : JSON.stringify(body) });
 
 // --- pure helpers
-ok(pickModel({ kind: 'new' }, { new: 'N', edit: 'E' }) === 'N', 'new games use the new-game model');
-ok(pickModel({ kind: 'edit' }, { new: 'N', edit: 'E' }) === 'E', 'changes use the edit model');
-ok(pickModel({ kind: 'fix', tier: 'complex' }, { new: 'N', edit: 'E' }) === 'N', 'the complex tier uses the new-game model for edits');
+const M = { free: 'F', new: 'N', edit: 'E' };
+ok(pickModel({ kind: 'new' }, M, 'pro') === 'N', 'Pro: new games use the new-game model');
+ok(pickModel({ kind: 'edit' }, M, 'pro') === 'E', 'Pro: changes use the edit model');
+ok(pickModel({ kind: 'fix', tier: 'complex' }, M, 'pro') === 'N', 'Pro: the best tier uses the new-game model for edits');
+ok(pickModel({ kind: 'new', tier: 'complex' }, M, 'free') === 'F', 'free builds all use the free model');
 const pS = buildParams({ kind: 'new', prompt: 'Block Miner', style: 'Pixel art' }, 'claude-sonnet-5-5');
 ok(pS.system[0].text === H.HARNESS && pS.system[0].cache_control, 'harness is a cached system prompt');
 ok(pS.messages[0].content.includes('Block Miner') && pS.messages[0].content.includes('Art style: Pixel art'), 'idea and style go in the user turn');
@@ -64,22 +67,24 @@ ok(!H.checkRequest({ kind: 'new', prompt: '' }).ok, 'empty idea rejected');
 ok(!H.checkRequest({ kind: 'new', prompt: 'x'.repeat(2001) }).ok, 'over-long idea rejected');
 ok(!H.checkRequest({ kind: 'edit', prompt: 'faster', code: 'hello' }).ok, 'edit without a game rejected');
 ok(H.checkRequest({ kind: 'new', prompt: 'hi', code: GAME }).req.code === '', 'new builds drop any code sent');
-const L = limiter({ daily: 2, maxActive: 1 });
-const s1 = L.take('a');
-ok(s1.ok && !L.take('a').ok, 'one running build per visitor');
-ok(!L.take('b').ok, 'global concurrency cap');
+const L = limiter({ maxActive: 1 });
+const s1 = await L.take('a', 2);
+ok(s1.ok && !(await L.take('a', 2)).ok, 'one running build per visitor');
+ok(!(await L.take('b', 2)).ok, 'global concurrency cap');
 s1.release();
-const s2 = L.take('a'); s2.release();
-const s3 = L.take('a');
+const s2 = await L.take('a', 2); s2.release();
+const s3 = await L.take('a', 2);
 ok(!s3.ok && s3.code === 'daily_limit', 'daily build limit');
-L.refund('a');
-ok(L.left('a') === 1, 'refund gives a build back');
-const T = limiter({ daily: 5, maxActive: 5, total: 2 });
-T.take('x').release(); T.take('y').release();
-const t3 = T.take('z');
+await s2.refund(); await s2.refund();
+ok((await L.used('a')) === 1, 'refund gives a build back, once');
+const T = limiter({ maxActive: 5, total: 2 });
+(await T.take('x', 5)).release(); const ty = await T.take('y', 5); ty.release();
+const t3 = await T.take('z', 5);
 ok(!t3.ok && t3.code === 'daily_limit' && t3.message.includes('this site'), 'site-wide daily cap');
-T.refund('y');
-ok(T.take('z').ok, 'refund frees a site-wide build');
+const tp = await T.take('p', 5, { site: false }); tp.release();
+ok(tp.ok, 'Pro builds do not count toward the free site-wide cap');
+await ty.refund();
+ok((await T.take('z', 5)).ok, 'refund frees a site-wide build');
 
 // --- HTTP: without a key
 {
@@ -96,7 +101,7 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
 // --- HTTP: with a fake client
 {
   const { client, calls } = fakeClient();
-  const { server, base } = await start({ client, daily: 3, trustProxy: true });
+  const { server, base } = await start({ client, daily: 3, trustProxy: true, models: { free: 'claude-sonnet-5-5' } });
   const viaProxy = await (await fetch(base + '/api/status', { headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' } })).json();
   ok(viaProxy.left === 3, 'behind a proxy each visitor is counted by the first forwarded address');
   const html = await (await fetch(base + '/')).text();
@@ -112,11 +117,11 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
   const done = lines.find((l) => l.t === 'done');
   ok(text === GAME, 'streamed text is the whole game');
   ok(done && done.truncated === false && done.model === 'claude-sonnet-5-5' && done.left === 2, 'done line reports model and builds left');
-  ok(calls[0].params.model === 'claude-sonnet-5-5' && calls[0].params.messages[0].content.includes('Block Miner'), 'new build sent to Sonnet 5.5 with the idea');
+  ok(calls[0].params.model === 'claude-sonnet-5-5' && calls[0].params.messages[0].content.includes('Block Miner'), 'new build sent to the free model with the idea');
 
   const r2 = await post(base, { kind: 'edit', prompt: 'add a double jump', code: GAME });
   await readLines(r2);
-  ok(calls[1].params.model === 'claude-haiku-5-5', 'edit sent to Haiku 5.5');
+  ok(calls[1].params.model === 'claude-sonnet-5-5', 'the free model is used for every free build (GP_MODEL_FREE)');
 
   const bad = await post(base, { kind: 'edit', prompt: 'x' });
   ok(bad.status === 400 && (await bad.json()).code === 'bad_request', 'invalid build request is 400');
@@ -130,7 +135,7 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
   const j4 = await r4.json();
   ok(r4.status === 429 && j4.code === 'daily_limit', 'fourth build of the day is refused: ' + j4.message);
   const st = await (await fetch(base + '/api/status')).json();
-  ok(st.ai === true && st.left === 0 && st.models.new === 'claude-sonnet-5-5', 'status reports AI on and builds left');
+  ok(st.ai === true && st.left === 0 && st.plan === 'free' && st.pro === null && st.models.new === 'claude-sonnet-5-5', 'status reports AI on, the free plan and builds left');
   server.close();
 }
 
@@ -161,7 +166,7 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
   await new Promise((res) => setTimeout(res, 200));
   ok(slow.calls[0].options.signal.aborted, 'closing the page cancels the Claude request');
   const st = await (await fetch(base + '/api/status')).json();
-  ok(st.left === 12, 'a cancelled build is not counted');
+  ok(st.left === 3, 'a cancelled build is not counted');
   server.close();
 }
 
@@ -244,6 +249,90 @@ redis.close();
   const r1 = await small.put('accounts/' + uidOf(A), { v: 1 }, A, '1.2.3.4');
   const r2 = await small.put('accounts/' + uidOf(B), { v: 1 }, B, '1.2.3.4');
   ok(r1.status === 200 && r2.status === 429, 'new accounts per address are limited');
+}
+
+// ---- Free and Pro plans ----
+{
+  const C = globalThis.PPCore, SOL = globalThis.PPSolana;
+  const T = C.b58enc(C.randBytes(32));
+  const fake = fakeRpc();
+  const chain = openChain({ cluster: 'devnet', treasury: T, rpc: fake.rpc });
+  const { client, calls } = fakeClient();
+  const kv = memoryKv();
+  const A = 'a'.repeat(48), B = 'b'.repeat(48);
+  let { server, base } = await start({ client, chain, kv, daily: 1, pro: { price: 1e8, days: 30, daily: 2 } });
+  const status = async (key) => (await fetch(base + '/api/status', { headers: key ? { 'x-gp-key': key } : {} })).json();
+  const claim = async (key, sig) => fetch(base + '/api/pro', { method: 'POST', headers: { 'content-type': 'application/json', 'x-gp-key': key }, body: JSON.stringify({ sig }) });
+  ok((await (await fetch(base + '/')).text()).includes('"pro":true'), 'the page is told Pro is offered');
+  let st = await status(A);
+  ok(st.plan === 'free' && st.daily === 1 && st.pro.price === 1e8 && st.pro.treasury === T && st.pro.memo === 'gameplay:' + proId(uidOf(A)), 'status offers Pro with this account’s memo');
+  let lines = await readLines(await post(base, { kind: 'new', prompt: 'free one' }, { 'x-gp-key': A }));
+  ok(calls[0].params.model === 'claude-haiku-5-5' && lines.find((l) => l.t === 'done').plan === 'free', 'free builds use Haiku 5.5');
+  const best = await post(base, { kind: 'new', prompt: 'best', tier: 'complex' }, { 'x-gp-key': B });
+  ok(best.status === 402 && (await best.json()).code === 'pro_required', 'best builds need Pro when Pro is offered');
+  const over = await post(base, { kind: 'new', prompt: 'second' }, { 'x-gp-key': A });
+  ok(over.status === 429 && /get Pro/.test((await over.json()).message), 'the free limit points at Pro');
+
+  // Pay for Pro on the fake devnet.
+  const k = await C.ed.generate(); const payer = await C.ed.signer(k.secret64);
+  fake.balances.set(payer.pk, 1e9); fake.balances.set(T, 1e9);
+  const pay = async (memo, lamports, to = T) => {
+    const { blockhash } = await (await fetch(base + '/api/chain/blockhash')).json();
+    const msg = SOL.buildPayment({ payer: payer.pk, transfers: [{ to, lamports }], memo, blockhash });
+    const tx = Buffer.from(SOL.serializeTx(msg, await payer.sign(msg))).toString('base64');
+    return (await (await fetch(base + '/api/chain/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tx }) })).json()).signature;
+  };
+  const shortSig = await pay(st.pro.memo, 5e7);
+  ok((await claim(A, shortSig)).status === 400, 'a payment short of the price does not unlock Pro');
+  const otherSig = await pay('gameplay:' + proId(uidOf(B)), 1e8);
+  ok((await claim(A, otherSig)).status === 400, 'a payment for another account does not unlock Pro for this one');
+  ok((await claim(A, C.b58enc(C.randBytes(64)))).status === 409, 'an unknown payment is reported as not confirmed yet');
+  const sig = await pay(st.pro.memo, 1e8);
+  const c1 = await claim(A, sig); const j1 = await c1.json();
+  ok(c1.status === 200 && j1.until > Date.now() + 29 * 86400000, 'a full payment unlocks Pro for 30 days');
+  const c2 = await (await claim(A, sig)).json();
+  ok(c2.until === j1.until && c2.repeated, 'claiming the same payment again changes nothing');
+  st = await status(A);
+  ok(st.plan === 'pro' && st.daily === 2 && st.left === 2 && st.until === j1.until, 'status shows the Pro pass and its own daily allowance');
+  lines = await readLines(await post(base, { kind: 'new', prompt: 'pro one', tier: 'complex' }, { 'x-gp-key': A }));
+  ok(calls[calls.length - 1].params.model === 'claude-sonnet-5-5' && lines.find((l) => l.t === 'done').plan === 'pro', 'Pro builds use Sonnet 5.5, past the free limit');
+  await readLines(await post(base, { kind: 'edit', prompt: 'pro edit', code: GAME }, { 'x-gp-key': A }));
+  ok(calls[calls.length - 1].params.model === 'claude-haiku-5-5', 'Pro changes use the edit model');
+  ok((await post(base, { kind: 'new', prompt: 'pro three' }, { 'x-gp-key': A })).status === 429, 'Pro has its own daily limit');
+  const sig2 = await pay(st.pro.memo, 1e8 + 1);
+  const j3 = await (await claim(A, sig2)).json();
+  ok(Math.abs(j3.until - j1.until - 30 * 86400000) < 5000, 'a second payment adds 30 more days');
+  server.close();
+
+  // Counts and passes survive a restart when kept in a store.
+  ({ server, base } = await start({ client, chain, kv, daily: 1, pro: { price: 1e8 } }));
+  ok((await status(A)).plan === 'pro' && (await status(B)).left === 0, 'passes and daily counts survive a restart (free builds count per address)');
+  server.close();
+  ({ server, base } = await start({ client, chain: null, kv, daily: 1 }));
+  st = await status(A);
+  ok(st.plan === 'free' && st.pro === null && (await claim(A, sig)).status === 404, 'without Solana payments there is no Pro');
+  server.close();
+
+  // A store outage refuses builds clearly but keeps the health check up.
+  const down = { incr: async () => { throw new Error('down'); }, get: async () => { throw new Error('down'); }, set: async () => {}, once: async () => true };
+  ({ server, base } = await start({ client, kv: down }));
+  const hs = await fetch(base + '/api/status');
+  const bd = await post(base, { kind: 'new', prompt: 'x' });
+  ok(hs.status === 200 && bd.status === 503 && (await bd.json()).code === 'unavailable', 'a store outage refuses builds but keeps /api/status up');
+  server.close();
+
+  // The same counters on a folder and on Redis.
+  const dir = mkdtempSync(join(tmpdir(), 'gp-kv-'));
+  const r2 = await fakeRedis();
+  for (const [name, make] of [['folder', () => fileStore(dir).kv], ['redis', () => redisStore(r2.url, r2.token).kv]]) {
+    const one = make();
+    await one.incr('n', 1, 60); await one.incr('n', 1, 60); await one.set('pro:x', { until: 5 });
+    ok(await one.once('sig:1') && !(await one.once('sig:1')), name + ': a payment is used once');
+    if (one.flush) await one.flush();
+    const two = make();
+    ok((await two.get('n')) === 2 && (await two.get('pro:x')).until === 5 && !(await two.once('sig:1')), name + ': counts, passes and used payments are kept');
+  }
+  r2.close(); rmSync(dir, { recursive: true, force: true });
 }
 
 // ---- Solana network: settings, the RPC proxy and its payment filter ----
