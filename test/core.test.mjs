@@ -47,6 +47,11 @@ await sign(B, 'collect', { gid: 'g' + 'b'.repeat(12), price: 0.2e9 }, b); // sol
 await sign(A, 'score', { gid: 'g' + 'b'.repeat(12), hash: h2, score: 120 }, a);
 await sign(A, 'score', { gid: 'g' + 'b'.repeat(12), hash: h1, score: 999 }, a); // wrong version
 await sign(Cc, 'tip', { gid: 'g' + 'a'.repeat(12), amt: 0.05e9 }, c);
+const rB = await sign(B, 'rate', { gid: 'g' + 'a'.repeat(12), stars: 2 }, b);
+const rB2 = await sign(B, 'rate', { gid: 'g' + 'a'.repeat(12), stars: 4 }, b); // a new rating replaces the old one
+const rC = await sign(Cc, 'rate', { gid: 'g' + 'a'.repeat(12), stars: 5 }, c);
+const rOwn = await sign(A, 'rate', { gid: 'g' + 'a'.repeat(12), stars: 5 }, a);
+const rBad = await sign(Cc, 'rate', { gid: 'g' + 'b'.repeat(12), stars: 9 }, c);
 // forged: B's key signs a tx claiming to be from A
 const forged = { id: C.randHex(8), t: 'airdrop', from: A.pk, pk: B.pk, ts: t += 1000, n: 99, b: {} }; forged.sig = await B.sign(C.txMessage(forged)); b.push(forged);
 // tampered body
@@ -57,6 +62,11 @@ const bal = (k) => w.wallets.get(k.pk);
 const st = (tx) => w.log.find((r) => r.tx.id === tx.id);
 ok(!st(a[1]).ok && /24 hours/.test(st(a[1]).why), 'second airdrop rejected');
 ok(!st(forged).ok, 'forged signer rejected: ' + st(forged).why);
+ok(st(rB).ok && st(rB2).ok && st(rC).ok, 'players rate games');
+ok(!st(rOwn).ok && /own/.test(st(rOwn).why), 'creators cannot rate their own game');
+ok(!st(rBad).ok, 'ratings outside 1 to 5 stars rejected');
+const g1 = w.games.get('g' + 'a'.repeat(12));
+ok(g1.ratingCount === 2 && g1.rating === 4.5, 'one rating per account, averaged: ' + g1.rating + ' from ' + g1.ratingCount);
 ok(!st(tam).ok, 'tampered tx rejected: ' + st(tam).why);
 const sold = st(b[3]); ok(!sold.ok && sold.why === 'Sold out', 'cap enforced');
 ok(!st(a[7]).ok && st(a[6]).ok, 'score for wrong version rejected: ' + st(a[7]).why);

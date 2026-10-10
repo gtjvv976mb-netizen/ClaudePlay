@@ -210,7 +210,15 @@ for (const kind of ['folder', 'redis']) {
   const code = '<!doctype html><html><body>game</body></html>';
   const hash = createHash('sha256').update(code).digest('hex');
   ok((await db('PUT', 'blobs/' + hash, { code: code + 'x' }, A)).status === 400, 'game file must match its fingerprint');
-  ok((await db('PUT', 'blobs/' + hash, { code, ts: 1 }, A)).status === 200, 'game file stored under its fingerprint');
+  const unchecked = await db('PUT', 'blobs/' + hash, { code, ts: 1 }, A);
+  ok(unchecked.status === 403 && (await unchecked.json()).code === 'blocked', 'game files need the safety check');
+  const screenR = (body) => fetch(base + '/api/screen', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const passed = await (await screenR({ code, title: 'Game' })).json();
+  ok(passed.ok && /^[0-9a-f]{64}$/.test(passed.token) && passed.reviewed === false, 'without an AI key the pattern checks still run and give a token');
+  const phish = await (await screenR({ code: '<html><body><input placeholder="Enter your seed phrase"></body></html>' })).json();
+  ok(!phish.ok && /seed phrase/.test(phish.reasons[0]), 'a game asking for a seed phrase is stopped');
+  ok((await db('PUT', 'blobs/' + hash, { code, ts: 1, screen: 'f'.repeat(64) }, A)).status === 403, 'a made-up token is refused');
+  ok((await db('PUT', 'blobs/' + hash, { code, ts: 1, screen: passed.token }, A)).status === 200, 'game file stored under its fingerprint');
   ok((await db('PUT', 'protocol/e1', { n: 1 }, A)).status === 403, "visitors can't settle epochs");
   ok((await db('PUT', 'protocol/e1', { n: 1 }, ADMIN)).status === 200, 'owner can settle epochs');
   ok((await db('PUT', 'protocol/../x', { n: 1 }, ADMIN)).status === 404, 'unknown documents rejected');
@@ -465,6 +473,30 @@ redis.close();
   const solo = await start({});
   ok((await fetch(solo.base + '/api/rooms', { method: 'POST', body: '{}' })).status === 404, 'no rooms without a shared gallery');
   solo.server.close();
+}
+
+// Safety check with Claude: the review sees the pictures and the code, and its verdict decides.
+{
+  const reviews = [];
+  const verdicts = { Good: '{"verdict":"allow","reasons":[]}', Bad: '{"verdict":"block","reasons":["Shows gore."]}', Odd: 'sure, looks fine' };
+  const client = { beta: { messages: { stream(params) {
+    reviews.push(params);
+    const title = (params.messages[0].content.map((p) => p.text || '').join('').match(/TITLE: (\w+)/) || [])[1];
+    return { async *[Symbol.asyncIterator]() { if (title === 'Down') throw Object.assign(new Error('overloaded'), { status: 529 }); yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: verdicts[title] } }; }, async finalMessage() { return { stop_reason: 'end_turn', usage: {} }; } };
+  } } } };
+  const { server, base } = await start({ client, gallery: await openGallery({}) });
+  const screenR = async (title) => { const r = await fetch(base + '/api/screen', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: H.withPictures(GAME, [{ name: 'cat', w: 1, h: 1, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==' }]), title }) }); return { status: r.status, body: await r.json() }; };
+  const good = await screenR('Good');
+  ok(good.body.ok && good.body.reviewed && good.body.token, 'an allowed game gets a token');
+  const p0 = reviews[0];
+  ok(p0.model === 'claude-haiku-5-5' && p0.system[0].text === H.SCREEN_PROMPT && p0.messages[0].content.some((c) => c.type === 'image') && !p0.messages[0].content.at(-1).text.includes('sp-pictures'), 'the review uses Haiku, sees the pictures, and gets the code without the picture data');
+  const bad = await screenR('Bad');
+  ok(!bad.body.ok && bad.body.reasons[0] === 'Shows gore.' && !bad.body.token, 'a blocked game gets reasons and no token');
+  const odd = await screenR('Odd');
+  ok(!odd.body.ok, 'an unclear review counts as a block');
+  const down = await screenR('Down');
+  ok(down.status === 503, 'when Claude is down, nothing is published unchecked');
+  server.close();
 }
 
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');

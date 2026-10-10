@@ -41,7 +41,7 @@ import { chainConfig, makeRpc, openChain } from './chain.mjs';
 import { limiter, memoryKv, openPlans } from './plans.mjs';
 import { openRooms, ROOM_CODE } from './rooms.mjs';
 import { uidOf } from './gallery.mjs';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 await import('../src/harness.js');
 const H = globalThis.PPHarness;
@@ -123,7 +123,13 @@ export function createServer(opts = {}) {
   const chainHits = new Map();
   // Multiplayer rooms need the shared gallery, since friends join through a published game's link.
   const rooms = opts.rooms === false || !gallery ? null : opts.rooms || openRooms();
-  const roomHits = new Map(), streams = new Map();
+  const roomHits = new Map(), streams = new Map(), screenHits = new Map();
+  /* Safety check: /api/screen reviews a game and returns a token for its hash; the gallery only stores
+     game files that carry a valid token, so nothing reaches the public arcade unchecked. */
+  const screenKey = opts.screenSecret || randomBytes(32);
+  const screenToken = (hash) => createHmac('sha256', screenKey).update('gameplay-screen:' + hash).digest('hex');
+  const tokenOk = (hash, t) => { const want = Buffer.from(screenToken(hash)); const got = Buffer.from(String(t || '')); return got.length === want.length && timingSafeEqual(got, want); };
+  if (gallery && gallery.setBlobCheck && opts.screen !== false) gallery.setBlobCheck((hash, data) => (tokenOk(hash, data.screen) ? null : { status: 403, body: { code: 'blocked', message: 'Run the safety check before publishing (reload the page if this keeps happening).' } }));
   const hit = (map, who, limit, windowMs) => {
     const now = Date.now(), h = map.get(who);
     if (map.size > 100000) map.clear();
@@ -151,7 +157,7 @@ export function createServer(opts = {}) {
     let body = await readFile(file);
     if ((client || gallery || chain) && file === join(root, 'index.html')) {
       // Tell the page where to send AI builds, where the shared gallery lives and which Solana network pays.
-      const extra = Object.assign(client ? { ai: 'api/build' } : {}, client && plans.pro ? { pro: true } : {}, gallery ? { gallery: 'api/db' } : {}, rooms ? { rooms: 'api/rooms' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
+      const extra = Object.assign(client ? { ai: 'api/build' } : {}, client && plans.pro ? { pro: true } : {}, gallery ? { gallery: 'api/db' } : {}, rooms ? { rooms: 'api/rooms' } : {}, gallery ? { screen: 'api/screen' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
       body = body.toString('utf8').replace(/window\.GP_SITE = (\{.*?\});/, (m, json) => 'window.GP_SITE = ' + JSON.stringify(Object.assign(JSON.parse(json), extra)).replace(/</g, '\\u003c') + ';');
     }
     res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
@@ -258,6 +264,38 @@ export function createServer(opts = {}) {
     return send(res, 405, { code: 'bad_request', message: 'Method not allowed.' });
   }
 
+  async function screen(req, res) {
+    const who = visitor(req);
+    if (!hit(screenHits, who, 60, 3600000)) return send(res, 429, { code: 'rate_limited', message: 'Too many safety checks. Try again later.' });
+    let body;
+    try { body = JSON.parse(await readBody(req, 400 * 1024)); } catch (e) { return send(res, e.tooBig ? 413 : 400, { code: 'bad_request', message: e.tooBig ? 'This game file is too large.' : 'The request was not valid JSON.' }); }
+    const code = typeof body.code === 'string' ? body.code : '';
+    if (!code || code.length > 320 * 1024) return send(res, 400, { code: 'bad_request', message: 'Send the game file to check.' });
+    const title = String(body.title || '').slice(0, 60), desc = String(body.desc || '').slice(0, 240);
+    const hash = createHash('sha256').update(code).digest('hex');
+    const found = H.staticScreen(code);
+    if (found.length) { log({ screen: 'blocked', why: 'patterns' }); return send(res, 200, { ok: false, reasons: found }); }
+    if (client) {
+      const content = [];
+      for (const p of H.picturesOf(code)) content.push({ type: 'text', text: "Creator's picture '" + p.name + "':" }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: p.data } });
+      content.push({ type: 'text', text: 'TITLE: ' + title + '\nDESCRIPTION: ' + desc + '\n\nGAME CODE:\n' + H.stripPictures(code) });
+      let text = '';
+      try {
+        const stream = client.beta.messages.stream({ model: models.free, max_tokens: 400, system: [{ type: 'text', text: H.SCREEN_PROMPT, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content }] });
+        for await (const ev of stream) if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') text += ev.delta.text;
+        const msg = await stream.finalMessage();
+        if (msg.stop_reason === 'refusal') text = '{"verdict":"block","reasons":["The safety review declined this game."]}';
+      } catch (e) {
+        log({ screen: 'error', error: e && (e.status || e.message) });
+        return send(res, 503, { code: 'unavailable', message: 'The safety check is not available right now. Try publishing again in a minute.' });
+      }
+      const v = H.parseScreen(text);
+      log({ screen: v.ok ? 'allowed' : 'blocked' });
+      if (!v.ok) return send(res, 200, { ok: false, reasons: v.reasons });
+    }
+    return send(res, 200, { ok: true, token: screenToken(hash), reviewed: !!client });
+  }
+
   async function db(req, res, url) {
     const key = String(req.headers['x-gp-key'] || '');
     const reply = (r) => send(res, r.status, r.body);
@@ -289,6 +327,7 @@ export function createServer(opts = {}) {
         return send(res, r.status, r.body);
       }
       if (path.startsWith('/api/db/')) return gallery ? await db(req, res, url) : send(res, 404, { code: 'not_found', message: 'This server has no shared gallery.' });
+      if (path === '/api/screen') return req.method === 'POST' ? (gallery ? await screen(req, res) : send(res, 404, { code: 'not_found', message: 'This server has no shared gallery.' })) : send(res, 405, { code: 'bad_request', message: 'Use POST.' });
       if (path.startsWith('/api/rooms')) return rooms ? await room(req, res, url) : send(res, 404, { code: 'not_found', message: 'This server has no multiplayer rooms.' });
       if (path === '/api/build') return req.method === 'POST' ? await build(req, res) : send(res, 405, { code: 'bad_request', message: 'Use POST.' });
       if (path === '/api/status') {

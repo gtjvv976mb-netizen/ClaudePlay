@@ -73,7 +73,15 @@ function loop(){x.fillStyle='#201030';x.fillRect(0,0,c.width,c.height);x.fillSty
 
 const text = (content) => (typeof content === 'string' ? content : content.map((p) => p.text || '').join('\n'));
 const calls = [];
-const client = { beta: { messages: { stream(params, options) {
+const screens = [];
+const client = { beta: { messages: { stream(params, options = {}) {
+  if (params.system[0].text.startsWith('You review browser games')) {
+    const content = params.messages[0].content;
+    const all = content.map((p) => p.text || '').join('\n');
+    screens.push({ model: params.model, images: content.filter((p) => p.type === 'image').length, title: (all.match(/TITLE: (.*)/) || [])[1] });
+    const verdict = /BLOCKME/.test(all) ? '{"verdict":"block","reasons":["It shows something not allowed (test)."]}' : '{"verdict":"allow","reasons":[]}';
+    return { async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: verdict } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { output_tokens: 1 } }; } };
+  }
   const content = params.messages[0].content, task = text(content);
   calls.push({ model: params.model, task: task.slice(0, 200), tail: task.slice(-200), pics: task.match(/- '[a-z0-9_]+': \d+x\d+ px/g) || [], picBlock: task.includes('sp-pictures'), images: Array.isArray(content) ? content.filter((p) => p.type === 'image').length : 0, system: params.system[0].text.slice(0, 60) });
   return {
@@ -97,6 +105,7 @@ const handle = server.listeners('request')[0];
 server.removeAllListeners('request');
 server.on('request', (req, res) => {
   if (req.url === '/__calls') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(calls)); }
+  if (req.url === '/__screens') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(screens)); }
   if (req.url === '/__chain' && fake) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ treasury: chain.site.treasury, balances: Object.fromEntries(fake.balances), sent: [...fake.txs.values()].filter((t) => t.p).length })); }
   return handle(req, res);
 });

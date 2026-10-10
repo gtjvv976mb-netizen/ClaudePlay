@@ -355,6 +355,9 @@ label.color input { width: 44px; height: 34px; padding: 2px; border: 1px solid v
 /* ---------- screen ---------- */
 .screen { position: relative; background: #05070a; border: 10px solid var(--shell); border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 10; box-shadow: 0 3px 0 var(--shadow); max-width: 100%; }
 .screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: #05070a; }
+.rate { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.star { background: transparent; border: 1px solid transparent; border-radius: 4px; min-width: 40px; min-height: 40px; font-size: 1.375rem; line-height: 1; color: var(--ink); cursor: pointer; padding: 0 4px; }
+.star:hover, .star[aria-pressed="true"] { border-color: var(--line); }
 .mp-split { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--shell); }
 .mp-split > div { position: relative; min-width: 0; }
 .screen-cover { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(5, 7, 10, .5); border: 0; cursor: pointer; color: #fff; padding: 0; }
@@ -877,7 +880,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const supply = { emitted: 0, burned: 0 };
     const games = new Map();
     for (const s of starters) {
-      games.set(s.gid, { ...s, creator: STARTER, ts: 0, collects: [], tips: [], scores: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, starter: true });
+      games.set(s.gid, { ...s, creator: STARTER, ts: 0, collects: [], tips: [], scores: new Map(), ratings: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, starter: true });
     }
     const log = [];
     const epochs = [];
@@ -952,7 +955,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
             title: cleanText(b.title, 40) || 'Untitled', genre: cleanText(b.genre, 24) || 'Arcade',
             desc: cleanText(b.desc, 200), prompt: cleanText(b.prompt, 600), hash: b.hash, size: Math.floor(num(b.size)) || 0,
             parent: b.parent || null, price, cap, kit: cleanText(b.kit, 20) || 'ai', params: b.params && typeof b.params === 'object' ? b.params : null,
-            collects: [], tips: [], scores: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, local: e.local,
+            collects: [], tips: [], scores: new Map(), ratings: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, local: e.local,
           };
           games.set(gid, g);
           if (g.parent) games.get(g.parent).remixes.push(gid);
@@ -1036,6 +1039,16 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
           rec.moves.push({ from: '@compute', to: tx.from, amt: lots * RULES.CONVERT.sparks, unit: 'SPARK' });
           rec.ok = true; break;
         }
+        case 'rate': {
+          // One rating per signed-in account per game (the latest counts); creators cannot rate their own games.
+          const g = games.get(b.gid);
+          const stars = Math.floor(num(b.stars));
+          if (!g) { fail('Game not found'); break; }
+          if (!(stars >= 1 && stars <= 5)) { fail('Ratings are 1 to 5 stars'); break; }
+          if (g.creator === tx.from || (g.creatorUid && g.creatorUid === e.uid)) { fail('Creators cannot rate their own games'); break; }
+          g.ratings.set(e.uid || tx.from, { pk: tx.from, stars, ts: tx.ts });
+          rec.ok = true; break;
+        }
         case 'report': {
           const g = games.get(b.gid);
           if (!g) { fail('Game not found'); break; }
@@ -1072,6 +1085,11 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       cw.sparks += earned; cw.sparksEarned += earned;
     }
     for (const [gid, reason] of Object.entries(delisted)) { const g = games.get(gid); if (g) g.delisted = reason || 'Delisted'; }
+    for (const g of games.values()) {
+      const n = g.ratings.size;
+      let sum = 0; for (const r of g.ratings.values()) sum += r.stars;
+      g.ratingCount = n; g.rating = n ? sum / n : 0;
+    }
 
     return { wallets, games, treasury, supply, log, epochs, playersByAccount, config, now, delisted };
   }
@@ -2572,6 +2590,53 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     return dt ? code.replace(dt[0], dt[0] + block) : block + code;
   }
 
+  /* ---------------- safety check before publishing ----------------
+     Every game is checked before it joins the public arcade: quick pattern checks here (shared by
+     the page and the server), then a review by Claude of the code, title, description and pictures. */
+  const SCREEN_PROMPT = [
+    'You review browser games before they are published on ClaudePlay, a public arcade where anyone, including teenagers, can play. You get the game title, description, any pictures the creator added, and the game code.',
+    'Block the game if it contains or does any of these:',
+    '- sexual content or nudity;',
+    '- hate, slurs, or harassment of real people or of groups;',
+    '- graphic gore or cruelty beyond cartoon arcade action;',
+    '- encouragement of self-harm, eating disorders, or illegal drugs;',
+    '- phishing or scams: asking for a seed phrase, private key, password, payment, wallet connection, or personal details;',
+    '- real-money gambling or betting;',
+    '- trying to escape its sandbox, reach the internet, track players, or mine crypto;',
+    '- passing itself off as a real company, product or person in a misleading way.',
+    'Allow everything else, including cartoon violence, spooky themes, and make-believe crypto (points called tokens, mining blocks, rug pulls as hazards).',
+    'Reply with only JSON: {"verdict": "allow" or "block", "reasons": ["short reason a creator can act on", ...]} (reasons empty when allowed).',
+  ].join('\n');
+  /* Pattern checks that need no AI. Returns a list of reasons (empty = fine). */
+  function staticScreen(code) {
+    const c = stripPictures(code), out = [];
+    if (/(seed|recovery|secret)\s+phrase|private\s+key|mnemonic/i.test(c) && /<input|<textarea|prompt\s*\(|contenteditable/i.test(c)) out.push('It asks players to type a seed phrase or private key.');
+    if (/window\s*\.\s*(solana|ethereum|phantom|solflare|backpack)\b|ethereum\s*\.\s*request|solana\s*\.\s*connect/i.test(c)) out.push('It tries to connect to a crypto wallet. ClaudePlay handles wallets outside the game.');
+    if (/\b(fetch|XMLHttpRequest|WebSocket|EventSource|RTCPeerConnection)\s*\(|navigator\s*\.\s*sendBeacon|new\s+(XMLHttpRequest|WebSocket|EventSource|RTCPeerConnection)\b/.test(c)) out.push('It tries to reach the internet. Games must be self-contained.');
+    if (/\b(top|parent)\s*\.\s*location|window\s*\.\s*open\s*\(/.test(c)) out.push('It tries to open or change other pages.');
+    return out;
+  }
+  /* Reads Claude's verdict. Anything unclear counts as a block, so a confused review never lets a game through. */
+  function parseScreen(text) {
+    const m = String(text || '').match(/\{[\s\S]*\}/);
+    try {
+      const j = JSON.parse(m ? m[0] : '');
+      const reasons = (Array.isArray(j.reasons) ? j.reasons : []).map((r) => String(r).slice(0, 200)).filter(Boolean).slice(0, 5);
+      if (j.verdict === 'allow') return { ok: true, reasons: [] };
+      if (j.verdict === 'block') return { ok: false, reasons: reasons.length ? reasons : ['The safety review did not allow this game.'] };
+    } catch (e) { /* not JSON */ }
+    return { ok: false, reasons: ['The safety review gave an unclear answer. Try again.'], unclear: true };
+  }
+  /* The pictures inside a game file, as [{ name, data }] (PNG base64), for the safety review. */
+  function picturesOf(code) {
+    const m = String(code || '').match(PIC_BLOCK);
+    if (!m) return [];
+    try {
+      const map = JSON.parse(m[0].replace(/^[\s\S]*?window\.SP_PICTURES=/, '').replace(/;<\/scr[\s\S]*$/, ''));
+      return Object.keys(map).slice(0, PICS.max).map((name) => ({ name, data: String(map[name]).replace(/^data:image\/png;base64,/, '') })).filter((p) => /^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(p.data) && p.data.length <= PICS.data);
+    } catch (e) { return []; }
+  }
+
   /* Checks a build request from an untrusted client. Returns { ok, req } or { ok: false, error }. */
   function checkRequest(body) {
     const b = body && typeof body === 'object' ? body : {};
@@ -2615,7 +2680,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     'Whale Watch: a fishing game where you hook coins of different sizes, but snagging a whale shakes the whole market.',
   ];
 
-  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, PICS, harnessTask, harnessPrompt, checkRequest, stripPictures, withPictures };
+  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, PICS, SCREEN_PROMPT, harnessTask, harnessPrompt, checkRequest, stripPictures, withPictures, staticScreen, parseScreen, picturesOf };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -2984,11 +3049,14 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     toast('You can view the shared gallery but not write to it, so your activity is saved on this device.');
     scheduleRefresh();
   }
-  async function putBlob(hash, code) {
+  async function putBlob(hash, code, screen) {
     S.blobs.set(hash, code);
     if (S.mode === 'shared') {
-      try { await S.caps.db.doc('blobs/' + hash).set({ code, size: code.length, ts: Date.now() }); return; }
-      catch (e) { if (e && e.code === 'invalid_argument') goLocal(myDoc()); else throw new Error('Could not store the game file (' + (e.code || 'error') + ').'); }
+      try { await S.caps.db.doc('blobs/' + hash).set(Object.assign({ code, size: code.length, ts: Date.now() }, screen ? { screen } : {})); return; }
+      catch (e) {
+        if (e && e.code === 'blocked') throw new Error(e.message || 'Run the safety check before publishing.');
+        if (e && e.code === 'invalid_argument') goLocal(myDoc()); else throw new Error('Could not store the game file (' + (e.code || 'error') + ').');
+      }
     }
     if (!LS.set(KEY.blob + hash, code)) toast('Storage is full on this device; the game file is kept only until you close the page.', 'bad');
   }
@@ -3732,6 +3800,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (g.kit === 'ai') tags.push('<span class="chip">AI-built</span>');
     if (g.boost) tags.push('<span class="chip gold">' + I.park + ' ' + fmtInt(g.boost) + ' boost</span>');
     if (g.local) tags.push('<span class="chip">This device</span>');
+    if (g.ratingCount) tags.push('<span class="chip" title="Rated ' + g.rating.toFixed(1) + ' out of 5 by ' + plural(g.ratingCount, 'player') + '"><span aria-hidden="true">★</span> ' + g.rating.toFixed(1) + '<span class="sr"> out of 5 stars</span> (' + fmtInt(g.ratingCount) + ')</span>');
     const price = g.starter ? 'Free' : g.price ? fmtSOL(g.price) + ' SOL' : 'Free collect';
     return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '">'
       + '<div class="cart-body"><div class="cart-label">'
@@ -3742,7 +3811,9 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<div class="cart-serial"><span>' + serial(g.hash) + '</span><span>' + plural(players, 'player') + '</span></div>'
       + '</div><div class="cart-grip"></div></div></a>';
   }
-  const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['boosted', 'Boosted']];
+  const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['rated', 'Top rated'], ['boosted', 'Boosted']];
+  /* Ranks by rating, pulled toward 3 stars until a game has a few ratings, so one 5-star vote does not top the list. */
+  const ratedScore = (g) => ((g.rating || 0) * (g.ratingCount || 0) + 3 * 3) / ((g.ratingCount || 0) + 3);
   function viewExplore() {
     const w = S.world;
     const starters = S.starters.map((s) => (w && w.games.get(s.gid)) || Object.assign({ creator: C.STARTER, starter: true, players: new Set(), collects: [] }, s));
@@ -3753,6 +3824,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       earning: (a, b) => (b.revenue - a.revenue) || (b.collects.length - a.collects.length),
       remixed: (a, b) => (b.remixes.length - a.remixes.length) || (b.ts - a.ts),
       boosted: (a, b) => (b.boost - a.boost) || (b.ts - a.ts),
+      rated: (a, b) => (ratedScore(b) - ratedScore(a)) || ((b.ratingCount || 0) - (a.ratingCount || 0)) || (b.ts - a.ts),
     }[S.ui.sort];
     community = community.sort(by);
     const totalPlayers = w ? new Set([].concat(...[...w.games.values()].map((g) => [...g.players]))).size : 0;
@@ -3998,12 +4070,21 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (!g.starter && canModerate()) out.push(btn('delist', g.delisted ? 'Relist' : 'Delist', 'danger'));
     return out.join('');
   }
+  function rateHTML(g) {
+    const ratings = g.ratings ? [...g.ratings.values()] : [];
+    const mine = S.wallet && ratings.find((r) => r.pk === S.wallet.from);
+    const own = S.wallet && g.creator === S.wallet.from;
+    const avg = g.ratingCount ? '<b>' + g.rating.toFixed(1) + '</b> out of 5 from ' + plural(g.ratingCount, 'rating') : 'No ratings yet';
+    return '<div class="rate"><span class="muted"><span aria-hidden="true">★</span> ' + avg + '</span>'
+      + (own ? '' : '<div class="row" role="group" aria-label="Your rating">' + [1, 2, 3, 4, 5].map((n) => '<button class="star" type="button" data-act="rate" data-gid="' + esc(g.gid) + '" data-stars="' + n + '" aria-pressed="' + !!(mine && mine.stars === n) + '" aria-label="Rate ' + n + (n === 1 ? ' star' : ' stars') + '"><span aria-hidden="true">' + (mine && n <= mine.stars ? '★' : '☆') + '</span></button>').join('') + '</div>')
+      + '</div>';
+  }
   function gameAbout(g) {
     const players = g.players ? g.players.size : 0;
     const facts = [[fmtInt(players), 'unique players'], [fmtInt(g.plays), 'runs'], [fmtInt(g.scores.size), 'signed scores']];
     if (!g.starter) facts.push([fmtInt(g.collects.length) + (g.cap ? ' / ' + fmtInt(g.cap) : ''), 'editions owned'], [fmtSOL(g.revenue), 'SOL earned'], [fmtInt(g.remixes.length), 'remixes']);
     if (g.reports && g.reports.length) facts.push([fmtInt(g.reports.length), 'reports']);
-    return '<div class="stack">' + (g.desc ? '<p>' + esc(g.desc) + '</p>' : '')
+    return '<div class="stack">' + rateHTML(g) + (g.desc ? '<p>' + esc(g.desc) + '</p>' : '')
       + (g.prompt ? '<p class="muted">Prompt: “' + esc(g.prompt) + '”</p>' : '')
       + '<div class="facts">' + facts.map(([b, s]) => '<div class="fact"><b>' + b + '</b><span>' + s + '</span></div>').join('') + '</div></div>';
   }
@@ -4191,7 +4272,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<label class="field">Description<input id="pub-desc" type="text" maxlength="200" data-in="pub-desc" value="' + esc(st.desc || meta.desc || '') + '" placeholder="One line players see on the cartridge"></label>'
       + '<div class="grid2"><label class="field">Collect price <small>' + UNIT + ', 0 for a free collect</small><input id="pub-price" type="number" min="0" max="100" step="0.01" data-in="pub-price" value="' + esc(st.price) + '"></label>'
       + '<label class="field">Editions <small>0 for an open edition</small><input id="pub-cap" type="number" min="0" max="100000" step="1" data-in="pub-cap" value="' + esc(st.cap) + '"></label></div>'
-      + '<p class="muted" style="font-size:0.875rem">Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
+      + (st.blocked ? '<div class="banner bad" role="alert"><b>The safety check stopped this game</b><span>' + esc(st.blocked.join(' ')) + '</span><span class="muted">Ask for a change that fixes it, then publish again.</span></div>' : '')
+      + '<p class="muted" style="font-size:0.875rem">Every game gets an automatic safety check before it goes public. Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
       + '<div class="row"><button class="btn primary" type="button" data-act="publish"' + (ready && !st.busy ? '' : ' disabled') + '>Sign &amp; publish</button>' + (ready ? '' : '<span class="muted">Build a game first.</span>') + '</div></div>';
   }
   function studioTools() {
@@ -4333,7 +4415,13 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Connect your wallet app (Phantom, Solflare or Backpack) in Wallet before publishing, so collects and tips reach a wallet you control.');
     const hash = await C.sha256hex(code);
     const gid = 'g' + C.randHex(8);
-    await putBlob(hash, code);
+    const check = await safetyCheck(code, title, (st.desc || meta.desc || '').slice(0, 200));
+    if (!check.ok) {
+      st.blocked = check.reasons; rerenderStudioLeft();
+      throw new Error('The safety check stopped this game: ' + check.reasons.join(' '));
+    }
+    st.blocked = null;
+    await putBlob(hash, code, check.token);
     const firstPrompt = st.mode === 'ai' ? (st.chat.find((m) => m.role === 'user') || {}).text || '' : '';
     const { tx } = await signAndAppend('publish', {
       gid, title, genre: st.mode === 'kit' ? K.KITS[st.kit].genre : meta.genre || 'Arcade', desc: (st.desc || meta.desc || '').slice(0, 200),
@@ -4344,6 +4432,29 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     S.studio.parent = null; S.studio.title = ''; S.studio.desc = '';
     saveStudio();
     nav('game', gid);
+  }
+  /* The safety check every game passes before it is published. On the website the server reviews it
+     (patterns plus Claude, and the gallery only takes checked files); inside Claude the viewer's own
+     Claude account reviews it; elsewhere only the pattern checks run. */
+  async function safetyCheck(code, title, desc) {
+    const found = H.staticScreen(code);
+    if (found.length) return { ok: false, reasons: found };
+    toast('Running the safety check…');
+    if (ENV === 'web' && SITE.screen) {
+      let res, j = {};
+      try { res = await fetch(SITE.screen, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, title, desc }) }); j = await res.json(); }
+      catch (e) { throw new Error('Could not reach the safety check. Check your connection and try again.'); }
+      if (!res.ok) throw new Error(j.message || 'The safety check failed. Try again.');
+      return j.ok ? { ok: true, token: j.token } : { ok: false, reasons: j.reasons || ['The safety check did not allow this game.'] };
+    }
+    if (ENV === 'claude' && S.caps.sample) {
+      try {
+        const res = await S.caps.sample(H.SCREEN_PROMPT + '\n\nTITLE: ' + title + '\nDESCRIPTION: ' + desc + '\n\nGAME CODE:\n' + H.stripPictures(code), { cache: false });
+        const v = H.parseScreen(res && (res.text || res));
+        return v.ok ? { ok: true } : { ok: false, reasons: v.reasons };
+      } catch (e) { return { ok: true }; } // the viewer declined or has no Claude access; the gallery owner can still delist
+    }
+    return { ok: true };
   }
   async function startRemix(gid) {
     const g = S.world.games.get(gid);
@@ -4408,7 +4519,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
 
   /* ---------- ledger ---------- */
-  const TYPE = { airdrop: 'Faucet', spark_claim: 'Weekly Sparks', handle: 'Handle', gen: 'AI build', publish: 'Publish', collect: 'Collect', tip: 'Tip', score: 'Score', spark_buy: 'Spark pack', boost: 'Boost', convert: 'Convert', report: 'Report', epoch: 'Epoch rewards' };
+  const TYPE = { airdrop: 'Faucet', spark_claim: 'Weekly Sparks', handle: 'Handle', gen: 'AI build', publish: 'Publish', collect: 'Collect', tip: 'Tip', score: 'Score', spark_buy: 'Spark pack', boost: 'Boost', convert: 'Convert', report: 'Report', rate: 'Rating', epoch: 'Epoch rewards' };
   const FILTERS = [['all', 'All'], ['games', 'Publishes'], ['money', 'Payments'], ['scores', 'Scores'], ['rewards', 'Rewards & burns'], ['bad', 'Rejected']];
   const inFilter = (r, f) => {
     const t = r.kind === 'epoch' ? 'epoch' : r.tx.t;
@@ -4438,6 +4549,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       case 'boost': return { who, what: g ? g.title : '', amt: fmtInt(tx.b.amt) + ' GPLY burned' };
       case 'convert': return { who, what: 'Sparks', amt: fmtInt((tx.b.lots || 0) * R.CONVERT.park) + ' GPLY burned' };
       case 'report': return { who, what: g ? g.title : '', amt: '—' };
+      case 'rate': return { who, what: g ? g.title : '', amt: Math.floor(+tx.b.stars || 0) + ' ★' };
       case 'handle': return { who, what: '@' + (tx.b.name || ''), amt: '—' };
       default: return { who, what: '', amt: '' };
     }
@@ -4726,6 +4838,12 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     'gen-edit': () => generate('edit'),
     'gen-fix': () => generate('fix'),
     'stop': () => { if (S.ctl) S.ctl.abort(); },
+    'rate': async (el) => {
+      const stars = +el.dataset.stars;
+      await ensureWallet();
+      await signAndAppend('rate', { gid: el.dataset.gid, stars });
+      toast('Rated ' + stars + (stars === 1 ? ' star' : ' stars') + '. Thanks!');
+    },
     'room-open': async (el) => {
       const gid = el.dataset.gid;
       el.disabled = true;

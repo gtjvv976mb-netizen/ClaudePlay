@@ -218,11 +218,14 @@
     toast('You can view the shared gallery but not write to it, so your activity is saved on this device.');
     scheduleRefresh();
   }
-  async function putBlob(hash, code) {
+  async function putBlob(hash, code, screen) {
     S.blobs.set(hash, code);
     if (S.mode === 'shared') {
-      try { await S.caps.db.doc('blobs/' + hash).set({ code, size: code.length, ts: Date.now() }); return; }
-      catch (e) { if (e && e.code === 'invalid_argument') goLocal(myDoc()); else throw new Error('Could not store the game file (' + (e.code || 'error') + ').'); }
+      try { await S.caps.db.doc('blobs/' + hash).set(Object.assign({ code, size: code.length, ts: Date.now() }, screen ? { screen } : {})); return; }
+      catch (e) {
+        if (e && e.code === 'blocked') throw new Error(e.message || 'Run the safety check before publishing.');
+        if (e && e.code === 'invalid_argument') goLocal(myDoc()); else throw new Error('Could not store the game file (' + (e.code || 'error') + ').');
+      }
     }
     if (!LS.set(KEY.blob + hash, code)) toast('Storage is full on this device; the game file is kept only until you close the page.', 'bad');
   }
@@ -966,6 +969,7 @@
     if (g.kit === 'ai') tags.push('<span class="chip">AI-built</span>');
     if (g.boost) tags.push('<span class="chip gold">' + I.park + ' ' + fmtInt(g.boost) + ' boost</span>');
     if (g.local) tags.push('<span class="chip">This device</span>');
+    if (g.ratingCount) tags.push('<span class="chip" title="Rated ' + g.rating.toFixed(1) + ' out of 5 by ' + plural(g.ratingCount, 'player') + '"><span aria-hidden="true">★</span> ' + g.rating.toFixed(1) + '<span class="sr"> out of 5 stars</span> (' + fmtInt(g.ratingCount) + ')</span>');
     const price = g.starter ? 'Free' : g.price ? fmtSOL(g.price) + ' SOL' : 'Free collect';
     return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '">'
       + '<div class="cart-body"><div class="cart-label">'
@@ -976,7 +980,9 @@
       + '<div class="cart-serial"><span>' + serial(g.hash) + '</span><span>' + plural(players, 'player') + '</span></div>'
       + '</div><div class="cart-grip"></div></div></a>';
   }
-  const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['boosted', 'Boosted']];
+  const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['rated', 'Top rated'], ['boosted', 'Boosted']];
+  /* Ranks by rating, pulled toward 3 stars until a game has a few ratings, so one 5-star vote does not top the list. */
+  const ratedScore = (g) => ((g.rating || 0) * (g.ratingCount || 0) + 3 * 3) / ((g.ratingCount || 0) + 3);
   function viewExplore() {
     const w = S.world;
     const starters = S.starters.map((s) => (w && w.games.get(s.gid)) || Object.assign({ creator: C.STARTER, starter: true, players: new Set(), collects: [] }, s));
@@ -987,6 +993,7 @@
       earning: (a, b) => (b.revenue - a.revenue) || (b.collects.length - a.collects.length),
       remixed: (a, b) => (b.remixes.length - a.remixes.length) || (b.ts - a.ts),
       boosted: (a, b) => (b.boost - a.boost) || (b.ts - a.ts),
+      rated: (a, b) => (ratedScore(b) - ratedScore(a)) || ((b.ratingCount || 0) - (a.ratingCount || 0)) || (b.ts - a.ts),
     }[S.ui.sort];
     community = community.sort(by);
     const totalPlayers = w ? new Set([].concat(...[...w.games.values()].map((g) => [...g.players]))).size : 0;
@@ -1232,12 +1239,21 @@
     if (!g.starter && canModerate()) out.push(btn('delist', g.delisted ? 'Relist' : 'Delist', 'danger'));
     return out.join('');
   }
+  function rateHTML(g) {
+    const ratings = g.ratings ? [...g.ratings.values()] : [];
+    const mine = S.wallet && ratings.find((r) => r.pk === S.wallet.from);
+    const own = S.wallet && g.creator === S.wallet.from;
+    const avg = g.ratingCount ? '<b>' + g.rating.toFixed(1) + '</b> out of 5 from ' + plural(g.ratingCount, 'rating') : 'No ratings yet';
+    return '<div class="rate"><span class="muted"><span aria-hidden="true">★</span> ' + avg + '</span>'
+      + (own ? '' : '<div class="row" role="group" aria-label="Your rating">' + [1, 2, 3, 4, 5].map((n) => '<button class="star" type="button" data-act="rate" data-gid="' + esc(g.gid) + '" data-stars="' + n + '" aria-pressed="' + !!(mine && mine.stars === n) + '" aria-label="Rate ' + n + (n === 1 ? ' star' : ' stars') + '"><span aria-hidden="true">' + (mine && n <= mine.stars ? '★' : '☆') + '</span></button>').join('') + '</div>')
+      + '</div>';
+  }
   function gameAbout(g) {
     const players = g.players ? g.players.size : 0;
     const facts = [[fmtInt(players), 'unique players'], [fmtInt(g.plays), 'runs'], [fmtInt(g.scores.size), 'signed scores']];
     if (!g.starter) facts.push([fmtInt(g.collects.length) + (g.cap ? ' / ' + fmtInt(g.cap) : ''), 'editions owned'], [fmtSOL(g.revenue), 'SOL earned'], [fmtInt(g.remixes.length), 'remixes']);
     if (g.reports && g.reports.length) facts.push([fmtInt(g.reports.length), 'reports']);
-    return '<div class="stack">' + (g.desc ? '<p>' + esc(g.desc) + '</p>' : '')
+    return '<div class="stack">' + rateHTML(g) + (g.desc ? '<p>' + esc(g.desc) + '</p>' : '')
       + (g.prompt ? '<p class="muted">Prompt: “' + esc(g.prompt) + '”</p>' : '')
       + '<div class="facts">' + facts.map(([b, s]) => '<div class="fact"><b>' + b + '</b><span>' + s + '</span></div>').join('') + '</div></div>';
   }
@@ -1425,7 +1441,8 @@
       + '<label class="field">Description<input id="pub-desc" type="text" maxlength="200" data-in="pub-desc" value="' + esc(st.desc || meta.desc || '') + '" placeholder="One line players see on the cartridge"></label>'
       + '<div class="grid2"><label class="field">Collect price <small>' + UNIT + ', 0 for a free collect</small><input id="pub-price" type="number" min="0" max="100" step="0.01" data-in="pub-price" value="' + esc(st.price) + '"></label>'
       + '<label class="field">Editions <small>0 for an open edition</small><input id="pub-cap" type="number" min="0" max="100000" step="1" data-in="pub-cap" value="' + esc(st.cap) + '"></label></div>'
-      + '<p class="muted" style="font-size:0.875rem">Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
+      + (st.blocked ? '<div class="banner bad" role="alert"><b>The safety check stopped this game</b><span>' + esc(st.blocked.join(' ')) + '</span><span class="muted">Ask for a change that fixes it, then publish again.</span></div>' : '')
+      + '<p class="muted" style="font-size:0.875rem">Every game gets an automatic safety check before it goes public. Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
       + '<div class="row"><button class="btn primary" type="button" data-act="publish"' + (ready && !st.busy ? '' : ' disabled') + '>Sign &amp; publish</button>' + (ready ? '' : '<span class="muted">Build a game first.</span>') + '</div></div>';
   }
   function studioTools() {
@@ -1567,7 +1584,13 @@
     if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Connect your wallet app (Phantom, Solflare or Backpack) in Wallet before publishing, so collects and tips reach a wallet you control.');
     const hash = await C.sha256hex(code);
     const gid = 'g' + C.randHex(8);
-    await putBlob(hash, code);
+    const check = await safetyCheck(code, title, (st.desc || meta.desc || '').slice(0, 200));
+    if (!check.ok) {
+      st.blocked = check.reasons; rerenderStudioLeft();
+      throw new Error('The safety check stopped this game: ' + check.reasons.join(' '));
+    }
+    st.blocked = null;
+    await putBlob(hash, code, check.token);
     const firstPrompt = st.mode === 'ai' ? (st.chat.find((m) => m.role === 'user') || {}).text || '' : '';
     const { tx } = await signAndAppend('publish', {
       gid, title, genre: st.mode === 'kit' ? K.KITS[st.kit].genre : meta.genre || 'Arcade', desc: (st.desc || meta.desc || '').slice(0, 200),
@@ -1578,6 +1601,29 @@
     S.studio.parent = null; S.studio.title = ''; S.studio.desc = '';
     saveStudio();
     nav('game', gid);
+  }
+  /* The safety check every game passes before it is published. On the website the server reviews it
+     (patterns plus Claude, and the gallery only takes checked files); inside Claude the viewer's own
+     Claude account reviews it; elsewhere only the pattern checks run. */
+  async function safetyCheck(code, title, desc) {
+    const found = H.staticScreen(code);
+    if (found.length) return { ok: false, reasons: found };
+    toast('Running the safety check…');
+    if (ENV === 'web' && SITE.screen) {
+      let res, j = {};
+      try { res = await fetch(SITE.screen, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, title, desc }) }); j = await res.json(); }
+      catch (e) { throw new Error('Could not reach the safety check. Check your connection and try again.'); }
+      if (!res.ok) throw new Error(j.message || 'The safety check failed. Try again.');
+      return j.ok ? { ok: true, token: j.token } : { ok: false, reasons: j.reasons || ['The safety check did not allow this game.'] };
+    }
+    if (ENV === 'claude' && S.caps.sample) {
+      try {
+        const res = await S.caps.sample(H.SCREEN_PROMPT + '\n\nTITLE: ' + title + '\nDESCRIPTION: ' + desc + '\n\nGAME CODE:\n' + H.stripPictures(code), { cache: false });
+        const v = H.parseScreen(res && (res.text || res));
+        return v.ok ? { ok: true } : { ok: false, reasons: v.reasons };
+      } catch (e) { return { ok: true }; } // the viewer declined or has no Claude access; the gallery owner can still delist
+    }
+    return { ok: true };
   }
   async function startRemix(gid) {
     const g = S.world.games.get(gid);
@@ -1642,7 +1688,7 @@
   }
 
   /* ---------- ledger ---------- */
-  const TYPE = { airdrop: 'Faucet', spark_claim: 'Weekly Sparks', handle: 'Handle', gen: 'AI build', publish: 'Publish', collect: 'Collect', tip: 'Tip', score: 'Score', spark_buy: 'Spark pack', boost: 'Boost', convert: 'Convert', report: 'Report', epoch: 'Epoch rewards' };
+  const TYPE = { airdrop: 'Faucet', spark_claim: 'Weekly Sparks', handle: 'Handle', gen: 'AI build', publish: 'Publish', collect: 'Collect', tip: 'Tip', score: 'Score', spark_buy: 'Spark pack', boost: 'Boost', convert: 'Convert', report: 'Report', rate: 'Rating', epoch: 'Epoch rewards' };
   const FILTERS = [['all', 'All'], ['games', 'Publishes'], ['money', 'Payments'], ['scores', 'Scores'], ['rewards', 'Rewards & burns'], ['bad', 'Rejected']];
   const inFilter = (r, f) => {
     const t = r.kind === 'epoch' ? 'epoch' : r.tx.t;
@@ -1672,6 +1718,7 @@
       case 'boost': return { who, what: g ? g.title : '', amt: fmtInt(tx.b.amt) + ' GPLY burned' };
       case 'convert': return { who, what: 'Sparks', amt: fmtInt((tx.b.lots || 0) * R.CONVERT.park) + ' GPLY burned' };
       case 'report': return { who, what: g ? g.title : '', amt: '—' };
+      case 'rate': return { who, what: g ? g.title : '', amt: Math.floor(+tx.b.stars || 0) + ' ★' };
       case 'handle': return { who, what: '@' + (tx.b.name || ''), amt: '—' };
       default: return { who, what: '', amt: '' };
     }
@@ -1960,6 +2007,12 @@
     'gen-edit': () => generate('edit'),
     'gen-fix': () => generate('fix'),
     'stop': () => { if (S.ctl) S.ctl.abort(); },
+    'rate': async (el) => {
+      const stars = +el.dataset.stars;
+      await ensureWallet();
+      await signAndAppend('rate', { gid: el.dataset.gid, stars });
+      toast('Rated ' + stars + (stars === 1 ? ' star' : ' stars') + '. Thanks!');
+    },
     'room-open': async (el) => {
       const gid = el.dataset.gid;
       el.disabled = true;

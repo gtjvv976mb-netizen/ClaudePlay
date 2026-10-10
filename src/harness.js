@@ -104,6 +104,53 @@
     return dt ? code.replace(dt[0], dt[0] + block) : block + code;
   }
 
+  /* ---------------- safety check before publishing ----------------
+     Every game is checked before it joins the public arcade: quick pattern checks here (shared by
+     the page and the server), then a review by Claude of the code, title, description and pictures. */
+  const SCREEN_PROMPT = [
+    'You review browser games before they are published on ClaudePlay, a public arcade where anyone, including teenagers, can play. You get the game title, description, any pictures the creator added, and the game code.',
+    'Block the game if it contains or does any of these:',
+    '- sexual content or nudity;',
+    '- hate, slurs, or harassment of real people or of groups;',
+    '- graphic gore or cruelty beyond cartoon arcade action;',
+    '- encouragement of self-harm, eating disorders, or illegal drugs;',
+    '- phishing or scams: asking for a seed phrase, private key, password, payment, wallet connection, or personal details;',
+    '- real-money gambling or betting;',
+    '- trying to escape its sandbox, reach the internet, track players, or mine crypto;',
+    '- passing itself off as a real company, product or person in a misleading way.',
+    'Allow everything else, including cartoon violence, spooky themes, and make-believe crypto (points called tokens, mining blocks, rug pulls as hazards).',
+    'Reply with only JSON: {"verdict": "allow" or "block", "reasons": ["short reason a creator can act on", ...]} (reasons empty when allowed).',
+  ].join('\n');
+  /* Pattern checks that need no AI. Returns a list of reasons (empty = fine). */
+  function staticScreen(code) {
+    const c = stripPictures(code), out = [];
+    if (/(seed|recovery|secret)\s+phrase|private\s+key|mnemonic/i.test(c) && /<input|<textarea|prompt\s*\(|contenteditable/i.test(c)) out.push('It asks players to type a seed phrase or private key.');
+    if (/window\s*\.\s*(solana|ethereum|phantom|solflare|backpack)\b|ethereum\s*\.\s*request|solana\s*\.\s*connect/i.test(c)) out.push('It tries to connect to a crypto wallet. ClaudePlay handles wallets outside the game.');
+    if (/\b(fetch|XMLHttpRequest|WebSocket|EventSource|RTCPeerConnection)\s*\(|navigator\s*\.\s*sendBeacon|new\s+(XMLHttpRequest|WebSocket|EventSource|RTCPeerConnection)\b/.test(c)) out.push('It tries to reach the internet. Games must be self-contained.');
+    if (/\b(top|parent)\s*\.\s*location|window\s*\.\s*open\s*\(/.test(c)) out.push('It tries to open or change other pages.');
+    return out;
+  }
+  /* Reads Claude's verdict. Anything unclear counts as a block, so a confused review never lets a game through. */
+  function parseScreen(text) {
+    const m = String(text || '').match(/\{[\s\S]*\}/);
+    try {
+      const j = JSON.parse(m ? m[0] : '');
+      const reasons = (Array.isArray(j.reasons) ? j.reasons : []).map((r) => String(r).slice(0, 200)).filter(Boolean).slice(0, 5);
+      if (j.verdict === 'allow') return { ok: true, reasons: [] };
+      if (j.verdict === 'block') return { ok: false, reasons: reasons.length ? reasons : ['The safety review did not allow this game.'] };
+    } catch (e) { /* not JSON */ }
+    return { ok: false, reasons: ['The safety review gave an unclear answer. Try again.'], unclear: true };
+  }
+  /* The pictures inside a game file, as [{ name, data }] (PNG base64), for the safety review. */
+  function picturesOf(code) {
+    const m = String(code || '').match(PIC_BLOCK);
+    if (!m) return [];
+    try {
+      const map = JSON.parse(m[0].replace(/^[\s\S]*?window\.SP_PICTURES=/, '').replace(/;<\/scr[\s\S]*$/, ''));
+      return Object.keys(map).slice(0, PICS.max).map((name) => ({ name, data: String(map[name]).replace(/^data:image\/png;base64,/, '') })).filter((p) => /^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(p.data) && p.data.length <= PICS.data);
+    } catch (e) { return []; }
+  }
+
   /* Checks a build request from an untrusted client. Returns { ok, req } or { ok: false, error }. */
   function checkRequest(body) {
     const b = body && typeof body === 'object' ? body : {};
@@ -147,5 +194,5 @@
     'Whale Watch: a fishing game where you hook coins of different sizes, but snagging a whale shakes the whole market.',
   ];
 
-  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, PICS, harnessTask, harnessPrompt, checkRequest, stripPictures, withPictures };
+  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, PICS, SCREEN_PROMPT, harnessTask, harnessPrompt, checkRequest, stripPictures, withPictures, staticScreen, parseScreen, picturesOf };
 })(typeof window !== 'undefined' ? window : globalThis);

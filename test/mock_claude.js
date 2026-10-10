@@ -51,6 +51,10 @@ SP.ready();requestAnimationFrame(loop);
 </` + `script></body></html>`;
   window.__sampleCalls = [];
   async function sample(input, opts = {}) {
+    if (String(input).startsWith('You review browser games')) {
+      window.__screenCalls = (window.__screenCalls || 0) + 1;
+      return { text: /BLOCKME/.test(input) ? '{"verdict":"block","reasons":["Test block."]}' : '{"verdict":"allow","reasons":[]}', truncated: false };
+    }
     window.__sampleCalls.push({ len: typeof input === 'string' ? input.length : 0, tier: opts.modelTier, head: String(input).slice(0, 80) });
     let text = '';
     for (let i = 0; i < GAME.length; i += 400) {
