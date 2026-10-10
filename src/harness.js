@@ -13,7 +13,8 @@
     '',
     'HARD RULES',
     '- No external resources: no linked scripts or stylesheets, no CDNs, no web fonts, no image or audio files, no fetch/XHR/WebSocket, no localStorage or cookies, no alert/confirm/prompt, no iframes, no form submission.',
-    '- Draw with Canvas 2D (preferred) or DOM. Make all art procedurally: shapes, gradients, particles, simple drawn sprites. Sound is optional: Web Audio only, started after the first player input.',
+    '- 2D games: draw with Canvas 2D (or DOM). 3D games: use SP3D (below). Make all art procedurally: shapes, gradients, particles, detailed drawn sprites.',
+    '- Sound: Web Audio only, started after the first player input. Add short sound effects and a simple looping background melody that fits the mood.',
     '- Fill the whole viewport, handle window resize and devicePixelRatio, never show scrollbars.',
     '- Support keyboard AND touch/pointer. On touch screens use taps, drags or on-screen buttons. Prevent page scrolling and zooming during play.',
     '- Flow: title screen (game name + "Tap or press Space to start") -> play -> game over screen with the final score -> restart without reloading.',
@@ -23,7 +24,17 @@
     '  * SP.gameOver(n) exactly once when a run ends, with the final score.',
     '  * SP.ready() once when the title screen first shows.',
     '  * SP.input(code) for each player action (for example "jump" or "left"), used for replay logs.',
-    '- Keep the document under 40 KB, with all JavaScript in one inline script at the end of the body, and no console errors.',
+    '- Keep the document under 120 KB, with all JavaScript in one inline script at the end of the body, and no console errors. Use the room: real levels, enemy variety, power-ups and progression beat a thin prototype.',
+    '',
+    '3D GAMES WITH SP3D',
+    '- When the game type is 3D, use window.SP3D, a small WebGL engine that is already loaded. Do not write raw WebGL. It creates its own full-screen canvas plus a 2D HUD canvas on top and handles resize and devicePixelRatio.',
+    "  * const g = SP3D.create({ background: '#87ceeb', fog: { near: 30, far: 90 } });",
+    '  * g.camera = { x, y, z, tx, ty, tz, fov } (position and look-at target; set fields, do not replace the object). g.light = { x, y, z (direction), color, ambient }.',
+    "  * const m = g.add(shape, { x, y, z, rx, ry, rz, size or sx/sy/sz, color: '#hex', emissive: 0..1, opacity: 0..1, shadow: true, parent: otherObject }). Shapes: 'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane' (flat on the ground, sized with sx/sz). Each shape is 1 unit across before scaling. Change m.x, m.ry, m.color, m.visible and so on at any time; m.remove(); m.world() gives its world position. Build characters and vehicles from several shapes with parent.",
+    '  * g.start((dt, t) => { update the game; draw the HUD with g.hud, a 2D context in CSS pixels, size g.width x g.height }) runs every frame and then renders.',
+    '  * g.burst(x, y, z, { color, count, speed, size, life }) for particle effects. g.project(x, y, z) gives screen { x, y } for labels. g.ground(screenX, screenY, height) gives the point on a horizontal plane under a tap. SP3D.hit(a, b, pad) checks box overlap; SP3D.dist(a, b) is distance. g.clear() removes everything.',
+    '  * Use y as up. Keep the camera following the player smoothly. Keep it under about 400 objects; reuse objects instead of adding new ones every frame.',
+    '  * Touch controls for 3D: on-screen buttons drawn on the HUD, or drag to steer.',
     '',
     'CRYPTO AND WEB3 GAMES',
     '- Creators often ask for games about crypto: mining blocks, gas fees, wallets, tokens, NFTs, validators, bridges, airdrops, rug pulls. Turn those ideas into real arcade mechanics (for example blocks to stack, gas as a draining meter, tokens as pickups, a rug pull as a hazard).',
@@ -39,12 +50,14 @@
 
   const KINDS = ['new', 'edit', 'fix'];
   const STYLES = ['Neon arcade', 'Pixel art', 'Paper cutout', 'Pastel cozy', 'Monochrome ink'];
-  const LIMITS = { prompt: 2000, style: 40, code: 60000, error: 1000 };
+  const LIMITS = { prompt: 2000, style: 40, genre: 40, mode: 2, code: 160000, error: 1000 };
+  const MODES = ['2d', '3d'];
+  const GENRES = ['Arcade', 'Platformer', 'Racing', 'Shooter', 'Puzzle', 'Trivia', 'Tower defense', 'Rhythm', 'Adventure', 'Sports'];
 
   /* The creator's part of a request, kept apart from HARNESS so a server can send HARNESS as a
      cacheable system prompt. o: { prompt, style, code, error }. */
   function harnessTask(kind, o) {
-    const style = o.style ? '\nArt style: ' + o.style : '';
+    const style = (o.style ? '\nArt style: ' + o.style : '') + (o.mode ? '\nGame type: ' + (o.mode === '3d' ? '3D (use SP3D)' : '2D') : '') + (o.genre ? '\nGenre: ' + o.genre : '');
     if (kind === 'new') return 'GAME IDEA FROM THE CREATOR:\n' + o.prompt + style;
     if (kind === 'edit') return 'You are editing an existing ClaudePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
     return 'The current game crashed with this error:\n' + o.error + '\nFind the cause, fix it, and return the COMPLETE corrected document under the same rules. Change nothing else.\n\nCURRENT GAME:\n' + o.code;
@@ -57,7 +70,7 @@
     const str = (v) => (typeof v === 'string' ? v : '');
     const kind = KINDS.includes(b.kind) ? b.kind : null;
     if (!kind) return { ok: false, error: 'kind must be new, edit or fix' };
-    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default' };
+    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), genre: str(b.genre).trim(), mode: MODES.includes(b.mode) ? b.mode : '', code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default' };
     for (const k of Object.keys(LIMITS)) if (req[k].length > LIMITS[k]) return { ok: false, error: k + ' is longer than ' + LIMITS[k] + ' characters' };
     if (kind !== 'fix' && !req.prompt) return { ok: false, error: 'describe the game first' };
     if (kind !== 'new' && !/<html|<!doctype/i.test(req.code)) return { ok: false, error: 'edit and fix need the current game' };
@@ -84,5 +97,5 @@
     'Whale Watch: a fishing game where you hook coins of different sizes, but snagging a whale shakes the whole market.',
   ];
 
-  root.PPHarness = { HARNESS, KINDS, STYLES, LIMITS, IDEAS, CRYPTO_IDEAS, harnessTask, harnessPrompt, checkRequest };
+  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, harnessTask, harnessPrompt, checkRequest };
 })(typeof window !== 'undefined' ? window : globalThis);

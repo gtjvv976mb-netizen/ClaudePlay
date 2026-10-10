@@ -657,14 +657,14 @@
   function planHTML() {
     const p = S.plan;
     if (ENV !== 'web' || !p || !p.ai) return '';
-    const builds = fmtInt(p.left) + ' of ' + fmtInt(p.daily) + ' AI builds left today';
+    const builds = fmtInt(p.left) + ' of ' + fmtInt(p.daily) + ' new games' + (p.edits ? ' and ' + fmtInt(p.edits.left) + ' changes' : '') + ' left today';
     const m = p.models || {};
     if (p.plan === 'pro') {
       return '<p class="muted"><b>Pro</b> until ' + esc(shortDate(p.until)) + ' · ' + builds + ' · new games use ' + esc(modelName(m.new)) + '.'
         + (p.pro && p.pro.memo ? ' <button class="btn small ghost" type="button" data-act="get-pro">Add ' + p.pro.days + ' days</button>' : '') + '</p>';
     }
-    return '<div class="stack" style="gap:6px"><p class="muted"><b>Free plan</b> · ' + builds + ' · built with ' + esc(modelName(m.free)) + '.</p>'
-      + (p.pro && p.pro.memo ? '<div class="row"><button class="btn small" type="button" data-act="get-pro">Get Pro · ' + fmtSOL(p.pro.price) + ' ' + UNIT + ' for ' + p.pro.days + ' days</button><span class="muted">' + esc(modelName(m.new)) + ' and ' + p.pro.daily + ' builds a day</span></div>' : '')
+    return '<div class="stack" style="gap:6px"><p class="muted"><b>Free plan</b> · ' + builds + ' · new games built with ' + esc(modelName(m.freeNew || m.free)) + '.</p>'
+      + (p.pro && p.pro.memo ? '<div class="row"><button class="btn small" type="button" data-act="get-pro">Get Pro · ' + fmtSOL(p.pro.price) + ' ' + UNIT + ' for ' + p.pro.days + ' days</button><span class="muted">' + p.pro.daily + ' new games and ' + (p.pro.dailyEdits || 60) + ' changes a day</span></div>' : '')
       + '</div>';
   }
   function renderPlan() { const el = $('#st-plan'); if (el) el.innerHTML = planHTML(); const q = $('#st-gen'); if (q && !S.studio.busy) q.innerHTML = genButtons(); }
@@ -687,7 +687,7 @@
       return { title: (d.title || '').trim().slice(0, 40), desc: m('description').slice(0, 200), genre: m('gameplay-genre').slice(0, 24), controls: m('gameplay-controls').slice(0, 140) };
     } catch (e) { return {}; }
   }
-  const STYLES = H.STYLES, IDEAS = H.IDEAS, CRYPTO_IDEAS = H.CRYPTO_IDEAS;
+  const STYLES = H.STYLES, IDEAS = H.IDEAS, CRYPTO_IDEAS = H.CRYPTO_IDEAS, GENRES = H.GENRES;
   const ideaName = (t) => t.split(':')[0];
 
   /* ---------------- studio state ---------------- */
@@ -709,7 +709,7 @@
     clearTimeout(studioSaveTimer);
     studioSaveTimer = setTimeout(() => {
       const st = S.studio;
-      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
+      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, dim: st.dim, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
       if (st.versions.length > 6) keep.vi = Math.max(-1, st.vi - (st.versions.length - 6));
       LS.set(KEY.studio, keep);
     }, 300);
@@ -1170,6 +1170,8 @@
           + '<div class="chat" id="st-chat">' + chat + '</div><div id="st-stream"></div>'
           + (has ? '' : '<div class="stack" style="gap:8px"><p class="eyebrow" id="crypto-ideas">Make a crypto game</p><div class="row" role="group" aria-labelledby="crypto-ideas">' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></div>')
           + '<label class="field"><span class="sr">Your idea or change</span><textarea id="st-prompt" data-in="prompt" placeholder="' + (has ? 'Ask for a change: “make the jump higher and add a double-jump power-up”' : 'Block Miner: stack falling transaction blocks before the gas meter runs dry…') + '">' + esc(st.prompt) + '</textarea></label>'
+          + '<div class="row" role="group" aria-label="Game type"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + ((st.dim || '2d') === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
+          + '<label class="sr" for="st-genre">Genre</label><select id="st-genre" data-in="genre" style="width:auto"><option value="">Any genre</option>' + GENRES.map((g) => '<option' + (st.genre === g ? ' selected' : '') + '>' + esc(g) + '</option>').join('') + '</select></div>'
           + '<div class="row" role="group" aria-label="Art style">' + STYLES.map((s) => '<button class="chip" type="button" data-act="style" data-style="' + esc(s) + '" aria-pressed="' + (st.style === s) + '">' + esc(s) + '</button>').join('') + '</div>'
           + '<div class="row" id="st-gen">' + genButtons() + '</div><div id="st-plan">' + planHTML() + '</div>'
           + '<details><summary class="muted" style="cursor:pointer">Starter ideas to remix</summary><div class="stack" style="margin-top:10px">' + IDEAS.map((t) => '<button class="btn small ghost" type="button" data-act="idea" style="white-space:normal;text-align:left;justify-content:flex-start">' + esc(t) + '</button>').join('') + '</div></details>'
@@ -1304,7 +1306,7 @@
     const ctl = new AbortController();
     S.ctl = ctl;
     try {
-      const req = { kind, prompt, style: st.style, code: kind === 'new' ? '' : base || '', error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
+      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', code: kind === 'new' ? '' : base || '', error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
       const res = await aiBuild(req, {
         signal: ctl.signal,
         onText: ({ text }) => {
@@ -1645,7 +1647,7 @@
       if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Real SOL is paid from your own wallet app. Connect Phantom, Solflare or Backpack in Wallet.');
       await loadChainBal();
       const bal = solOf(myWallet()), short_ = bal < p.price + 10000;
-      modal('<h2>Get ClaudePlay Pro</h2><p>' + fmtSOL(p.price) + ' ' + UNIT + ' for ' + p.days + ' days: new games and best builds made with ' + esc(modelName(S.plan.models && S.plan.models.new)) + ', and ' + p.daily + ' AI builds a day.</p>'
+      modal('<h2>Get ClaudePlay Pro</h2><p>' + fmtSOL(p.price) + ' ' + UNIT + ' for ' + p.days + ' days: ' + p.daily + ' new games and ' + (p.dailyEdits || 60) + ' AI changes a day, and best builds made with ' + esc(modelName(S.plan.models && S.plan.models.new)) + ' for changes too.</p>'
         + '<p class="muted">Your wallet pays the site owner directly on Solana' + (MAINNET ? ', in real SOL' : '') + '. Pro belongs to this browser’s ClaudePlay account. You have ' + fmtSOL(bal) + ' ' + UNIT + '.</p>'
         + (short_ ? '<p class="muted">' + (MAINNET ? 'Add SOL to your wallet app first.' : 'Get devSOL from the faucet in your <a href="#wallet" data-nav="wallet">wallet</a> first.') + '</p>' : '')
         + '<div class="row"><button class="btn primary" type="button" data-act="confirm-pro"' + (short_ ? ' disabled' : '') + '>Pay ' + fmtSOL(p.price) + ' ' + UNIT + '</button><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
@@ -1729,6 +1731,7 @@
     'prefs-reset': () => { S.prefs = Object.assign({}, PREF_DEFAULTS); LS.set(KEY.prefs, S.prefs); applyPrefs(); renderView(true); openSettings(); announce('Display and assist settings reset.'); },
     'skip': () => { const v = $('#view'); if (v) { v.focus({ preventScroll: true }); v.scrollIntoView(); } },
     'shape': (el) => { S.studio.params.shape = el.dataset.shape; $$('[data-act="shape"]').forEach((b) => b.setAttribute('aria-pressed', String(b === el))); saveStudio(); loadPreview(150); },
+    'dim': (el) => { S.studio.dim = el.dataset.dim; $$('[data-act="dim"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.dim === S.studio.dim))); saveStudio(); },
     'style': (el) => { const s = el.dataset.style; S.studio.style = S.studio.style === s ? '' : s; $$('[data-act="style"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.style === S.studio.style))); saveStudio(); },
     'idea': (el) => { const idea = el.dataset.idea || el.textContent; S.studio.prompt = idea; const t = $('#st-prompt'); if (t) { t.value = idea; t.focus(); } saveStudio(); },
     'home-idea': (el) => { S.studio.mode = 'ai'; S.studio.prompt = el.dataset.idea; saveStudio(); nav('create'); },
@@ -1854,12 +1857,13 @@
     else if (k === 'pub-price') st.price = t.value;
     else if (k === 'pub-cap') st.cap = t.value;
     else if (k === 'quality') st.quality = t.value;
+    else if (k === 'genre') st.genre = t.value;
     saveStudio();
   });
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.type === 'radio' && t.name && t.name.indexOf('pref-') === 0) { setPref(t.name.slice(5), t.value); return; }
-    if (t.dataset && (t.dataset.in === 'knob' || t.dataset.in === 'quality')) t.dispatchEvent(new Event('input', { bubbles: true }));
+    if (t.dataset && (t.dataset.in === 'knob' || t.dataset.in === 'quality' || t.dataset.in === 'genre')) t.dispatchEvent(new Event('input', { bubbles: true }));
   });
   document.addEventListener('focusout', () => {
     setTimeout(() => {

@@ -544,6 +544,243 @@
     window.addEventListener('unhandledrejection', function (e) { post({ t: 'error', v: 'Unhandled promise rejection: ' + String((e.reason && e.reason.message) || e.reason) }); });
     window.addEventListener('pointerdown', function () { try { window.focus(); } catch (e) {} });
   }
+  /* ---------------- SP3D: a small WebGL 3D engine for AI-built games ----------------
+     Injected (with the SDK, not hashed) into any game whose code mentions SP3D, so a 3D game stays
+     a small self-contained file. Shapes, a camera, one sun light with ambient fog, transform parents,
+     blob shadows, particle bursts, a 2D HUD canvas on top, and helpers for picking and collisions. */
+  function SP3D_LIB() {
+    var SHAPES = {};
+    function geo(name) {
+      if (SHAPES[name]) return SHAPES[name];
+      var p = [], n = [], idx = [];
+      function v(x, y, z, nx, ny, nz) { p.push(x, y, z); n.push(nx, ny, nz); return p.length / 3 - 1; }
+      function quad(a, b, c, d) { idx.push(a, b, c, a, c, d); }
+      var i, j, S = 24, R = 12;
+      if (name === 'box') {
+        var F = [[0, 0, 1, 1, 0, 0, 0, 1, 0], [0, 0, -1, -1, 0, 0, 0, 1, 0], [1, 0, 0, 0, 0, -1, 0, 1, 0], [-1, 0, 0, 0, 0, 1, 0, 1, 0], [0, 1, 0, 1, 0, 0, 0, 0, -1], [0, -1, 0, 1, 0, 0, 0, 0, 1]];
+        for (i = 0; i < 6; i++) {
+          var f = F[i], b = p.length / 3;
+          for (j = 0; j < 4; j++) {
+            var su = (j === 1 || j === 2) ? 0.5 : -0.5, sv = j >= 2 ? 0.5 : -0.5;
+            v(f[0] * 0.5 + f[3] * su + f[6] * sv, f[1] * 0.5 + f[4] * su + f[7] * sv, f[2] * 0.5 + f[5] * su + f[8] * sv, f[0], f[1], f[2]);
+          }
+          quad(b, b + 1, b + 2, b + 3);
+        }
+      } else if (name === 'plane') {
+        v(-0.5, 0, 0.5, 0, 1, 0); v(0.5, 0, 0.5, 0, 1, 0); v(0.5, 0, -0.5, 0, 1, 0); v(-0.5, 0, -0.5, 0, 1, 0); quad(0, 1, 2, 3);
+      } else if (name === 'sphere') {
+        for (i = 0; i <= R; i++) for (j = 0; j <= S; j++) {
+          var th = i * Math.PI / R, ph = j * 2 * Math.PI / S, x = Math.sin(th) * Math.cos(ph), y = Math.cos(th), z = Math.sin(th) * Math.sin(ph);
+          v(x * 0.5, y * 0.5, z * 0.5, x, y, z);
+        }
+        for (i = 0; i < R; i++) for (j = 0; j < S; j++) { var a = i * (S + 1) + j; quad(a, a + 1, a + S + 2, a + S + 1); }
+      } else if (name === 'cylinder' || name === 'cone') {
+        var top = name === 'cone' ? 0 : 0.5, sl = name === 'cone' ? 0.5 : 0;
+        for (j = 0; j <= S; j++) {
+          var an = j * 2 * Math.PI / S, c = Math.cos(an), s = Math.sin(an), l = Math.sqrt(1 + sl * sl);
+          v(c * 0.5, -0.5, s * 0.5, c / l, sl / l, s / l); v(c * top, 0.5, s * top, c / l, sl / l, s / l);
+        }
+        for (j = 0; j < S; j++) quad(j * 2, j * 2 + 2, j * 2 + 3, j * 2 + 1);
+        var cb = v(0, -0.5, 0, 0, -1, 0), ct = top ? v(0, 0.5, 0, 0, 1, 0) : -1;
+        for (j = 0; j <= S; j++) {
+          var a2 = j * 2 * Math.PI / S;
+          v(Math.cos(a2) * 0.5, -0.5, Math.sin(a2) * 0.5, 0, -1, 0);
+          if (top) v(Math.cos(a2) * top, 0.5, Math.sin(a2) * top, 0, 1, 0);
+        }
+        var st = top ? 2 : 1, base = ct >= 0 ? ct + 1 : cb + 1;
+        for (j = 0; j < S; j++) {
+          idx.push(cb, base + j * st, base + (j + 1) * st);
+          if (top) idx.push(ct, base + (j + 1) * st + 1, base + j * st + 1);
+        }
+      } else if (name === 'torus') {
+        for (i = 0; i <= R; i++) for (j = 0; j <= S; j++) {
+          var u = i * 2 * Math.PI / R, w = j * 2 * Math.PI / S, cx = Math.cos(w), sx = Math.sin(w), cu = Math.cos(u), su2 = Math.sin(u);
+          v((0.35 + 0.15 * cu) * cx, 0.15 * su2, (0.35 + 0.15 * cu) * sx, cu * cx, su2, cu * sx);
+        }
+        for (i = 0; i < R; i++) for (j = 0; j < S; j++) { var t = i * (S + 1) + j; quad(t, t + S + 1, t + S + 2, t + 1); }
+      } else return geo('box');
+      SHAPES[name] = { p: new Float32Array(p), n: new Float32Array(n), i: new Uint16Array(idx) };
+      return SHAPES[name];
+    }
+    function hex(c) {
+      if (Array.isArray(c)) return c;
+      var m = String(c || '#ffffff').replace('#', '');
+      if (m.length === 3) m = m[0] + m[0] + m[1] + m[1] + m[2] + m[2];
+      var k = parseInt(m, 16) || 0;
+      return [(k >> 16 & 255) / 255, (k >> 8 & 255) / 255, (k & 255) / 255];
+    }
+    function mul(a, b) {
+      var o = new Float32Array(16);
+      for (var i = 0; i < 4; i++) for (var j = 0; j < 4; j++) o[j * 4 + i] = a[i] * b[j * 4] + a[4 + i] * b[j * 4 + 1] + a[8 + i] * b[j * 4 + 2] + a[12 + i] * b[j * 4 + 3];
+      return o;
+    }
+    function trs(m) {
+      var cx = Math.cos(m.rx || 0), sx = Math.sin(m.rx || 0), cy = Math.cos(m.ry || 0), sy = Math.sin(m.ry || 0), cz = Math.cos(m.rz || 0), sz = Math.sin(m.rz || 0);
+      // R = Ry * Rx * Rz (yaw, then pitch, then roll)
+      var r00 = cy * cz + sy * sx * sz, r01 = -cy * sz + sy * sx * cz, r02 = sy * cx;
+      var r10 = cx * sz, r11 = cx * cz, r12 = -sx;
+      var r20 = -sy * cz + cy * sx * sz, r21 = sy * sz + cy * sx * cz, r22 = cy * cx;
+      var a = m.sx == null ? (m.size == null ? 1 : m.size) : m.sx, b = m.sy == null ? (m.size == null ? 1 : m.size) : m.sy, c = m.sz == null ? (m.size == null ? 1 : m.size) : m.sz;
+      return new Float32Array([r00 * a, r10 * a, r20 * a, 0, r01 * b, r11 * b, r21 * b, 0, r02 * c, r12 * c, r22 * c, 0, m.x || 0, m.y || 0, m.z || 0, 1]);
+    }
+    function world(m) { var w = trs(m); return m.parent ? mul(world(m.parent), w) : w; }
+    function normalMat(w) {
+      var a = w[0], b = w[1], c = w[2], d = w[4], e = w[5], f = w[6], g = w[8], h = w[9], k = w[10];
+      var A = e * k - f * h, B = -(d * k - f * g), C = d * h - e * g, det = a * A + b * B + c * C || 1;
+      return new Float32Array([A / det, B / det, C / det, -(b * k - c * h) / det, (a * k - c * g) / det, -(a * h - b * g) / det, (b * f - c * e) / det, -(a * f - c * d) / det, (a * e - b * d) / det]);
+    }
+    function look(eye, at, up) {
+      var zx = eye[0] - at[0], zy = eye[1] - at[1], zz = eye[2] - at[2], zl = Math.hypot(zx, zy, zz) || 1; zx /= zl; zy /= zl; zz /= zl;
+      var xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx, xl = Math.hypot(xx, xy, xz) || 1; xx /= xl; xy /= xl; xz /= xl;
+      var yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+      return new Float32Array([xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0, -(xx * eye[0] + xy * eye[1] + xz * eye[2]), -(yx * eye[0] + yy * eye[1] + yz * eye[2]), -(zx * eye[0] + zy * eye[1] + zz * eye[2]), 1]);
+    }
+    function persp(fov, asp, near, far) {
+      var f = 1 / Math.tan(fov * Math.PI / 360), nf = 1 / (near - far);
+      return new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]);
+    }
+    var VS = 'attribute vec3 aP;attribute vec3 aN;uniform mat4 uVP;uniform mat4 uM;uniform mat3 uNM;varying vec3 vN;varying float vD;void main(){vec4 w=uM*vec4(aP,1.0);vN=normalize(uNM*aN);gl_Position=uVP*w;vD=gl_Position.w;}';
+    var FS = 'precision mediump float;varying vec3 vN;varying float vD;uniform vec3 uC;uniform vec3 uL;uniform vec3 uLC;uniform vec3 uA;uniform float uE;uniform float uO;uniform vec3 uF;uniform vec2 uFR;void main(){float d=max(dot(normalize(vN),-uL),0.0);vec3 c=uC*(uA+uLC*d*(1.0-uE))+uC*uE;float f=clamp((vD-uFR.x)/max(uFR.y-uFR.x,0.001),0.0,1.0);gl_FragColor=vec4(mix(c,uF,f),uO);}';
+
+    function create(opts) {
+      opts = opts || {};
+      var canvas = opts.canvas || document.createElement('canvas'), hudC = document.createElement('canvas');
+      if (!opts.canvas) document.body.appendChild(canvas);
+      document.body.appendChild(hudC);
+      var css = 'position:fixed;left:0;top:0;width:100%;height:100%;display:block;';
+      canvas.style.cssText = css + 'touch-action:none;'; hudC.style.cssText = css + 'pointer-events:none;';
+      document.documentElement.style.cssText += ';margin:0;height:100%;overflow:hidden;'; document.body.style.cssText += ';margin:0;height:100%;overflow:hidden;';
+      var gl = canvas.getContext('webgl', { antialias: true }) || canvas.getContext('experimental-webgl');
+      if (!gl) throw new Error('This device cannot show 3D games (WebGL is off).');
+      function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+      var prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog); gl.useProgram(prog);
+      var L = {}; ['uVP', 'uM', 'uNM', 'uC', 'uL', 'uLC', 'uA', 'uE', 'uO', 'uF', 'uFR'].forEach(function (k) { L[k] = gl.getUniformLocation(prog, k); });
+      var aP = gl.getAttribLocation(prog, 'aP'), aN = gl.getAttribLocation(prog, 'aN');
+      var bufs = {};
+      function buf(name) {
+        if (bufs[name]) return bufs[name];
+        var g = geo(name), b = { p: gl.createBuffer(), n: gl.createBuffer(), i: gl.createBuffer(), count: g.i.length };
+        gl.bindBuffer(gl.ARRAY_BUFFER, b.p); gl.bufferData(gl.ARRAY_BUFFER, g.p, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, b.n); gl.bufferData(gl.ARRAY_BUFFER, g.n, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b.i); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, g.i, gl.STATIC_DRAW);
+        return (bufs[name] = b);
+      }
+      gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      var W = 1, H = 1, dpr = 1, vp = null, list = [], parts = [];
+      var G = {
+        canvas: canvas,
+        hud: hudC.getContext('2d'),
+        width: 1, height: 1,
+        background: opts.background || '#0b0f2a',
+        camera: { x: 0, y: 6, z: 10, tx: 0, ty: 0, tz: 0, fov: 60, near: 0.1, far: 400 },
+        light: { x: -0.4, y: -1, z: -0.3, color: '#ffffff', ambient: 0.35 },
+        fog: opts.fog || null,
+        add: function (shape, o) {
+          var m = { shape: shape || 'box', x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, color: '#ffffff', emissive: 0, opacity: 1, visible: true, shadow: false, parent: null };
+          for (var k in o) m[k] = o[k];
+          m.remove = function () { var i = list.indexOf(m); if (i >= 0) list.splice(i, 1); };
+          m.world = function () { var w = world(m); return { x: w[12], y: w[13], z: w[14] }; };
+          list.push(m); return m;
+        },
+        clear: function () { list.length = 0; parts.length = 0; },
+        get objects() { return list.slice(); },
+        burst: function (x, y, z, o) {
+          o = o || {};
+          for (var i = 0; i < (o.count || 16); i++) {
+            var sp = o.speed || 4;
+            parts.push({ m: { shape: 'box', x: x, y: y, z: z, size: o.size || 0.15, color: o.color || '#ffd84d', emissive: 0.6, opacity: 1, rx: SP.rand() * 6, ry: SP.rand() * 6 },
+              vx: (SP.rand() - 0.5) * sp * 2, vy: SP.rand() * sp * 1.4, vz: (SP.rand() - 0.5) * sp * 2, life: o.life || 0.8, t: 0 });
+          }
+        },
+        project: function (x, y, z) {
+          if (!vp) return null;
+          var X = vp[0] * x + vp[4] * y + vp[8] * z + vp[12], Y = vp[1] * x + vp[5] * y + vp[9] * z + vp[13], Wc = vp[3] * x + vp[7] * y + vp[11] * z + vp[15];
+          if (Wc <= 0) return null;
+          return { x: (X / Wc * 0.5 + 0.5) * W, y: (0.5 - Y / Wc * 0.5) * H };
+        },
+        ground: function (sx, sy, h) {
+          var c = G.camera, f = 1 / Math.tan(c.fov * Math.PI / 360), nx = (sx / W) * 2 - 1, ny = 1 - (sy / H) * 2;
+          var e = [c.x, c.y, c.z], zx = c.x - c.tx, zy = c.y - c.ty, zz = c.z - c.tz, zl = Math.hypot(zx, zy, zz) || 1; zx /= zl; zy /= zl; zz /= zl;
+          var xx = zz, xz = -zx, xl = Math.hypot(xx, xz) || 1; xx /= xl; xz /= xl;
+          var yx = zy * xz, yy = zz * xx - zx * xz, yz = -zy * xx;
+          var dx = nx * (W / H) / f * xx + ny / f * yx - zx, dy = ny / f * yy - zy, dz = nx * (W / H) / f * xz + ny / f * yz - zz;
+          if (Math.abs(dy) < 1e-6) return null;
+          var t = ((h || 0) - e[1]) / dy;
+          return t > 0 ? { x: e[0] + dx * t, y: h || 0, z: e[2] + dz * t } : null;
+        },
+        render: function (dt) {
+          resize();
+          dt = Math.min(dt || 0.016, 0.1);
+          for (var i = parts.length - 1; i >= 0; i--) {
+            var q = parts[i]; q.t += dt; q.vy -= 12 * dt; q.m.x += q.vx * dt; q.m.y += q.vy * dt; q.m.z += q.vz * dt; q.m.opacity = Math.max(0, 1 - q.t / q.life);
+            if (q.t >= q.life) parts.splice(i, 1);
+          }
+          var bg = hex(G.background), c = G.camera;
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          gl.clearColor(bg[0], bg[1], bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+          vp = mul(persp(c.fov, W / H, c.near, c.far), look([c.x, c.y, c.z], [c.tx, c.ty, c.tz], [0, 1, 0]));
+          gl.uniformMatrix4fv(L.uVP, false, vp);
+          var lt = G.light, ll = Math.hypot(lt.x, lt.y, lt.z) || 1, lc = hex(lt.color), fog = G.fog;
+          gl.uniform3f(L.uL, lt.x / ll, lt.y / ll, lt.z / ll); gl.uniform3fv(L.uLC, lc); gl.uniform3f(L.uA, lt.ambient, lt.ambient, lt.ambient);
+          gl.uniform3fv(L.uF, fog ? hex(fog.color || G.background) : bg); gl.uniform2f(L.uFR, fog ? fog.near : 1e6, fog ? fog.far : 1e7);
+          var draw = [], shadows = [];
+          for (i = 0; i < list.length; i++) { var m = list[i]; if (!m.visible) continue; var vis = true; for (var p = m.parent; p; p = p.parent) if (!p.visible) vis = false; if (!vis) continue; var w = world(m); draw.push([m, w]); if (m.shadow) shadows.push([m, w]); }
+          for (i = 0; i < parts.length; i++) draw.push([parts[i].m, trs(parts[i].m)]);
+          for (i = 0; i < shadows.length; i++) {
+            var sm = shadows[i][1], sx = Math.hypot(sm[0], sm[1], sm[2]), sz = Math.hypot(sm[8], sm[9], sm[10]);
+            draw.push([{ shape: 'cylinder', color: '#000000', emissive: 1, opacity: 0.28 }, trs({ shape: 'cylinder', x: sm[12], y: (shadows[i][0].shadowY || 0) + 0.01, z: sm[14], sx: sx * 0.9, sy: 0.001, sz: sz * 0.9 })]);
+          }
+          draw.sort(function (a, b) { return (a[0].opacity < 1) - (b[0].opacity < 1); });
+          var cur = null;
+          for (i = 0; i < draw.length; i++) {
+            var o = draw[i][0], wm = draw[i][1], b2 = buf(o.shape);
+            if (cur !== b2) {
+              gl.bindBuffer(gl.ARRAY_BUFFER, b2.p); gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP, 3, gl.FLOAT, false, 0, 0);
+              gl.bindBuffer(gl.ARRAY_BUFFER, b2.n); gl.enableVertexAttribArray(aN); gl.vertexAttribPointer(aN, 3, gl.FLOAT, false, 0, 0);
+              gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b2.i); cur = b2;
+            }
+            gl.uniformMatrix4fv(L.uM, false, wm); gl.uniformMatrix3fv(L.uNM, false, normalMat(wm));
+            gl.uniform3fv(L.uC, hex(o.color)); gl.uniform1f(L.uE, o.emissive || 0); gl.uniform1f(L.uO, o.opacity == null ? 1 : o.opacity);
+            gl.depthMask(!(o.opacity < 1));
+            if (o.shape === 'plane') gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+            gl.drawElements(gl.TRIANGLES, b2.count, gl.UNSIGNED_SHORT, 0);
+          }
+          gl.depthMask(true);
+        },
+        /* Runs update(dt, t) then draws, every frame. Clear and draw the HUD inside update. */
+        start: function (update) {
+          var last = performance.now();
+          function frame(now) {
+            var dt = Math.min((now - last) / 1000, 0.1); last = now;
+            resize(); G.hud.setTransform(dpr, 0, 0, dpr, 0, 0); G.hud.clearRect(0, 0, W, H);
+            if (update) update(dt, now / 1000);
+            G.render(dt);
+            requestAnimationFrame(frame);
+          }
+          requestAnimationFrame(frame);
+        },
+      };
+      function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        var w = window.innerWidth || 1, h = window.innerHeight || 1;
+        if (w !== W || h !== H || canvas.width !== Math.round(w * dpr)) {
+          W = G.width = w; H = G.height = h;
+          canvas.width = hudC.width = Math.round(w * dpr); canvas.height = hudC.height = Math.round(h * dpr);
+        }
+      }
+      resize();
+      return G;
+    }
+    /* Overlap of two objects' boxes (scale only, rotation ignored), with an optional margin. */
+    function hit(a, b, pad) {
+      pad = pad || 0;
+      function ext(m, k) { var v = m['s' + k]; return (v == null ? (m.size == null ? 1 : m.size) : v) / 2; }
+      var A = a.world ? a.world() : a, B = b.world ? b.world() : b;
+      return Math.abs(A.x - B.x) < ext(a, 'x') + ext(b, 'x') + pad && Math.abs(A.y - B.y) < ext(a, 'y') + ext(b, 'y') + pad && Math.abs(A.z - B.z) < ext(a, 'z') + ext(b, 'z') + pad;
+    }
+    function dist(a, b) { var A = a.world ? a.world() : a, B = b.world ? b.world() : b; return Math.hypot(A.x - B.x, A.y - B.y, A.z - B.z); }
+    window.SP3D = { create: create, hit: hit, dist: dist, color: hex };
+  }
   /* Games run offline: this policy blocks every network request a game could make (fetch, images,
      fonts, form posts), so a game cannot send anything a player types or does to another site. */
   const GAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:; connect-src 'none'; form-action 'none'";
@@ -551,7 +788,7 @@
     const o = opts || {};
     const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute });
     const tag = '<meta http-equiv="Content-Security-Policy" content="' + GAME_CSP + '">'
-      + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + SCRIPT_CLOSE;
+      + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + (/SP3D/.test(code) ? '(' + SP3D_LIB.toString() + ')();' : '') + SCRIPT_CLOSE;
     const head = code.match(/<head[^>]*>/i);
     if (head) return code.replace(head[0], head[0] + tag);
     const dt = code.match(/<!doctype[^>]*>/i);

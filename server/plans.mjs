@@ -1,7 +1,8 @@
 // Free and Pro plans for the AI studio.
 //
-// Free: every visitor gets a few builds a day on a low-cost model (GP_MODEL_FREE, Haiku 5.5), counted
-// per network address, with a site-wide daily cap so a public link can't run up the owner's bill.
+// Free: every visitor gets a few new games a day (GP_MODEL_FREE_NEW, Sonnet 5.5) and more changes on a
+// low-cost model (GP_MODEL_FREE, Haiku 5.5), counted per network address, with site-wide daily caps so a
+// public link can't run up the owner's bill.
 // Pro: a pass bought with SOL. The player's wallet pays the treasury directly with the memo
 // "gameplay:<pro id>" (derived from their gallery key), the server checks that payment on Solana and
 // unlocks the better models and more builds a day for GP_PRO_DAYS days. The server never holds funds.
@@ -28,29 +29,31 @@ export function memoryKv() {
 /* The memo id that ties a Pro payment to one gallery account. */
 export const proId = (uid) => createHash('sha256').update('gameplay-pro:' + uid).digest('hex').slice(0, 16);
 
-/* Daily build counts (in kv) and how many builds run at once (in memory). */
-export function limiter({ maxActive = 4, total = 0, kv = memoryKv() } = {}) {
+/* Daily build counts (in kv) and how many builds run at once (in memory). Counts are kept per bucket
+   ('new' games and 'edit' changes), each with an optional site-wide cap. */
+export function limiter({ maxActive = 4, kv = memoryKv() } = {}) {
   const busy = new Set();
   let active = 0;
   const today = () => new Date().toISOString().slice(0, 10);
-  const key = (who) => 'lim:' + today() + ':' + who;
-  const site = () => 'lim:' + today() + ':*site';
+  const key = (who, bucket) => 'lim:' + today() + ':' + (bucket || 'new') + ':' + who;
+  const site = (bucket) => 'lim:' + today() + ':' + (bucket || 'new') + ':*site';
   return {
-    async used(who) { return Number(await kv.get(key(who))) || 0; },
-    /* Reserves a build for `who` against `daily`. site: whether it counts toward the site-wide cap. */
+    async used(who, bucket) { return Number(await kv.get(key(who, bucket))) || 0; },
+    /* Reserves a build for `who` against `daily`. opts: bucket, total (site-wide cap, 0 = none), limitMessage. */
     async take(who, daily, opts = {}) {
+      const total = opts.total || 0;
       if (busy.has(who)) return { ok: false, code: 'rate_limited', message: 'You already have a build running. Wait for it to finish.' };
       if (active >= maxActive) return { ok: false, code: 'rate_limited', message: 'The AI studio is busy right now. Try again in a minute.' };
       busy.add(who); active++;
       const release = () => { if (busy.delete(who)) active--; };
       try {
-        const mine = key(who), all = site();
+        const mine = key(who, opts.bucket), all = site(opts.bucket);
         const n = await kv.incr(mine, 1, 2 * 86400);
         if (n > daily) {
           await kv.incr(mine, -1, 2 * 86400); release();
           return { ok: false, code: 'daily_limit', message: opts.limitMessage || 'You have used today’s ' + daily + ' free AI builds. Come back tomorrow, or tune a kit meanwhile.' };
         }
-        const counted = !!(opts.site !== false && total);
+        const counted = !!total;
         if (counted && (await kv.incr(all, 1, 2 * 86400)) > total) {
           await kv.incr(all, -1, 2 * 86400); await kv.incr(mine, -1, 2 * 86400); release();
           return { ok: false, code: 'daily_limit', message: 'The AI studio has reached today’s free build limit for this site. Come back tomorrow, or tune a kit meanwhile.' };
@@ -69,10 +72,10 @@ export function limiter({ maxActive = 4, total = 0, kv = memoryKv() } = {}) {
   };
 }
 
-/* opts: { kv, chain (from openChain, or null: no Pro), price (lamports), days, daily (Pro builds a day) } */
+/* opts: { kv, chain (from openChain, or null: no Pro), price (lamports), days, daily (Pro new games a day), dailyEdits } */
 export function openPlans(opts) {
   const { kv, chain } = opts;
-  const pro = chain && opts.price > 0 ? { price: Math.round(opts.price), days: opts.days || 30, daily: opts.daily || 10, treasury: chain.site.treasury } : null;
+  const pro = chain && opts.price > 0 ? { price: Math.round(opts.price), days: opts.days || 30, daily: opts.daily || 10, dailyEdits: opts.dailyEdits || 60, treasury: chain.site.treasury } : null;
   const err = (status, code, message) => ({ status, body: { code, message } });
   async function until(uid) {
     if (!uid) return 0;
@@ -86,7 +89,7 @@ export function openPlans(opts) {
     until,
     /* What the page shows for an account: its pass and how to buy one. */
     async offer(uid) {
-      return pro ? { price: pro.price, days: pro.days, daily: pro.daily, treasury: pro.treasury, memo: uid ? 'gameplay:' + proId(uid) : null } : null;
+      return pro ? { price: pro.price, days: pro.days, daily: pro.daily, dailyEdits: pro.dailyEdits, treasury: pro.treasury, memo: uid ? 'gameplay:' + proId(uid) : null } : null;
     },
     /* Checks a Pro payment on Solana and extends the account's pass. */
     async claim(uid, sig) {

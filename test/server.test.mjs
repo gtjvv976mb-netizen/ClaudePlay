@@ -77,14 +77,17 @@ const s3 = await L.take('a', 2);
 ok(!s3.ok && s3.code === 'daily_limit', 'daily build limit');
 await s2.refund(); await s2.refund();
 ok((await L.used('a')) === 1, 'refund gives a build back, once');
-const T = limiter({ maxActive: 5, total: 2 });
-(await T.take('x', 5)).release(); const ty = await T.take('y', 5); ty.release();
-const t3 = await T.take('z', 5);
+const T = limiter({ maxActive: 5 });
+const cap2 = { total: 2 };
+(await T.take('x', 5, cap2)).release(); const ty = await T.take('y', 5, cap2); ty.release();
+const t3 = await T.take('z', 5, cap2);
 ok(!t3.ok && t3.code === 'daily_limit' && t3.message.includes('this site'), 'site-wide daily cap');
-const tp = await T.take('p', 5, { site: false }); tp.release();
+const tp = await T.take('p', 5); tp.release();
 ok(tp.ok, 'Pro builds do not count toward the free site-wide cap');
+const te = await T.take('z', 5, { bucket: 'edit', total: 2 }); te.release();
+ok(te.ok && (await T.used('z', 'edit')) === 1 && (await T.used('z')) === 0, 'changes are counted apart from new games');
 await ty.refund();
-ok((await T.take('z', 5)).ok, 'refund frees a site-wide build');
+ok((await T.take('z', 5, cap2)).ok, 'refund frees a site-wide build');
 
 // --- HTTP: without a key
 {
@@ -101,9 +104,9 @@ ok((await T.take('z', 5)).ok, 'refund frees a site-wide build');
 // --- HTTP: with a fake client
 {
   const { client, calls } = fakeClient();
-  const { server, base } = await start({ client, daily: 3, trustProxy: true, models: { free: 'claude-sonnet-5-5' } });
+  const { server, base } = await start({ client, daily: 2, trustProxy: true, models: { free: 'claude-sonnet-5-5' } });
   const viaProxy = await (await fetch(base + '/api/status', { headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' } })).json();
-  ok(viaProxy.left === 3, 'behind a proxy each visitor is counted by the first forwarded address');
+  ok(viaProxy.left === 2 && viaProxy.edits.left === 20, 'behind a proxy each visitor is counted by the first forwarded address');
   const html = await (await fetch(base + '/')).text();
   ok(html.includes('"ai":"api/build"'), 'index.html tells the page where to build');
   ok((await fetch(base + '/README.md')).status === 200, 'serves other site files');
@@ -116,7 +119,7 @@ ok((await T.take('z', 5)).ok, 'refund frees a site-wide build');
   const text = lines.filter((l) => l.t === 'text').map((l) => l.d).join('');
   const done = lines.find((l) => l.t === 'done');
   ok(text === GAME, 'streamed text is the whole game');
-  ok(done && done.truncated === false && done.model === 'claude-sonnet-5-5' && done.left === 2, 'done line reports model and builds left');
+  ok(done && done.truncated === false && done.model === 'claude-sonnet-5-5' && done.left === 1, 'done line reports model and builds left');
   ok(calls[0].params.model === 'claude-sonnet-5-5' && calls[0].params.messages[0].content.includes('Block Miner'), 'new build sent to the free model with the idea');
 
   const r2 = await post(base, { kind: 'edit', prompt: 'add a double jump', code: GAME });
@@ -127,13 +130,13 @@ ok((await T.take('z', 5)).ok, 'refund frees a site-wide build');
   ok(bad.status === 400 && (await bad.json()).code === 'bad_request', 'invalid build request is 400');
   const notJson = await post(base, '{nope');
   ok(notJson.status === 400, 'non-JSON body is 400');
-  const huge = await post(base, { kind: 'edit', prompt: 'x', code: '<html>' + 'y'.repeat(120000) });
+  const huge = await post(base, { kind: 'edit', prompt: 'x', code: '<html>' + 'y'.repeat(300000) });
   ok(huge.status === 413, 'oversized body is 413');
 
   const r3 = await post(base, { kind: 'new', prompt: 'third' }); await readLines(r3);
   const r4 = await post(base, { kind: 'new', prompt: 'fourth' });
   const j4 = await r4.json();
-  ok(r4.status === 429 && j4.code === 'daily_limit', 'fourth build of the day is refused: ' + j4.message);
+  ok(r4.status === 429 && j4.code === 'daily_limit', 'third new game of the day is refused (changes count apart): ' + j4.message);
   const st = await (await fetch(base + '/api/status')).json();
   ok(st.ai === true && st.left === 0 && st.plan === 'free' && st.pro === null && st.models.new === 'claude-sonnet-5-5', 'status reports AI on, the free plan and builds left');
   server.close();
@@ -166,7 +169,7 @@ ok((await T.take('z', 5)).ok, 'refund frees a site-wide build');
   await new Promise((res) => setTimeout(res, 200));
   ok(slow.calls[0].options.signal.aborted, 'closing the page cancels the Claude request');
   const st = await (await fetch(base + '/api/status')).json();
-  ok(st.left === 3, 'a cancelled build is not counted');
+  ok(st.left === 2, 'a cancelled build is not counted');
   server.close();
 }
 
@@ -267,7 +270,9 @@ redis.close();
   let st = await status(A);
   ok(st.plan === 'free' && st.daily === 1 && st.pro.price === 1e8 && st.pro.treasury === T && st.pro.memo === 'gameplay:' + proId(uidOf(A)), 'status offers Pro with this account’s memo');
   let lines = await readLines(await post(base, { kind: 'new', prompt: 'free one' }, { 'x-gp-key': A }));
-  ok(calls[0].params.model === 'claude-haiku-5-5' && lines.find((l) => l.t === 'done').plan === 'free', 'free builds use Haiku 5.5');
+  ok(calls[0].params.model === 'claude-sonnet-5-5' && lines.find((l) => l.t === 'done').plan === 'free', 'free new games use Sonnet 5.5');
+  await readLines(await post(base, { kind: 'edit', prompt: 'free edit', code: GAME }, { 'x-gp-key': A }));
+  ok(calls[1].params.model === 'claude-haiku-5-5', 'free changes use Haiku 5.5');
   const best = await post(base, { kind: 'new', prompt: 'best', tier: 'complex' }, { 'x-gp-key': B });
   ok(best.status === 402 && (await best.json()).code === 'pro_required', 'best builds need Pro when Pro is offered');
   const over = await post(base, { kind: 'new', prompt: 'second' }, { 'x-gp-key': A });
@@ -298,6 +303,7 @@ redis.close();
   ok(calls[calls.length - 1].params.model === 'claude-sonnet-5-5' && lines.find((l) => l.t === 'done').plan === 'pro', 'Pro builds use Sonnet 5.5, past the free limit');
   await readLines(await post(base, { kind: 'edit', prompt: 'pro edit', code: GAME }, { 'x-gp-key': A }));
   ok(calls[calls.length - 1].params.model === 'claude-haiku-5-5', 'Pro changes use the edit model');
+  await readLines(await post(base, { kind: 'new', prompt: 'pro two' }, { 'x-gp-key': A }));
   ok((await post(base, { kind: 'new', prompt: 'pro three' }, { 'x-gp-key': A })).status === 429, 'Pro has its own daily limit');
   const sig2 = await pay(st.pro.memo, 1e8 + 1);
   const j3 = await (await claim(A, sig2)).json();

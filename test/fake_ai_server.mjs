@@ -25,15 +25,31 @@ x.fillStyle='#ffd84d';x.font='24px sans-serif';x.fillText(state==='title'?'BLOCK
 SP.ready();requestAnimationFrame(loop);
 </scr` + `ipt></body></html>`;
 
+// A tiny 3D game on SP3D, streamed when the creator picks 3D.
+const GAME3D = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Cube Dash 3D</title>
+<meta name="description" content="Steer a cube down a 3D track.">
+<meta name="gameplay-genre" content="Racing">
+<meta name="gameplay-controls" content="Tap to start, drag to steer">
+</head><body>
+<scr` + `ipt>
+const g=SP3D.create({background:'#1a2240',fog:{near:20,far:60}});g.camera.y=5;g.camera.z=9;
+g.add('plane',{sx:30,sz:200,color:'#2e8b57'});const p=g.add('box',{y:0.5,color:'#ffd84d',shadow:true});
+let score=0,state='title';SP.ready();addEventListener('pointerdown',()=>{if(state!=='play'){state='play';score=0}SP.input('tap')});
+g.start((dt)=>{p.ry+=dt;if(state==='play'){score++;SP.score(score);if(score>90){state='over';SP.gameOver(score)}}
+g.hud.fillStyle='#fff';g.hud.font='20px sans-serif';g.hud.fillText(state==='play'?'SCORE '+score:'CUBE DASH 3D - tap',16,32);window.__frames=(window.__frames||0)+1});
+</scr` + `ipt></body></html>`;
+
 const calls = [];
 const client = { beta: { messages: { stream(params, options) {
   calls.push({ model: params.model, task: params.messages[0].content.slice(0, 200), system: params.system[0].text.slice(0, 60) });
   return {
     async *[Symbol.asyncIterator]() {
-      for (let i = 0; i < GAME.length; i += 300) {
+      const doc = params.messages[0].content.includes('Game type: 3D') ? GAME3D : GAME;
+      for (let i = 0; i < doc.length; i += 300) {
         await new Promise((r) => setTimeout(r, 10));
         if (options.signal.aborted) throw new Error('aborted');
-        yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: GAME.slice(i, i + 300) } };
+        yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: doc.slice(i, i + 300) } };
       }
     },
     async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { output_tokens: 1 } }; },

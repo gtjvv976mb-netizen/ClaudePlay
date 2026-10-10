@@ -442,9 +442,9 @@ async def scenario_server(browser):
         await page.wait_for_selector('#st-screen iframe', timeout=5000)
         check(await page.input_value('#pub-title') == 'Block Miner', 'game title read from the built file')
         calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
-        check(len(calls) == 1 and calls[0]['model'] == 'claude-haiku-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nBlock Miner'), 'free plan sent the idea to Haiku 5.5: ' + json.dumps(calls)[:160])
+        check(len(calls) == 1 and calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nBlock Miner'), 'free plan sent the new game idea to Sonnet 5.5: ' + json.dumps(calls)[:160])
         plan = await page.locator('#st-plan').inner_text()
-        check('Free plan' in plan and 'Claude Haiku 5.5' in plan and 'Get Pro' not in plan, 'studio shows the free plan, with no Pro offer without Solana payments: ' + plan)
+        check('Free plan' in plan and 'Claude Sonnet 5.5' in plan and 'Get Pro' not in plan, 'studio shows the free plan, with no Pro offer without Solana payments: ' + plan)
         await page.screenshot(path=f'{OUT}/30-server-ai.png', full_page=True)
         await page.fill('#st-prompt', 'Make the blocks glow.')
         await page.click('button[data-act="gen-edit"]')
@@ -477,6 +477,22 @@ async def scenario_server(browser):
         real2 = [e for e in errs2 if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real2, 'no console/page errors for the second visitor ' + str(real2[:5]))
         await ctx2.close()
+        # Guided start: pick 3D and a genre, and the game runs on the built-in 3D engine.
+        await page.goto(AI_SITE + '#create')
+        await page.wait_for_selector('button[data-act="dim"][data-dim="3d"]', timeout=10000)
+        await page.click('button[data-act="dim"][data-dim="3d"]')
+        await page.select_option('#st-genre', 'Racing')
+        await page.fill('#st-prompt', 'Steer a cube down a neon track.')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_selector('.toast:has-text("Built Cube Dash 3D")', timeout=20000)
+        calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
+        check('Game type: 3D' in calls[-1]['task'] and 'Genre: Racing' in calls[-1]['task'], 'the 3D and genre picks reach Claude: ' + calls[-1]['task'][-80:])
+        await page.wait_for_selector('#st-screen iframe', timeout=5000)
+        await page.wait_for_timeout(1500)
+        frame = next(f for f in page.frames if f != page.main_frame)
+        frames = await frame.evaluate('window.__frames || 0')
+        check(frames > 10 and await frame.evaluate('!!window.SP3D'), f'the 3D game renders with SP3D ({frames} frames)')
+        await page.screenshot(path=f'{OUT}/35-studio-3d.png')
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real, 'no console/page errors with the ClaudePlay server ' + str(real[:5]))
         await ctx.close()
@@ -604,7 +620,7 @@ async def scenario_a11y(browser):
 async def main():
     async with async_playwright() as p:
         exe = os.environ.get('CHROME_PATH')
-        browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required'])
+        browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader'])
         only = os.environ.get('E2E_ONLY', '').split(',')
         for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_mainnet, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
