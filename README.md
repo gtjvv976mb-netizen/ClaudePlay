@@ -48,7 +48,7 @@ The front page and the studio offer crypto game ideas (Block Miner, Rug Pull Run
 
 Set `GP_SOLANA_CLUSTER` (`devnet` in `render.yaml`) and `GP_TREASURY` (a wallet address, never a secret key), and collects and tips become real Solana transfers. The player's wallet pays the creator, the remix lineage and the treasury directly in one transaction; GamePlay never holds funds and the server holds no private key. Every page checks each payment on Solana before it counts. On devnet, the Wallet page has a faucet for free test SOL. Optional: `GP_SOLANA_RPC` for your own RPC endpoint.
 
-Mainnet (real money) refuses to start unless `GP_ALLOW_MAINNET=yes` is also set. Do that only after the owner checklist in [SECURITY.md](SECURITY.md): your own fee wallet, an independent security audit, a legal opinion and moderation.
+Mainnet (real money) refuses to start unless `GP_ALLOW_MAINNET=yes` and your own RPC endpoint in `GP_SOLANA_RPC` are also set. On mainnet, players pay and creators publish from a wallet app (Phantom, Solflare or Backpack), never from a key kept in the browser. Do that only after the owner checklist in [SECURITY.md](SECURITY.md): your own fee wallet, an independent security audit, a legal opinion and moderation.
 
 ## Work on it with Claude Code
 

@@ -2454,9 +2454,17 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
   /* Collect or tip: check the action first with a stand-in payment, pay on Solana, then record it.
      A payment whose ledger entry was not saved yet is kept in this browser and retried on the next visit. */
+  /* The kind each account declared for a wallet ('embedded' keys live in one browser's storage). */
+  function walletKind(addr) {
+    for (const d of S.accounts.values()) if (d && d.wallets && d.wallets[addr]) return d.wallets[addr].kind;
+    const mine = S.localAccount && S.localAccount.wallets && S.localAccount.wallets[addr];
+    return mine ? mine.kind : null;
+  }
   async function payAndAppend(type, body, transfers) {
     if (!CHAIN) return signAndAppend(type, body);
     if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Real SOL is paid from your own wallet app. Connect Phantom, Solflare or Backpack in Wallet.');
+    // Real SOL sent to a key kept in someone's browser storage is lost if they clear it.
+    if (MAINNET && transfers.some((t) => t.amt > 0 && t.to !== C.TREASURY && walletKind(t.to) === 'embedded')) throw new Error('This creator has not connected a wallet app, so they cannot receive real SOL yet.');
     const id = C.randHex(8), stand = '1'.repeat(64), from = S.wallet.from;
     const dry = { treasury: CHAIN.treasury, lookup: async (sigs) => {
       const m = await chainLookup(sigs.filter((s) => s !== stand));
@@ -2472,7 +2480,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     await waitConfirmed(sig);
     const out = await signAndAppend(type, Object.assign({}, body, { chain: sig }), { id });
     LS.set(KEY.pending, (LS.get(KEY.pending) || []).filter((p) => p.id !== id));
-    loadChainBal();
+    await loadChainBal();
     return out;
   }
   async function chainAirdrop() {
@@ -2697,7 +2705,9 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       : 'Running on this device only: your key, games and scores stay in this browser';
     return '<footer class="foot"><div class="foot-main"><b class="foot-mark">GAMEPLAY</b>'
       + '<p>An independent game maker on Solana. Not affiliated with Google or Google Labs Playground.</p>'
-      + '<p>Devnet preview: transactions use real Ed25519 signatures on a simulated Solana ledger, and no real funds move. GPLY is a working name and is not for sale.</p></div>'
+      + '<p>' + (MAINNET ? 'Collects and tips are real SOL on Solana mainnet, paid from your own wallet app straight to creators. GamePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.'
+        : CHAIN ? 'Devnet: collects and tips are real Solana devnet transactions paid with free test SOL, so no real funds move. GPLY is a working name and is not for sale.'
+        : 'Devnet preview: transactions use real Ed25519 signatures on a simulated Solana ledger, and no real funds move. GPLY is a working name and is not for sale.') + '</p></div>'
       + '<nav class="foot-links" aria-label="Footer"><a href="#explore" data-nav="explore">Play</a><a href="#create" data-nav="create">Make</a><a href="#business" data-nav="business">For business</a><a href="#economy" data-nav="economy">Economy</a>'
       + (BLUEPRINT_URL && ENV === 'claude' ? '<a href="' + esc(BLUEPRINT_URL) + '" target="_blank" rel="noopener">Read the blueprint</a>' : '')
       + '<button class="linkish" type="button" data-act="settings">Accessibility settings</button></nav>'
@@ -2793,7 +2803,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   const FAQ = [
     ['Is GamePlay free?', 'Yes. Playing, making and publishing are free. Every week you get ' + R.WEEKLY_SPARKS + ' Sparks for AI builds, and you earn ' + R.SPARKS_PER_PLAYER + ' more for each new player who tries one of your games.'],
     ['Do I need a crypto wallet?', 'No. The first time you score or publish, GamePlay creates a wallet key in your browser. You can connect Phantom, Solflare or Backpack later, or export the key from Wallet.'],
-    ['Is this real money?', 'Not yet. This preview runs on Solana devnet, so SOL balances are test tokens. GPLY is the working name of a future reward token. Nothing is for sale and there is no presale.'],
+    MAINNET ? ['Is this real money?', 'Yes. Collects and tips are paid in real SOL from your own wallet app, straight to the creator, the remix creators and a 5% protocol fee. GamePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.']
+      : ['Is this real money?', 'Not yet. This preview runs on Solana devnet, so SOL balances are test tokens. GPLY is the working name of a future reward token. Nothing is for sale and there is no presale.'],
     ['Who can use it?', 'Anyone with a modern browser, in any country. When real-money features arrive they will follow local rules, including age checks where the law requires them.'],
     ['Is GamePlay made by Google?', 'No. GamePlay is an independent project. It is not affiliated with Google or with Google Labs Playground.'],
     ['Can I keep my game?', 'Yes. Every game is one HTML file. Download it from its page and it plays offline in any browser, with no GamePlay account.'],
@@ -2834,7 +2845,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<p class="lede">GamePlay lets anyone make a browser game in minutes, share it with a link, and earn when people play, collect or remix it. There is nothing to install, no sign-up, and it runs on any phone.</p>'
       + '<div class="row cta"><a class="btn primary big" href="#explore" data-nav="explore">' + I.play + ' Play a game</a><a class="btn big" href="#create" data-nav="create">Make a game</a></div>'
       + '<ul class="ticks"><li>Free to play and make</li><li>No sign-up or wallet needed</li><li>Phone, tablet or computer</li><li>Keyboard, touch and assist mode</li></ul>'
-      + '<p class="fine">Preview on Solana devnet: balances are test tokens and nothing is for sale.</p></div>'
+      + '<p class="fine">' + (MAINNET ? 'Collects and tips are paid in real SOL from your own wallet. Playing and making games is free.' : 'Preview on Solana devnet: balances are test tokens and nothing is for sale.') + '</p></div>'
       + '<figure class="console"><div class="console-bar"><span class="led" aria-hidden="true"></span><span>Now playing</span><span class="serial">' + serial(hero ? hero.hash : '') + '</span></div>'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
       + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure></section>'
@@ -2846,7 +2857,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<div><b>1 file</b><span>is a whole game, so you can keep it forever</span></div></section>'
 
       + '<section class="section" aria-labelledby="h-crypto"><div class="section-head"><h2 id="h-crypto">Make a crypto game from one sentence</h2><a href="#create" data-nav="create">Open the AI studio</a></div>'
-      + '<p class="muted">Describe it in plain words and Claude builds the whole game, ready to play, publish on Solana devnet and share. Start from one of these:</p>'
+      + '<p class="muted">Describe it in plain words and Claude builds the whole game, ready to play, publish on Solana' + (MAINNET ? '' : ' devnet') + ' and share. Start from one of these:</p>'
       + '<div class="row">' + CRYPTO_IDEAS.map((t) => '<button class="btn small" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></section>'
 
       + '<section class="section" aria-labelledby="h-carts"><div class="section-head"><h2 id="h-carts">Pick a cartridge</h2><a href="#explore" data-nav="explore">See the whole arcade</a></div>'
@@ -2876,7 +2887,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<li><b>Remix royalties</b><span>' + pct(R.PARENT_BPS) + ' of a remix’s collects goes to the original creator and ' + pct(R.GRAND_BPS) + ' to the one before.</span></li>'
       + '<li><b>Weekly rewards</b><span>' + Math.round(R.CREATOR_SHARE * 100) + '% of each week’s GPLY goes to creators, by unique players. ' + Math.round(R.PLAYER_SHARE * 100) + '% goes to players, by leaderboard places.</span></li>'
       + '<li><b>Sparks</b><span>' + R.SPARKS_PER_PLAYER + ' Sparks for each new player of your game, up to ' + R.SPARKS_PLAYER_CAP + ' players per game.</span></li>'
-      + '</ul></div><p class="fine">On devnet these are test balances. Real payouts start at mainnet beta, after a security audit.</p></section>'
+      + '</ul></div><p class="fine">' + (MAINNET ? 'Collects, tips and royalties are paid in real SOL straight to your wallet. GPLY rewards are points with no cash value.' : 'On devnet these are test balances. Real payouts start at mainnet beta, after a security audit.') + '</p></section>'
 
       + '<section class="section" aria-labelledby="h-compare"><div class="section-head"><h2 id="h-compare">GamePlay and Google Labs Playground</h2></div>'
       + '<p class="muted">Google Labs launched Playground on October 7, 2026. Here is how the two compare.</p>'
@@ -3306,6 +3317,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const price = Math.round(Math.max(0, Math.min(100, Number(st.price) || 0)) * 1e4) / 1e4;
     const cap = Math.max(0, Math.floor(Number(st.cap) || 0));
     await ensureWallet();
+    if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Connect your wallet app (Phantom, Solflare or Backpack) in Wallet before publishing, so collects and tips reach a wallet you control.');
     const hash = await C.sha256hex(code);
     const gid = 'g' + C.randHex(8);
     await putBlob(hash, code);
@@ -3552,6 +3564,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     'collect': async (el) => {
       const g = gameOf(el); if (!g) return;
       await ensureWallet();
+      await loadChainBal();
       const w = myWallet();
       const splits = C.collectSplits(g.price, g, S.world.games);
       const short_ = solOf(w) < g.price;
@@ -3573,6 +3586,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     'tip': async (el) => {
       const g = gameOf(el); if (!g) return;
       await ensureWallet();
+      await loadChainBal();
       const w = myWallet();
       modal('<h2>Tip ' + esc(nameOf(g.creator)) + '</h2><p>Tips go 100% to the creator of ' + esc(g.title) + '. You have ' + fmtSOL(solOf(w)) + ' ' + UNIT + '.</p><div class="row">'
         + [0.01, 0.05, 0.1, 0.25].map((a) => '<button class="btn" type="button" data-act="confirm-tip" data-gid="' + esc(g.gid) + '" data-amt="' + a + '"' + (solOf(w) < a * C.LAMPORTS ? ' disabled' : '') + '>' + a + ' SOL</button>').join('')

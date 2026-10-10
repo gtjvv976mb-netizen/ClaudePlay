@@ -3,7 +3,7 @@
 // reports their status and reads them back so every page can check them before they count.
 //
 //   GP_SOLANA_CLUSTER    devnet | testnet | mainnet-beta (unset: the simulated play-money ledger)
-//   GP_SOLANA_RPC        RPC URL (defaults to the public endpoint for the cluster)
+//   GP_SOLANA_RPC        RPC URL (defaults to the public endpoint for the cluster; required on mainnet)
 //   GP_TREASURY          public address that receives the 5% protocol fee (never a private key)
 //   GP_ALLOW_MAINNET     must be "yes" before mainnet-beta starts: real money moves
 await import('../src/core.js');
@@ -23,6 +23,8 @@ export function chainConfig(env, warn = () => {}) {
   if (!env.GP_TREASURY && cluster !== 'mainnet-beta') { warn('GP_TREASURY is not set, so payments use the simulated ledger. Set it to a wallet address you control to turn on real ' + cluster + ' payments.'); return null; }
   if (!SOL.isAddress(env.GP_TREASURY || '')) throw new Error('GP_TREASURY must be the public address of a wallet you control (it receives the protocol fee)');
   if (cluster === 'mainnet-beta' && env.GP_ALLOW_MAINNET !== 'yes') throw new Error('Mainnet moves real money. Set GP_ALLOW_MAINNET=yes only after the security review, legal check and owner sign-off in SECURITY.md');
+  // The public mainnet endpoint rate-limits and often refuses to relay transactions from servers.
+  if (cluster === 'mainnet-beta' && !env.GP_SOLANA_RPC) throw new Error('Mainnet needs your own RPC endpoint in GP_SOLANA_RPC (a free Helius, QuickNode or Alchemy plan works); the public one is too limited for payments');
   return { cluster, treasury: env.GP_TREASURY, rpcUrl: env.GP_SOLANA_RPC || PUBLIC_RPC[cluster] };
 }
 

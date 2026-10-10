@@ -5,6 +5,7 @@ BASE = 'http://127.0.0.1:8765/local.html'
 SITE = 'http://127.0.0.1:8765/site/index.html'
 AI_SITE = 'http://127.0.0.1:8766/'
 CHAIN_SITE = 'http://127.0.0.1:8767/'
+MAIN_SITE = 'http://127.0.0.1:8768/'
 OUT = sys.argv[1] if len(sys.argv) > 1 else '/tmp/shots'
 os.makedirs(OUT, exist_ok=True)
 MOCK = open(os.path.join(os.path.dirname(__file__), 'mock_claude.js')).read()
@@ -514,7 +515,11 @@ async def scenario_chain(browser):
         frame = next(f for f in page2.frames if f != page2.main_frame)
         res = await frame.evaluate("fetch('" + CHAIN_SITE + "api/status').then(() => 'reached', () => 'blocked')")
         check(res == 'blocked', 'a game cannot reach the network (' + res + ')')
+        # The page re-renders once the collect is recorded; open the tip dialog after that.
+        await page2.wait_for_selector('text=You own edition', timeout=10000)
+        await page2.wait_for_timeout(500)
         await page2.click('button[data-act="tip"]')
+        await page2.wait_for_selector('button[data-act="confirm-tip"][data-amt="0.01"]:enabled', timeout=10000)
         await page2.click('button[data-act="confirm-tip"][data-amt="0.01"]')
         await page2.wait_for_selector('.toast:has-text("Tipped")', timeout=20000)
         c = chain()
@@ -533,6 +538,37 @@ async def scenario_chain(browser):
         real = [e for e in errs + errs2 if 'fonts.g' not in e and 'ERR_FAILED' not in e and 'Content Security Policy' not in e]
         check(not real, 'no console/page errors on the devnet site ' + str(real[:5]))
         await ctx2.close(); await ctx.close()
+    finally:
+        proc.terminate()
+
+async def scenario_mainnet(browser):
+    # Mainnet (real SOL): the page says so, and keys kept in a browser can neither pay nor receive.
+    proc = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), '8768', 'mainnet'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        for _ in range(50):
+            try: urllib.request.urlopen(MAIN_SITE + 'api/status', timeout=1); break
+            except Exception: time.sleep(0.1)
+        ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page.goto(MAIN_SITE)
+        await page.wait_for_selector('.foot', timeout=15000)
+        foot = await page.locator('.foot').inner_text()
+        check('real SOL on Solana mainnet' in foot and 'no real funds move' not in foot, 'mainnet site says payments are real SOL')
+        check('test tokens' not in await page.locator('#view').inner_text(), 'mainnet site never calls balances test tokens')
+        await page.goto(MAIN_SITE + '#create')
+        await page.wait_for_selector('#st-prompt', timeout=15000)
+        await page.fill('#st-prompt', 'Block Miner: tap to fill blocks before gas runs out.')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_selector('.toast:has-text("Built")', timeout=20000)
+        await page.click('button[data-act="publish"]')
+        await page.wait_for_selector('.toast:has-text("Connect your wallet app")', timeout=8000)
+        check(True, 'publishing from a browser-kept key is refused on mainnet')
+        await page.goto(MAIN_SITE + '#wallet')
+        await page.wait_for_selector('.panel.balance', timeout=10000)
+        txt = await page.locator('.panel.balance').first.inner_text()
+        check(txt.startswith('SOL') and await page.locator('button[data-act="airdrop"]').count() == 0, 'mainnet wallet shows SOL and no faucet: ' + txt.replace('\n', ' ')[:80])
+        real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e and 'Connect your wallet app' not in e]
+        check(not real, 'no console/page errors on the mainnet site ' + str(real[:5]))
+        await ctx.close()
     finally:
         proc.terminate()
 
@@ -556,7 +592,7 @@ async def main():
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required'])
         only = os.environ.get('E2E_ONLY', '').split(',')
-        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_a11y):
+        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_mainnet, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
             try:
                 await sc(browser)
