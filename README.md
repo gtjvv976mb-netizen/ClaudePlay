@@ -28,6 +28,8 @@ A static host (like GitHub Pages) serves the site with the AI studio off, and ea
 3. When the deploy finishes, open the `onrender.com` link Render shows. Build a game from one of the crypto ideas to check it works.
 4. In the service's *Logs*, find the line `Owner link (keep it private)`. Open your site with that `?admin=…` ending once, in your own browser: that browser can then settle the weekly rewards (Economy page) and delist games.
 
+**Your own domain.** `render.yaml` lists `claudeplay.si` (change it to yours). At your registrar, add an `A` record for `@` pointing to `216.24.57.1` and a `CNAME` record for `www` pointing to your service's `onrender.com` address, and delete any `AAAA` records. Then click *Verify* next to the domain in the service's *Settings → Custom Domains*. Render issues the HTTPS certificate itself.
+
 `render.yaml` uses Render's Starter instance with a 1 GB disk for the gallery (Render shows the price before you confirm; a disk needs a paid instance). For a free trial, set `plan: free` and remove the `disk` block: everything works, but published games reset on every deploy or restart. It also sets 12 AI builds per visitor per day and 300 for the whole site, so a public link can't run up your bill; change those in the *Environment* tab. The button needs this repository to be public; for a private one, use *New → Blueprint* in the Render dashboard and pick the repository.
 
 ### Anywhere else
