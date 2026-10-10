@@ -1029,12 +1029,11 @@
     const community = w ? [...w.games.values()].filter((g) => !g.starter && !g.delisted).sort((a, b) => (b.players.size - a.players.size) || (b.ts - a.ts)).slice(0, 3) : [];
     return community.concat(startersList()).slice(0, 8).map(cartHTML).join('');
   }
-  // The front page is one screen: the pack card holds the prompt, the playable game and a strip of stickers.
+  // The front page is one screen over the background game: the copy card with the prompt, the playable console and a rail of games.
   function homeHTML() {
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
     const st = S.studio || {};
     const dim = st.dim || '2d';
-    const peeks = S.starters.filter((x) => x.gid !== 'kit-neon-dash').slice(0, 3);
     const tags = [['GG', 'ta'], ['+1 SOL', 'tb'], ['New best!', 'tc']];
     return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy">'
       + '<h1 class="hero-title" id="hero-title"><span>Make it.</span> <span>Play it.</span> <span class="hl">Own it.</span></h1>'
@@ -1044,13 +1043,13 @@
       + '<div class="maker-bar"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + (dim === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
       + '<button class="btn primary" type="submit">' + I.spark + (aiReady() ? ' Build it' : ' Open the studio') + '</button></div></div>'
       + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or try</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form></div>'
-      + '<div class="stage3d">' + peeks.map((x, i) => '<span class="sticker peek peek-' + 'abc'[i] + '" aria-hidden="true"><img src="' + K.cover(Object.assign({ creator: C.STARTER }, x)) + '" alt="" width="480" height="300"></span>').join('')
+      + '<div class="stage3d">'
       + tags.map(([t, k]) => '<span class="tag-sticker ' + k + '" aria-hidden="true">' + t + '</span>').join('')
       + '<figure class="console" id="home-console">'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
       + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure>'
       + '<img class="mascot" id="home-mascot" src="' + MASCOT + '" alt="" width="370" height="403" decoding="async"></div>'
-      + '<div class="pack-shelf"><div class="pack-shelf-head"><h2 id="h-carts">Peel one off and play</h2><a href="#explore" data-nav="explore">See every game</a></div>'
+      + '<div class="pack-shelf"><div class="pack-shelf-head"><h2 id="h-carts">Pick a game</h2><a href="#explore" data-nav="explore">See every game</a></div>'
       + '<div class="shelf" id="home-shelf">' + homeShelf() + '</div></div></section>';
   }
   function mountHome() {
@@ -1091,13 +1090,15 @@
     });
     pack.addEventListener('pointerleave', () => { x = y = 0; if (!raf) raf = requestAnimationFrame(put); });
   }
-  // Stickers on a sheet slap down in turn the first time they scroll into view.
+  // Game tiles rise in turn the first time they scroll into view.
   function revealShelf(root) {
     if (!root || calmNow() || !('IntersectionObserver' in window)) return;
     const io = new IntersectionObserver((list) => list.forEach((e) => {
       if (!e.isIntersecting) return;
       io.unobserve(e.target);
-      e.target.style.setProperty('--i', String([...e.target.parentElement.children].indexOf(e.target) % 8));
+      const row = e.target.parentElement;
+      if (!row) return;
+      e.target.style.setProperty('--i', String([...row.children].indexOf(e.target) % 8));
       e.target.classList.add('in');
     }), { rootMargin: '0px 0px -8% 0px' });
     [...root.children].forEach((c) => io.observe(c));
@@ -1131,7 +1132,7 @@
       const css = getComputedStyle(document.documentElement);
       const c = (n) => { const m = css.getPropertyValue(n).trim().match(/^#([0-9a-f]{6})$/i); const v = m ? parseInt(m[1], 16) : 0x808080; return [(v >> 16 & 255) / 255, (v >> 8 & 255) / 255, (v & 255) / 255]; };
       P = { sky: c('--w-sky'), haze: c('--w-haze'), floor: c('--w-floor'), grid: c('--w-grid'), sunA: c('--w-sun'), sunB: c('--w-sun-2'),
-        coin: c('--w-coin'), hot: c('--w-hot'), cool: c('--w-cool'), pop: c('--w-pop'), ship: c('--pack'), die: c('--die') };
+        coin: c('--w-coin'), hot: c('--w-hot'), cool: c('--w-cool'), pop: c('--w-pop'), ship: c('--w-ship'), die: c('--w-glow') };
       const l = 0.2126 * P.sky[0] + 0.7152 * P.sky[1] + 0.0722 * P.sky[2];
       P.dark = l < 0.3;
       P.blocks = [P.hot, P.pop, P.cool];
@@ -1353,7 +1354,7 @@
         else if (o.k === 'block' && !user && ship.y < 0.05 && o.z > -7.4 && o.z < -5.6 && Math.abs(o.x - ship.x) < 1.5) jump();
         else if (o.k === 'coin' && Math.abs(o.z) < 1 && Math.abs(o.x - ship.x) < 1.1 && Math.abs(o.y - (ship.y + 0.6)) < 1.2) grab(o);
       }
-      objs = objs.filter((o) => o.alive && o.z < ((o.k === 'coin' || o.k === 'block') ? 3 : 26));
+      objs = objs.filter((o) => o.alive && o.z < (o.k === 'coin' ? 1.5 : o.k === 'block' ? 3 : 26));
       // Engine trail and the dust that streams past.
       for (const s of [-0.36, 0.36]) spark(ship.x + s, ship.y + 0.42, 1.0, (rnd() - 0.5) * 0.8, (rnd() - 0.2) * 0.8, 2, 0.35 + rnd() * 0.25, boost > 0 ? P.coin : P.cool, 0.24, 0, 0.9);
       for (let i = 0; i < (boost > 0 ? 6 : 2); i++) spark((rnd() - 0.5) * 40, 0.4 + rnd() * 9, -90 - rnd() * 40, 0, 0, 0, 3, P.die, 0.12 + rnd() * 0.12, 0, 0.55);

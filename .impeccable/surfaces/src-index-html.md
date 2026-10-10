@@ -8,7 +8,11 @@ related_targets: ["src/app.js"]
 Scope: the whole site, front page first. Visitor mode: persuade (front page), operate (studio, wallet, ledger).
 Audience: phone players arriving from links; first-time makers, many from crypto communities.
 
-## Direction contract
+## Current direction (2026-10-10, replaces the sticker pack below)
+
+Night arcade, after the owner said he did not like the sticker-pack design and theme. See DESIGN.md: near-black ground (warm paper in light), Big Shoulders Display uppercase headings, solid hairline-bordered surfaces, one hot orange, the 3D background game on the front page.
+
+## Direction contract (superseded)
 
 THESIS: ClaudePlay is a sticker pack. Games are die-cut stickers you peel off a sheet, stick anywhere and trade. It refuses the dark neon gaming hero and the centred-headline-over-cards SaaS page.
 OWN-WORLD: cool liner-sheet ground with faint kiss-cut guides; one chartreuse pack colour that owns whole fields; stickers with thick white die-cut borders and soft lift shadows, a few degrees off straight; Dela Gothic One headlines, Atkinson Hyperlegible body; round-ended pill controls; no black outlines, no glows, no offset shadows.
