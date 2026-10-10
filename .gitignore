@@ -6,3 +6,4 @@ node_modules/
 /dist/playpark.html
 /dist/local.html
 data/
+.impeccable/questions/
