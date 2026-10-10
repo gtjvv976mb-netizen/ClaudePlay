@@ -1,0 +1,23 @@
+# One-click hosting on Render: https://render.com/deploy?repo=https://github.com/gtjvv976mb-netizen/GamePlay
+# Render asks for ANTHROPIC_API_KEY when you create the service; it is stored in Render, never in this repo.
+services:
+  - type: web
+    name: gameplay
+    runtime: node
+    plan: free
+    buildCommand: npm ci && node build.mjs
+    startCommand: npm start
+    healthCheckPath: /api/status
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: NODE_VERSION
+        value: "22"
+      # Render overwrites the first X-Forwarded-For entry with the real visitor address.
+      - key: GP_TRUST_PROXY
+        value: "1"
+      - key: GP_DAILY_BUILDS
+        value: "12"
+      # Builds per day across the whole site, so a public link cannot run up your API bill.
+      - key: GP_DAILY_TOTAL
+        value: "300"

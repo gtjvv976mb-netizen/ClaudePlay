@@ -30,6 +30,8 @@ jobs:
           GP_CONTACT: ${{ vars.GP_CONTACT }}
       - name: Unit tests
         run: node test/core.test.mjs
+      - name: AI server tests
+        run: node test/server.test.mjs
       - name: Check that GitHub Pages is set to deploy from Actions
         id: pages
         env:

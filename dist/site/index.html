@@ -1736,6 +1736,97 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
 
 </script>
 <script>
+/* GamePlay AI harness: the instructions that turn a plain-words idea into a game file.
+   Shared by the page (window.PPHarness) and the GamePlay server (server/server.mjs), so a
+   build asked through Claude and a build asked through the server follow the same rules. */
+(function (root) {
+  'use strict';
+
+  const HARNESS = [
+    'You are the game engine behind GamePlay, a browser game maker. Build a complete, polished, playable browser game as ONE self-contained HTML document.',
+    '',
+    'OUTPUT',
+    '- Reply with only the HTML document, starting with <!doctype html>. No markdown fences and no commentary.',
+    '- In <head> include: <title> (the game name, at most 32 characters), <meta name="description" content="one sentence, at most 140 characters">, <meta name="gameplay-genre" content="one or two words">, <meta name="gameplay-controls" content="short controls summary">.',
+    '',
+    'HARD RULES',
+    '- No external resources: no linked scripts or stylesheets, no CDNs, no web fonts, no image or audio files, no fetch/XHR/WebSocket, no localStorage or cookies, no alert/confirm/prompt, no iframes, no form submission.',
+    '- Draw with Canvas 2D (preferred) or DOM. Make all art procedurally: shapes, gradients, particles, simple drawn sprites. Sound is optional: Web Audio only, started after the first player input.',
+    '- Fill the whole viewport, handle window resize and devicePixelRatio, never show scrollbars.',
+    '- Support keyboard AND touch/pointer. On touch screens use taps, drags or on-screen buttons. Prevent page scrolling and zooming during play.',
+    '- Flow: title screen (game name + "Tap or press Space to start") -> play -> game over screen with the final score -> restart without reloading.',
+    '- Use the SDK that already exists as window.SP before your code runs:',
+    '  * SP.rand() returns a float in [0,1). Use it instead of Math.random() for anything that affects gameplay (it is seeded so runs can be replayed).',
+    '  * SP.score(n) whenever the score changes.',
+    '  * SP.gameOver(n) exactly once when a run ends, with the final score.',
+    '  * SP.ready() once when the title screen first shows.',
+    '  * SP.input(code) for each player action (for example "jump" or "left"), used for replay logs.',
+    '- Keep the document under 40 KB, with all JavaScript in one inline script at the end of the body, and no console errors.',
+    '',
+    'CRYPTO AND WEB3 GAMES',
+    '- Creators often ask for games about crypto: mining blocks, gas fees, wallets, tokens, NFTs, validators, bridges, airdrops, rug pulls. Turn those ideas into real arcade mechanics (for example blocks to stack, gas as a draining meter, tokens as pickups, a rug pull as a hazard).',
+    '- Everything crypto inside the game is make-believe: coins and tokens are points. Never ask for a seed phrase, private key or wallet connection, never show real token prices, contract addresses or links, and never add betting, wagering or pay-to-win.',
+    '- GamePlay already signs the final score on Solana devnet and handles collecting and tips outside the game, so the game only needs to report its score with SP.score and SP.gameOver.',
+    '',
+    'QUALITY BAR',
+    '- A clear goal, rising difficulty and a score that means something.',
+    '- Juicy feedback: particles, screen shake, flashes, short sound effects.',
+    '- A readable HUD and a cohesive palette that fits the requested style.',
+    '- Fair from the first second: no instant deaths, the player can always react.',
+  ].join('\n');
+
+  const KINDS = ['new', 'edit', 'fix'];
+  const STYLES = ['Neon arcade', 'Pixel art', 'Paper cutout', 'Pastel cozy', 'Monochrome ink'];
+  const LIMITS = { prompt: 2000, style: 40, code: 60000, error: 1000 };
+
+  /* The creator's part of a request, kept apart from HARNESS so a server can send HARNESS as a
+     cacheable system prompt. o: { prompt, style, code, error }. */
+  function harnessTask(kind, o) {
+    const style = o.style ? '\nArt style: ' + o.style : '';
+    if (kind === 'new') return 'GAME IDEA FROM THE CREATOR:\n' + o.prompt + style;
+    if (kind === 'edit') return 'You are editing an existing GamePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
+    return 'The current game crashed with this error:\n' + o.error + '\nFind the cause, fix it, and return the COMPLETE corrected document under the same rules. Change nothing else.\n\nCURRENT GAME:\n' + o.code;
+  }
+  function harnessPrompt(kind, o) { return HARNESS + '\n\n' + harnessTask(kind, o); }
+
+  /* Checks a build request from an untrusted client. Returns { ok, req } or { ok: false, error }. */
+  function checkRequest(body) {
+    const b = body && typeof body === 'object' ? body : {};
+    const str = (v) => (typeof v === 'string' ? v : '');
+    const kind = KINDS.includes(b.kind) ? b.kind : null;
+    if (!kind) return { ok: false, error: 'kind must be new, edit or fix' };
+    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default' };
+    for (const k of Object.keys(LIMITS)) if (req[k].length > LIMITS[k]) return { ok: false, error: k + ' is longer than ' + LIMITS[k] + ' characters' };
+    if (kind !== 'fix' && !req.prompt) return { ok: false, error: 'describe the game first' };
+    if (kind !== 'new' && !/<html|<!doctype/i.test(req.code)) return { ok: false, error: 'edit and fix need the current game' };
+    if (kind === 'fix' && !req.error) return { ok: false, error: 'fix needs the error message' };
+    if (kind === 'new') req.code = '';
+    return { ok: true, req };
+  }
+
+  const IDEAS = [
+    'A cozy café rush: serve matching drinks to customers before their patience runs out.',
+    'Lane-based tower defense with three tower types and waves of neon bugs.',
+    'Asteroid miner: drift with momentum, grab crystals, avoid debris, bank them at the station.',
+    'Top-down kart time trial on a looping track with boost pads and a ghost of your best lap.',
+    'Space trivia: multiple choice with a 10-second timer and streak bonuses.',
+    'Two-lane rhythm game: notes fall to a beat, tap left or right on time.',
+  ];
+  /* Crypto-themed starting points shown first in the AI studio. */
+  const CRYPTO_IDEAS = [
+    'Block Miner: stack falling transaction blocks into a full block before the gas meter runs dry. Clean rows mint bonus tokens.',
+    'Rug Pull Runner: sprint across a crumbling DeFi bridge, grab tokens and jump the rugs that get yanked out from under you.',
+    'Gas Fee Dodger: steer a tiny transaction through a busy mempool, dodge fee spikes and slip into the next block.',
+    'Validator Defense: guard the chain from waves of spam bots by placing validator towers that earn staking rewards.',
+    'NFT Gallery Heist: sneak through a pixel art gallery, collect rare frames and avoid the laser grid.',
+    'Whale Watch: a fishing game where you hook coins of different sizes, but snagging a whale shakes the whole market.',
+  ];
+
+  root.PPHarness = { HARNESS, KINDS, STYLES, LIMITS, IDEAS, CRYPTO_IDEAS, harnessTask, harnessPrompt, checkRequest };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
 /* GamePlay app: views, wallet, storage, players and the AI build harness. */
 (function () {
   'use strict';
@@ -2153,37 +2244,51 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
 
   /* ---------------- AI harness ---------------- */
-  const HARNESS = [
-    'You are the game engine behind GamePlay, a browser game maker. Build a complete, polished, playable browser game as ONE self-contained HTML document.',
-    '',
-    'OUTPUT',
-    '- Reply with only the HTML document, starting with <!doctype html>. No markdown fences and no commentary.',
-    '- In <head> include: <title> (the game name, at most 32 characters), <meta name="description" content="one sentence, at most 140 characters">, <meta name="gameplay-genre" content="one or two words">, <meta name="gameplay-controls" content="short controls summary">.',
-    '',
-    'HARD RULES',
-    '- No external resources: no linked scripts or stylesheets, no CDNs, no web fonts, no image or audio files, no fetch/XHR/WebSocket, no localStorage or cookies, no alert/confirm/prompt, no iframes, no form submission.',
-    '- Draw with Canvas 2D (preferred) or DOM. Make all art procedurally: shapes, gradients, particles, simple drawn sprites. Sound is optional: Web Audio only, started after the first player input.',
-    '- Fill the whole viewport, handle window resize and devicePixelRatio, never show scrollbars.',
-    '- Support keyboard AND touch/pointer. On touch screens use taps, drags or on-screen buttons. Prevent page scrolling and zooming during play.',
-    '- Flow: title screen (game name + "Tap or press Space to start") -> play -> game over screen with the final score -> restart without reloading.',
-    '- Use the SDK that already exists as window.SP before your code runs:',
-    '  * SP.rand() returns a float in [0,1). Use it instead of Math.random() for anything that affects gameplay (it is seeded so runs can be replayed).',
-    '  * SP.score(n) whenever the score changes.',
-    '  * SP.gameOver(n) exactly once when a run ends, with the final score.',
-    '  * SP.ready() once when the title screen first shows.',
-    '  * SP.input(code) for each player action (for example "jump" or "left"), used for replay logs.',
-    '- Keep the document under 40 KB, with all JavaScript in one inline script at the end of the body, and no console errors.',
-    '',
-    'QUALITY BAR',
-    '- A clear goal, rising difficulty and a score that means something.',
-    '- Juicy feedback: particles, screen shake, flashes, short sound effects.',
-    '- A readable HUD and a cohesive palette that fits the requested style.',
-    '- Fair from the first second: no instant deaths, the player can always react.',
-  ].join('\n');
-  function harnessPrompt(kind, o) {
-    if (kind === 'new') return HARNESS + '\n\nGAME IDEA FROM THE CREATOR:\n' + o.prompt + (o.style ? '\nArt style: ' + o.style : '');
-    if (kind === 'edit') return HARNESS + '\n\nYou are editing an existing GamePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + (o.style ? '\nArt style: ' + o.style : '') + '\n\nCURRENT GAME:\n' + o.code;
-    return HARNESS + '\n\nThe current game crashed with this error:\n' + o.error + '\nFind the cause, fix it, and return the COMPLETE corrected document under the same rules. Change nothing else.\n\nCURRENT GAME:\n' + o.code;
+  const H = window.PPHarness;
+  /* Where AI builds run: inside Claude, the viewer's own account (`sample`); on a website served
+     by server/server.mjs, that server (GP_SITE.ai is its build endpoint). */
+  const aiReady = () => (ENV === 'claude' ? !!S.caps.sample : !!SITE.ai);
+  function aiBuild(req, opts) {
+    if (ENV === 'claude') return S.caps.sample(H.harnessPrompt(req.kind, req), Object.assign({ cache: false, modelTier: req.tier }, opts));
+    return serverBuild(req, opts);
+  }
+  /* Streams a build from the GamePlay server: one JSON object per line ({t:'text'|'done'|'error'}). */
+  async function serverBuild(req, opts) {
+    const aborted = () => !!(opts.signal && opts.signal.aborted);
+    let res;
+    try {
+      res = await fetch(SITE.ai, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req), signal: opts.signal });
+    } catch (e) {
+      throw aborted() ? { code: 'cancelled' } : { code: 'offline', message: 'Could not reach the GamePlay server. Check your connection and try again.' };
+    }
+    if (!res.ok || !res.body) {
+      let j = {};
+      try { j = await res.json(); } catch (e) { /* not JSON */ }
+      throw { code: j.code || (res.status === 429 ? 'rate_limited' : 'failed'), message: j.message || 'The build failed (' + res.status + '). Try again.' };
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '', text = '', done = null;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buf += dec.decode(chunk.value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+          if (!line) continue;
+          const m = JSON.parse(line);
+          if (m.t === 'text') { text += m.d; if (opts.onText) opts.onText({ text, delta: m.d }); }
+          else if (m.t === 'done') done = m;
+          else if (m.t === 'error') throw { code: m.code || 'failed', message: m.message };
+        }
+      }
+    } catch (e) {
+      if (aborted()) throw { code: 'cancelled' };
+      throw e;
+    }
+    if (!done) throw { code: 'failed', message: 'The build stopped early. Try again.' };
+    return { text, truncated: !!done.truncated };
   }
   function extractHTML(text) {
     let t = String(text || '').trim();
@@ -2204,20 +2309,13 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       return { title: (d.title || '').trim().slice(0, 40), desc: m('description').slice(0, 200), genre: m('gameplay-genre').slice(0, 24), controls: m('gameplay-controls').slice(0, 140) };
     } catch (e) { return {}; }
   }
-  const STYLES = ['Neon arcade', 'Pixel art', 'Paper cutout', 'Pastel cozy', 'Monochrome ink'];
-  const IDEAS = [
-    'A cozy café rush: serve matching drinks to customers before their patience runs out.',
-    'Lane-based tower defense with three tower types and waves of neon bugs.',
-    'Asteroid miner: drift with momentum, grab crystals, avoid debris, bank them at the station.',
-    'Top-down kart time trial on a looping track with boost pads and a ghost of your best lap.',
-    'Space trivia: multiple choice with a 10-second timer and streak bonuses.',
-    'Two-lane rhythm game: notes fall to a beat, tap left or right on time.',
-  ];
+  const STYLES = H.STYLES, IDEAS = H.IDEAS, CRYPTO_IDEAS = H.CRYPTO_IDEAS;
+  const ideaName = (t) => t.split(':')[0];
 
   /* ---------------- studio state ---------------- */
   function newStudio() {
     return {
-      mode: S.caps.sample ? 'ai' : 'kit', kit: 'runner', params: K.normalizeParams('runner', { title: 'My Runner', palette: 'neon', shape: 'block' }),
+      mode: aiReady() ? 'ai' : 'kit', kit: 'runner', params: K.normalizeParams('runner', { title: 'My Runner', palette: 'neon', shape: 'block' }),
       versions: [], vi: -1, chat: [], prompt: '', style: '', quality: 'default', brand: null,
       parent: null, title: '', desc: '', price: 0.05, cap: 0, busy: false, stream: null, error: null, lastRun: null,
     };
@@ -2225,7 +2323,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   function loadStudio() {
     const st = LS.get(KEY.studio);
     S.studio = Object.assign(newStudio(), st || {}, { busy: false, stream: null });
-    if (!S.caps.sample && S.studio.mode === 'ai' && !S.studio.versions.length) S.studio.mode = 'kit';
+    if (!aiReady() && S.studio.mode === 'ai' && !S.studio.versions.length) S.studio.mode = 'kit';
     S.studio.params = K.normalizeParams(S.studio.kit, S.studio.params);
   }
   let studioSaveTimer = null;
@@ -2406,6 +2504,10 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<div><b>' + R.WEEKLY_SPARKS + '</b><span>free Sparks for AI builds every week</span></div>'
       + '<div><b>' + pct(10000 - R.FEE_BPS) + '</b><span>of every collect goes to the creator of an original game</span></div>'
       + '<div><b>1 file</b><span>is a whole game, so you can keep it forever</span></div></section>'
+
+      + '<section class="section" aria-labelledby="h-crypto"><div class="section-head"><h2 id="h-crypto">Make a crypto game from one sentence</h2><a href="#create" data-nav="create">Open the AI studio</a></div>'
+      + '<p class="muted">Describe it in plain words and Claude builds the whole game, ready to play, publish on Solana devnet and share. Start from one of these:</p>'
+      + '<div class="row">' + CRYPTO_IDEAS.map((t) => '<button class="btn small" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></section>'
 
       + '<section class="section" aria-labelledby="h-carts"><div class="section-head"><h2 id="h-carts">Pick a cartridge</h2><a href="#explore" data-nav="explore">See the whole arcade</a></div>'
       + '<p class="muted">Every game here is free to play and free to remix.</p><div class="shelf" id="home-shelf">' + homeShelf() + '</div></section>'
@@ -2675,7 +2777,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const seg = '<div class="seg" role="group" aria-label="How to build"><button type="button" data-act="studio-mode" data-mode="ai" aria-pressed="' + (st.mode === 'ai') + '">Describe with AI</button><button type="button" data-act="studio-mode" data-mode="kit" aria-pressed="' + (st.mode === 'kit') + '">Tune a kit</button></div>';
     let body;
     if (st.mode === 'ai') {
-      if (!S.caps.sample) {
+      if (!aiReady()) {
         body = ENV === 'claude'
           ? '<div class="banner warn"><b>Describing games with AI needs a Claude sign-in.</b><span>The AI studio runs on your own Claude account. Sign in to Claude and open GamePlay again to use it. Tuning a kit works for everyone, and publishing, scores and collecting work the same either way.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>'
           : '<div class="banner warn"><b>The AI studio is not switched on for this copy of GamePlay yet.</b><span>It needs a GamePlay server with an AI key. Tune a kit instead: publishing, scores and collecting work the same.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>';
@@ -2685,7 +2787,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
         const has = !!st.versions.length;
         body = '<div class="panel stack"><div class="split"><p class="eyebrow">Describe your game</p><span class="chip" title="Your Sparks">' + I.spark + ' <span id="st-sparks">' + fmtInt(studioSparks()) + '</span> Sparks</span></div>'
           + '<div class="chat" id="st-chat">' + chat + '</div><div id="st-stream"></div>'
-          + '<label class="field"><span class="sr">Your idea or change</span><textarea id="st-prompt" data-in="prompt" placeholder="' + (has ? 'Ask for a change: “make the jump higher and add a double-jump power-up”' : 'A cozy café rush: serve matching drinks before customers leave…') + '">' + esc(st.prompt) + '</textarea></label>'
+          + (has ? '' : '<div class="stack" style="gap:8px"><p class="eyebrow" id="crypto-ideas">Make a crypto game</p><div class="row" role="group" aria-labelledby="crypto-ideas">' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></div>')
+          + '<label class="field"><span class="sr">Your idea or change</span><textarea id="st-prompt" data-in="prompt" placeholder="' + (has ? 'Ask for a change: “make the jump higher and add a double-jump power-up”' : 'Block Miner: stack falling transaction blocks before the gas meter runs dry…') + '">' + esc(st.prompt) + '</textarea></label>'
           + '<div class="row" role="group" aria-label="Art style">' + STYLES.map((s) => '<button class="chip" type="button" data-act="style" data-style="' + esc(s) + '" aria-pressed="' + (st.style === s) + '">' + esc(s) + '</button>').join('') + '</div>'
           + '<div class="row" id="st-gen">' + genButtons() + '</div>'
           + '<details><summary class="muted" style="cursor:pointer">Starter ideas to remix</summary><div class="stack" style="margin-top:10px">' + IDEAS.map((t) => '<button class="btn small ghost" type="button" data-act="idea" style="white-space:normal;text-align:left;justify-content:flex-start">' + esc(t) + '</button>').join('') + '</div></details>'
@@ -2750,7 +2853,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
   function studioStatus() {
     const st = S.studio;
-    if (st.error) return '<div class="banner bad"><b>The game hit an error</b><span class="mono">' + esc(st.error) + '</span>' + (st.mode === 'ai' && S.caps.sample ? '<button class="btn small" type="button" data-act="gen-fix" style="justify-self:start">Fix it with AI · free</button>' : '') + '</div>';
+    if (st.error) return '<div class="banner bad"><b>The game hit an error</b><span class="mono">' + esc(st.error) + '</span>' + (st.mode === 'ai' && aiReady() ? '<button class="btn small" type="button" data-act="gen-fix" style="justify-self:start">Fix it with AI · free</button>' : '') + '</div>';
     if (st.lastRun != null) return '<p class="muted">Test run scored ' + fmtInt(st.lastRun) + '. Scores count once the game is published.</p>';
     return '<p class="muted">' + (studioCode() ? 'Unpublished preview. Click the game to play.' : 'Your game appears here.') + '</p>';
   }
@@ -2803,8 +2906,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
   async function generate(kind) {
     const st = S.studio;
-    const sample = S.caps.sample;
-    if (!sample || st.busy) return;
+    if (!aiReady() || st.busy) return;
     if (kind === 'edit' && !st.versions.length) kind = 'new';
     const prompt = (st.prompt || '').trim();
     if (kind !== 'fix' && !prompt) { toast('Describe your game first.'); const t = $('#st-prompt'); if (t) t.focus(); return; }
@@ -2820,9 +2922,9 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const ctl = new AbortController();
     S.ctl = ctl;
     try {
-      const input = harnessPrompt(kind, { prompt, style: st.style, code: base, error: errText });
-      const res = await sample(input, {
-        signal: ctl.signal, cache: false, modelTier: st.quality === 'complex' ? 'complex' : 'default',
+      const req = { kind, prompt, style: st.style, code: kind === 'new' ? '' : base || '', error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
+      const res = await aiBuild(req, {
+        signal: ctl.signal,
         onText: ({ text }) => {
           st.stream.phase = 'Writing code · ' + (text.length / 1024).toFixed(1) + ' KB';
           st.stream.tail = text.slice(-900);
@@ -2842,7 +2944,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       const code = e && e.code;
       const msg = code === 'cancelled' ? 'Stopped. Nothing was charged.'
         : code === 'not_granted' || code === 'sampling_disabled' ? 'Claude access was declined for this page, so AI building is off. Tune a kit instead.'
-        : code === 'rate_limited' ? 'Too many builds at once or your Claude usage limit was reached. Try again later.'
+        : code === 'rate_limited' ? (ENV === 'web' ? (e && e.message) || 'The AI studio is busy. Try again in a minute.' : 'Too many builds at once or your Claude usage limit was reached. Try again later.')
         : code === 'refused' ? 'Claude declined this request. Rephrase the idea and try again.'
         : code === 'prompt_too_large' ? 'The game is too large to edit in one request. Start a new build.'
         : code === 'session_expired' ? 'Your Claude session expired. Sign in again, then retry.'
@@ -3214,7 +3316,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     'skip': () => { const v = $('#view'); if (v) { v.focus({ preventScroll: true }); v.scrollIntoView(); } },
     'shape': (el) => { S.studio.params.shape = el.dataset.shape; $$('[data-act="shape"]').forEach((b) => b.setAttribute('aria-pressed', String(b === el))); saveStudio(); loadPreview(150); },
     'style': (el) => { const s = el.dataset.style; S.studio.style = S.studio.style === s ? '' : s; $$('[data-act="style"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.style === S.studio.style))); saveStudio(); },
-    'idea': (el) => { S.studio.prompt = el.textContent; const t = $('#st-prompt'); if (t) { t.value = el.textContent; t.focus(); } saveStudio(); },
+    'idea': (el) => { const idea = el.dataset.idea || el.textContent; S.studio.prompt = idea; const t = $('#st-prompt'); if (t) { t.value = idea; t.focus(); } saveStudio(); },
+    'home-idea': (el) => { S.studio.mode = 'ai'; S.studio.prompt = el.dataset.idea; saveStudio(); nav('create'); },
     'gen-new': () => generate('new'),
     'gen-edit': () => generate('edit'),
     'gen-fix': () => generate('fix'),
