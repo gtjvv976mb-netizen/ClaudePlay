@@ -66,6 +66,12 @@ const s3 = L.take('a');
 ok(!s3.ok && s3.code === 'daily_limit', 'daily build limit');
 L.refund('a');
 ok(L.left('a') === 1, 'refund gives a build back');
+const T = limiter({ daily: 5, maxActive: 5, total: 2 });
+T.take('x').release(); T.take('y').release();
+const t3 = T.take('z');
+ok(!t3.ok && t3.code === 'daily_limit' && t3.message.includes('this site'), 'site-wide daily cap');
+T.refund('y');
+ok(T.take('z').ok, 'refund frees a site-wide build');
 
 // --- HTTP: without a key
 {
@@ -82,7 +88,9 @@ ok(L.left('a') === 1, 'refund gives a build back');
 // --- HTTP: with a fake client
 {
   const { client, calls } = fakeClient();
-  const { server, base } = await start({ client, daily: 3 });
+  const { server, base } = await start({ client, daily: 3, trustProxy: true });
+  const viaProxy = await (await fetch(base + '/api/status', { headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' } })).json();
+  ok(viaProxy.left === 3, 'behind a proxy each visitor is counted by the first forwarded address');
   const html = await (await fetch(base + '/')).text();
   ok(html.includes('"ai":"api/build"'), 'index.html tells the page where to build');
   ok((await fetch(base + '/README.md')).status === 200, 'serves other site files');

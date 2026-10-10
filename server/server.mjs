@@ -13,8 +13,10 @@
 //   GP_MODEL_NEW         model for new games (claude-sonnet-5-5)
 //   GP_MODEL_EDIT        model for changes and bug fixes (claude-haiku-5-5)
 //   GP_DAILY_BUILDS      AI builds per visitor per day (12)
+//   GP_DAILY_TOTAL       AI builds per day across the whole site, to cap spend (0 = no cap)
 //   GP_MAX_ACTIVE        AI builds running at once across all visitors (4)
-//   GP_TRUST_PROXY=1     read the visitor address from X-Forwarded-For (set this behind a proxy)
+//   GP_TRUST_PROXY=1     read the visitor address from the first X-Forwarded-For entry (set this
+//                        behind a proxy that overwrites that entry, as Render does)
 import { createServer as httpServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
@@ -31,8 +33,9 @@ const MAX_TOKENS = 64000;
 const FALLBACK_OK = /^claude-(sonnet-5-5|opus-5|fable-5)/;
 
 /* Per-visitor daily build counts and concurrency, kept in memory. */
-export function limiter({ daily, maxActive }) {
+export function limiter({ daily, maxActive, total }) {
   const days = new Map();
+  const site = { day: '', n: 0 };
   const busy = new Set();
   let active = 0;
   const today = () => new Date().toISOString().slice(0, 10);
@@ -45,12 +48,15 @@ export function limiter({ daily, maxActive }) {
       const d = days.get(who);
       const n = d && d.day === day ? d.n : 0;
       if (n >= daily) return { ok: false, code: 'daily_limit', message: 'You have used today’s ' + daily + ' free AI builds. Come back tomorrow, or tune a kit meanwhile.' };
+      if (site.day !== day) { site.day = day; site.n = 0; }
+      if (total && site.n >= total) return { ok: false, code: 'daily_limit', message: 'The AI studio has reached today’s build limit for this site. Come back tomorrow, or tune a kit meanwhile.' };
+      site.n++;
       if (days.size > 50000) for (const [k, v] of days) if (v.day !== day) days.delete(k);
       days.set(who, { day, n: n + 1 });
       busy.add(who); active++;
       return { ok: true, release() { busy.delete(who); active--; } };
     },
-    refund(who) { const d = days.get(who); if (d && d.n > 0) d.n--; },
+    refund(who) { const d = days.get(who); if (d && d.n > 0) d.n--; if (site.n > 0) site.n--; },
   };
 }
 
@@ -79,14 +85,14 @@ function apiError(err) {
 }
 
 /* Creates the server. Options: root, client (an Anthropic client, or null for no AI), models,
-   daily, maxActive, trustProxy, log. */
+   daily, total, maxActive, trustProxy, log. */
 export function createServer(opts = {}) {
   const root = resolve(opts.root || join(here, '..', 'dist', 'site'));
   const client = opts.client || null;
   const pick = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
   const models = Object.assign({ new: 'claude-sonnet-5-5', edit: 'claude-haiku-5-5' }, pick(opts.models));
   const daily = opts.daily || 12;
-  const limits = limiter({ daily, maxActive: opts.maxActive || 4 });
+  const limits = limiter({ daily, total: opts.total || 0, maxActive: opts.maxActive || 4 });
   const log = opts.log || (() => {});
 
   const visitor = (req) => {
@@ -201,6 +207,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     client,
     models: { new: env.GP_MODEL_NEW || undefined, edit: env.GP_MODEL_EDIT || undefined },
     daily: Number(env.GP_DAILY_BUILDS) || undefined,
+    total: Number(env.GP_DAILY_TOTAL) || undefined,
     maxActive: Number(env.GP_MAX_ACTIVE) || undefined,
     trustProxy: env.GP_TRUST_PROXY === '1',
     log: (o) => console.log(JSON.stringify(Object.assign({ ts: new Date().toISOString() }, o))),

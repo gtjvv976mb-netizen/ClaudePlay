@@ -31,6 +31,7 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 | `src/index.html` | Styles (design tokens, light/dark/high-contrast themes) and the page shell. `<!--INLINE-SCRIPTS-->` is replaced by the three scripts at build time. |
 | `build.mjs` | Writes `dist/playpark.html` (body published as a claude.ai artifact), `dist/local.html` (test page) and `dist/site/` (the standalone website + README). |
 | `test/` | `core.test.mjs` unit tests, `server.test.mjs` server tests, `e2e.py` browser scenarios and a11y audit, `mock_claude.js` fake artifact runtime, `fake_ai_server.mjs` the server with a fake Claude for the browser tests. |
+| `render.yaml` | Render blueprint behind the README's Deploy to Render button: runs the server, prompts for `ANTHROPIC_API_KEY`, sets per-visitor and site-wide daily build caps. |
 | `.github/workflows/pages.yml` | Builds, tests and deploys `dist/site` to GitHub Pages on every push to `main`. |
 
 ## Where it runs
@@ -54,7 +55,7 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 
 ## Next engineering steps
 
-1. Deploy `server/server.mjs` with a Claude API key, and move its in-memory daily limits to a shared store (and tie them to Sparks) once it runs on more than one instance.
+1. Deploy `server/server.mjs` with a Claude API key (`render.yaml` / the README's Deploy to Render button), and move its in-memory daily limits to a shared store (and tie them to Sparks) once it runs on more than one instance.
 2. A shared gallery for the plain website (a small database or the Solana programs below).
 3. Solana programs: an Anchor registry, Metaplex Core / Bubblegum v2 editions, a Merkle rewards distributor.
 4. Passkey embedded wallets (Privy, Dynamic or Para) and a Kora fee relayer for gasless actions.
