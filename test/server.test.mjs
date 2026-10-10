@@ -221,7 +221,8 @@ ok(T.take('z').ok, 'refund frees a site-wide build');
   ok(/real money/.test(thrown({ GP_SOLANA_CLUSTER: 'mainnet-beta', GP_TREASURY: T })), 'mainnet refused without GP_ALLOW_MAINNET=yes');
   let warned = ''; ok(chainConfig({ GP_SOLANA_CLUSTER: 'devnet' }, (m) => { warned = m; }) === null && /GP_TREASURY/.test(warned), 'devnet with no treasury yet starts on the simulated ledger');
   ok(/GP_TREASURY/.test(thrown({ GP_SOLANA_CLUSTER: 'mainnet-beta', GP_ALLOW_MAINNET: 'yes' })), 'mainnet never starts without a treasury');
-  ok(chainConfig({ GP_SOLANA_CLUSTER: 'mainnet-beta', GP_TREASURY: T, GP_ALLOW_MAINNET: 'yes' }).rpcUrl.includes('mainnet'), 'mainnet starts only when explicitly allowed');
+  ok(/GP_SOLANA_RPC/.test(thrown({ GP_SOLANA_CLUSTER: 'mainnet-beta', GP_TREASURY: T, GP_ALLOW_MAINNET: 'yes' })), 'mainnet needs its own RPC endpoint');
+  ok(chainConfig({ GP_SOLANA_CLUSTER: 'mainnet-beta', GP_TREASURY: T, GP_ALLOW_MAINNET: 'yes', GP_SOLANA_RPC: 'https://rpc.example' }).rpcUrl === 'https://rpc.example', 'mainnet starts only when explicitly allowed');
   ok(chainConfig({ GP_SOLANA_CLUSTER: 'devnet', GP_TREASURY: T }).rpcUrl === 'https://api.devnet.solana.com', 'devnet uses the public RPC by default');
 
   const fake = fakeRpc();

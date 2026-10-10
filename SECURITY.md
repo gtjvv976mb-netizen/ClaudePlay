@@ -27,6 +27,9 @@ GamePlay never holds funds and the server never holds a private key.
 | 12 | Weekly GPLY rewards rest on scores the player's own page reports and on one-account-per-player counting, which a determined player can game with many accounts. | **Open, acceptable while GPLY is points.** In real-network mode no SOL is paid out as rewards (the ledger's treasury balance stays 0). Before GPLY or SOL rewards carry value: server-side score checks, sybil resistance, and a Merkle distributor. The owner key (`GP_ADMIN_KEY`) settles epochs; keep the owner link private. |
 | 13 | Spark packs are paid to the treasury in the simulated ledger. | **Disabled on real networks** until they are built as real payments. |
 | 14 | Switching an existing site from the simulated ledger to a real network leaves old simulated collects and tips without payments. | **By design.** Those entries show as unpaid and stop counting; games, scores and handles carry over. |
+| 15 | On mainnet, the site's wording still said balances were test tokens and no real funds moved. | **Fixed.** The footer, front page, FAQ and earnings copy say plainly that collects and tips are real SOL. |
+| 16 | On mainnet, real SOL could be paid to a creator whose key lives only in their browser's storage, and is lost if they clear it. | **Fixed.** On mainnet, publishing needs a wallet app, and the page refuses to pay a creator whose wallet is a browser key. |
+| 17 | The public mainnet RPC rate-limits and often refuses to relay transactions from servers, so payments would fail. | **Fixed.** Mainnet will not start without `GP_SOLANA_RPC`. |
 
 ## Owner checklist before mainnet
 
@@ -36,7 +39,7 @@ Only Ken can do these. Nothing in the repo switches production to mainnet or mov
 2. **Try it on devnet.** Deploy on Render, set `GP_TREASURY`, switch your wallet app to devnet, and collect and tip a game with free devnet SOL.
 3. **Independent security audit** of the payment flow and the server, and **a legal opinion** on real-money tips, royalties and the protocol fee: the Philippine SEC's CASP Rules (in force since 5 July 2025), the BSP's VASP rules, tax, and any country you will serve. GamePlay stays non-custodial, sells no token and offers no peso-to-crypto exchange.
 4. **Moderation** of published games (the content screening and queue in the roadmap).
-5. **Say "go" in the thread.** Then the deploy changes are: `GP_SOLANA_CLUSTER=mainnet-beta`, `GP_ALLOW_MAINNET=yes`, a paid RPC endpoint in `GP_SOLANA_RPC` (the public mainnet RPC is rate-limited), and the site's devnet wording updated.
+5. **Say "go" in the thread.** Then the deploy changes are: `GP_SOLANA_CLUSTER=mainnet-beta`, `GP_ALLOW_MAINNET=yes` and your own RPC endpoint in `GP_SOLANA_RPC` (the server refuses mainnet without one). The site's wording switches to real SOL by itself.
 
 ## Reporting a problem
 
