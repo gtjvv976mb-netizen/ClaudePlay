@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let fails = 0; const ok = (c, m) => { if (!c) { fails++; console.log('FAIL', m); } else console.log('ok  ', m); };
 const H = globalThis.PPHarness;
@@ -385,7 +386,7 @@ redis.close();
 
   const fake = fakeRpc();
   const chain = openChain({ cluster: 'devnet', treasury: T, rpc: fake.rpc });
-  const { server, base } = await start({ client: null, chain, root: new URL('../dist/site', import.meta.url).pathname });
+  const { server, base } = await start({ client: null, chain, root: fileURLToPath(new URL('../dist/site', import.meta.url)) });
   const api = (m, path, body) => fetch(base + '/api/chain/' + path, body ? { method: m, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { method: m });
   const page = await (await fetch(base + '/')).text();
   ok(page.includes('"chain":{"api":"api/chain","cluster":"devnet","treasury":"' + T + '"}'), 'page is told the network and treasury');
@@ -602,6 +603,101 @@ redis.close();
   await R3.traffic(); await R3.traffic(); await R3.traffic();
   ok(calls === 1, 'quiet rooms make no store calls after loading the day\'s count: ' + calls);
   R.close(); R2.close(); R3.close();
+}
+
+// The room allowance measures actual UTF-8 traffic, including otherwise idle event streams.
+{
+  const { openRooms } = await import('../server/rooms.mjs');
+  const fakeRes = () => ({ out: '', ended: false, get writableEnded() { return this.ended; }, writeHead() {}, write(x) { this.out += x; }, end() { this.ended = true; if (this.onclose) this.onclose(); }, on(ev, f) { if (ev === 'close') this.onclose = f; } });
+  const R = openRooms({ maxBytes: 6000, kv: memoryKv() });
+  await R.ready();
+  const made = R.create('unicode').body, A = fakeRes(), B = fakeRes();
+  R.join(made.code, 'unicode', 'A', A); R.join(made.code, 'unicode', 'B', B);
+  const hello = JSON.parse(A.out.split('data: ')[1]);
+  ok(R.send(made.code, { id: hello.you, token: hello.token, msgs: [{ d: '漢'.repeat(750) }] }).status === 413, 'the per-message room limit measures UTF-8 bytes');
+  ok(R.send(made.code, { id: hello.you, token: hello.token, msgs: [{ d: '漢'.repeat(500) }] }).status === 204, 'a multibyte message within the byte limit is relayed');
+  const sent = Buffer.byteLength(A.out, 'utf8') + Buffer.byteLength(B.out, 'utf8');
+  ok((await R.traffic()) === sent && R.create('past-budget').status === 503, 'multibyte room messages use their full UTF-8 byte allowance');
+  R.close();
+
+  // Capture the interval callback so the heartbeat cap is checked without a real twenty-second wait.
+  let tick, idle;
+  const interval = globalThis.setInterval;
+  try {
+    globalThis.setInterval = (fn) => { tick = fn; return 0; };
+    idle = openRooms({ maxBytes: 2500, kv: memoryKv() });
+  } finally { globalThis.setInterval = interval; }
+  await idle.ready();
+  const room = idle.create('idle').body, stream = fakeRes();
+  idle.join(room.code, 'idle', 'A', stream);
+  const before = await idle.traffic();
+  tick();
+  ok((await idle.traffic()) - before === 8 && stream.out.endsWith(': ping\n\n'), 'room heartbeats consume their outbound bytes');
+  for (let i = 0; i < 120 && !stream.ended; i++) tick();
+  ok(stream.ended && idle.size === 0 && (await idle.traffic()) === Buffer.byteLength(stream.out, 'utf8'), 'idle rooms close when heartbeat traffic passes the allowance by a fifth');
+  idle.close();
+}
+
+// Restoring a persisted room budget must finish before a cold server admits a player.
+{
+  const { openRooms } = await import('../server/rooms.mjs');
+  let release;
+  const stored = new Promise((resolve) => { release = resolve; });
+  const rooms = openRooms({ maxBytes: 8000, kv: { incr: () => stored } });
+  const made = rooms.create('cold').body;
+  let joined = false;
+  const joinRoom = rooms.join;
+  rooms.join = (...args) => { joined = true; return joinRoom(...args); };
+  const { server, base } = await start({ gallery: await openGallery({}), rooms });
+  let arrived;
+  const requestSeen = new Promise((resolve) => { arrived = resolve; });
+  server.once('request', () => arrived());
+  const ctl = new AbortController();
+  const waiting = fetch(base + '/api/rooms/' + made.code + '/events?gid=cold', { signal: ctl.signal });
+  await requestSeen;
+  ok(!joined, 'room admission waits while the persisted daily traffic count is loading');
+  release(12000);
+  const response = await waiting;
+  ok(response.status === 503 && joined && rooms.create('also-full').status === 503, 'an exhausted persisted allowance rejects the first join after a restart');
+  ctl.abort(); rooms.close(); server.close();
+}
+
+// Bytes written while a stored count is loading remain part of the local allowance.
+{
+  const { openRooms } = await import('../server/rooms.mjs');
+  let begin, release, reading, total = 5500;
+  const begun = new Promise((resolve) => { begin = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  const rooms = openRooms({ maxBytes: 7000, kv: { incr(k, n) { reading = gate.then(() => (total += n)); begin(); return reading; } } });
+  await begun;
+  const made = rooms.create('loading').body;
+  const stream = { out: '', writableEnded: false, writeHead() {}, write(s) { this.out += s; }, on() {}, end() { this.writableEnded = true; } };
+  rooms.join(made.code, 'loading', 'A', stream);
+  release(); await reading;
+  ok(rooms.create('pending-bytes').status === 503 && (await rooms.traffic()) === 5500 + Buffer.byteLength(stream.out, 'utf8'), 'restored room usage includes bytes written during its store read');
+  rooms.close();
+}
+
+// A UTC rollover loads that day's stored usage; a transient store outage keeps admission closed.
+{
+  const { openRooms } = await import('../server/rooms.mjs');
+  const kv = memoryKv();
+  let t = Date.UTC(2026, 9, 11, 12), failing = false;
+  const rooms = openRooms({ maxBytes: 8000, now: () => t, kv: Object.assign({}, kv, { incr: (...args) => failing ? Promise.reject(new Error('offline')) : kv.incr(...args) }) });
+  ok(await rooms.ready(), 'the initial room allowance loads');
+  const made = rooms.create('rollover').body;
+  const stream = { writableEnded: false, writeHead() {}, write() {}, on() {}, end() { this.writableEnded = true; } };
+  rooms.join(made.code, 'rollover', 'A', stream);
+  t += 86400000;
+  await kv.incr('rooms:bytes:' + new Date(t).toISOString().slice(0, 10), 12000, 2 * 86400);
+  ok((await rooms.ready()) && rooms.create('next-day-full').status === 503 && stream.writableEnded, 'a UTC rollover restores existing usage and closes active streams beyond the allowance');
+  t += 86400000; failing = true;
+  const { server, base } = await start({ gallery: await openGallery({}), rooms });
+  const create = () => fetch(base + '/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ gid: 'retry' }) });
+  ok(!(await rooms.ready()) && (await create()).status === 503, 'a failed traffic-store read keeps room admission closed');
+  failing = false;
+  ok((await create()).status === 200 && (await rooms.ready()), 'room admission recovers after a transient traffic-store outage');
+  rooms.close(); server.close();
 }
 
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');

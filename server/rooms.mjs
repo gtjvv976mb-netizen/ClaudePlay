@@ -35,7 +35,7 @@ export function openRooms(opts = {}) {
     count(0);
     if (!kv || !budget || (!pending && loaded === day)) return; // no store calls while rooms are quiet
     const d = day, n = pending; pending = 0;
-    try { const total = Number(await kv.incr('rooms:bytes:' + d, n, 2 * 86400)) || 0; loaded = d; if (d === day && total > used) used = total; } catch (e) { if (d === day) pending += n; }
+    try { const total = Number(await kv.incr('rooms:bytes:' + d, n, 2 * 86400)) || 0; loaded = d; if (d === day) used = Math.max(used, total + pending); } catch (e) { if (d === day) pending += n; }
   }
   const code6 = () => { const b = randomBytes(6); let s = ''; for (let i = 0; i < 6; i++) s += CODE_CHARS[b[i] % 32]; return s; };
 
@@ -43,16 +43,32 @@ export function openRooms(opts = {}) {
     const t = now();
     for (const [code, r] of rooms) if (!r.players.size && t - r.touched > idleMs) rooms.delete(code);
   }
-  function write(p, msg) { try { if (!p.res.writableEnded) { const s = 'data: ' + JSON.stringify(msg) + '\n\n'; count(s.length); p.res.write(s); } } catch (e) { /* the stream closed */ } }
+  function writeRaw(p, s) { try { if (!p.res.writableEnded) { count(Buffer.byteLength(s, 'utf8')); p.res.write(s); } } catch (e) { /* the stream closed */ } }
+  function write(p, msg) { writeRaw(p, 'data: ' + JSON.stringify(msg) + '\n\n'); }
   function broadcast(r, msg, except) { for (const p of r.players.values()) if (p.id !== except) write(p, msg); }
   const roster = (r) => [...r.players.values()].map((p) => ({ id: p.id, name: p.name }));
+  function closeRoom(code, r) {
+    rooms.delete(code);
+    const players = [...r.players.values()]; r.players.clear();
+    for (const p of players) { try { p.res.end(); } catch (e) { /* closed */ } }
+  }
 
-  const heart = setInterval(() => { for (const r of rooms.values()) for (const p of r.players.values()) { try { p.res.write(': ping\n\n'); } catch (e) { /* closed */ } } sweep(); sync(); }, 20000);
+  const heart = setInterval(() => {
+    if (!over(1.2)) for (const r of rooms.values()) for (const p of r.players.values()) writeRaw(p, ': ping\n\n');
+    if (over(1.2)) for (const [code, r] of rooms) closeRoom(code, r);
+    sweep(); sync();
+  }, 20000);
   if (heart.unref) heart.unref();
   sync();
 
   return {
     get size() { return rooms.size; },
+    /* Wait for the persisted allowance before accepting traffic after startup or a UTC day change. */
+    async ready() {
+      if (kv && budget && loaded !== today()) await sync();
+      if (over(1.2)) for (const [code, r] of rooms) if (r.players.size) closeRoom(code, r);
+      return !kv || !budget || loaded === today();
+    },
     /* Bytes sent today, and adds this instance's count to the shared one in kv. */
     async traffic() { await sync(); return used; },
     /* Opens a room for a game. Returns { code, seed }. */
@@ -75,8 +91,7 @@ export function openRooms(opts = {}) {
       if (over(1)) return tired();
       const p = { id: 'p' + randomBytes(4).toString('hex'), token: randomBytes(16).toString('hex'), name: cleanName(name), res, tokens: perSecond, refill: now() };
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', 'x-content-type-options': 'nosniff', connection: 'keep-alive' });
-      res.write(': ' + ' '.repeat(2048) + '\n\n'); // gets the stream past proxies that buffer the first bytes
-      count(2054);
+      writeRaw(p, ': ' + ' '.repeat(2048) + '\n\n'); // gets the stream past proxies that buffer the first bytes
       r.players.set(p.id, p);
       if (!r.host) r.host = p.id;
       r.touched = now();
@@ -96,14 +111,14 @@ export function openRooms(opts = {}) {
       if (!r) return err(404, 'not_found', 'That room has closed.');
       const p = body && r.players.get(body.id);
       if (!p || typeof body.token !== 'string' || body.token !== p.token) return err(403, 'forbidden', 'Not a player in this room.');
-      if (over(1.2)) { rooms.delete(code); for (const q of r.players.values()) { try { q.res.end(); } catch (e) { /* closed */ } } return tired(); }
+      if (over(1.2)) { closeRoom(code, r); return tired(); }
       const msgs = Array.isArray(body.msgs) ? body.msgs : [];
       const t = now();
       p.tokens = Math.min(perSecond * 2, p.tokens + (t - p.refill) / 1000 * perSecond); p.refill = t;
       if (msgs.length > p.tokens) return err(429, 'rate_limited', 'Sending too fast.');
       p.tokens -= msgs.length;
       for (const m of msgs) {
-        if (!m || JSON.stringify(m.d === undefined ? null : m.d).length > maxMsg) return err(413, 'too_large', 'A message is too large.');
+        if (!m || Buffer.byteLength(JSON.stringify(m.d === undefined ? null : m.d), 'utf8') > maxMsg) return err(413, 'too_large', 'A message is too large.');
       }
       for (const m of msgs) {
         const msg = { t: 'msg', from: p.id, d: m.d === undefined ? null : m.d };
@@ -113,6 +128,6 @@ export function openRooms(opts = {}) {
       r.touched = t;
       return { status: 204, body: null };
     },
-    close() { clearInterval(heart); for (const r of rooms.values()) for (const p of r.players.values()) { try { p.res.end(); } catch (e) { /* closed */ } } rooms.clear(); },
+    close() { clearInterval(heart); for (const [code, r] of rooms) closeRoom(code, r); },
   };
 }
