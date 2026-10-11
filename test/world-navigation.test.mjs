@@ -291,3 +291,99 @@ test('navigation: a tall integrated map uses native keyboard scrolling without f
   await page.keyboard.press('Escape');
   assert.equal(await page.getByRole('button',{name:'Visit island',exact:true}).evaluate((el) => document.activeElement === el),true);
 });
+
+test('navigation: actual HD island frames and clamped signposts share anchors through 4K and compact resizing',async (t) => {
+  const page = await integration(t,{viewport:{width:1440,height:900},text:'md'}); if (!page) return;
+  await page.waitForFunction(() => [...document.querySelectorAll('#site-world .world-island-art')].length === 4
+    && [...document.querySelectorAll('#site-world .world-island-art')].every((image) => image.complete && image.naturalWidth > 0));
+  for (const viewport of [{width:1440,height:900},{width:1000,height:680},{width:3840,height:2160},{width:1280,height:580},{width:390,height:844},{width:1440,height:900}]) {
+    await page.setViewportSize(viewport);
+    await page.waitForFunction(({width,height}) => {
+      const scene = PPWorldBackground.layout(width,height);
+      const marker = document.querySelector('.island-nav-marker[data-nav="create"]');
+      const island = document.querySelector('#site-world .world-island-forest'), rect = island.getBoundingClientRect(), frame = scene.frames.forest;
+      return Math.abs(parseFloat(marker.style.getPropertyValue('--island-x')) - scene.frames.forest.anchor.x * width) < .01
+        && Math.abs(parseFloat(marker.style.getPropertyValue('--island-y')) - scene.frames.forest.anchor.y * height) < .01
+        && Math.abs(rect.left - frame.x * width) < 1 && Math.abs(rect.top - frame.y * height) < 1;
+    },viewport);
+    const anchors = await page.evaluate(() => {
+      const scene = PPWorldBackground.layout(innerWidth,innerHeight);
+      return [...document.querySelectorAll('.island-nav-marker')].map((link) => {
+        const frame = scene.frames[link.dataset.island], anchor = link.classList.contains('island-nav-secondary') ? frame.secondary : frame.anchor;
+        const island = document.querySelector('#site-world .world-island-' + link.dataset.island), islandRect = island.getBoundingClientRect(), r = link.getBoundingClientRect();
+        return {route:link.dataset.nav,compact:scene.compact || document.querySelector('#world-navigation').dataset.islandHomeMode === 'compact',visible:!!link.getClientRects().length,
+          intended:{x:anchor.x * innerWidth,y:anchor.y * innerHeight},
+          configured:{x:parseFloat(link.style.getPropertyValue('--island-x')),y:parseFloat(link.style.getPropertyValue('--island-y'))},
+          clamped:{x:Math.max(125,Math.min(innerWidth - 125,anchor.x * innerWidth)),y:Math.max(40,Math.min(innerHeight - 60,anchor.y * innerHeight))},
+          actual:{x:r.left + r.width / 2,y:r.top + r.height / 2},
+          frame:{expected:{x:frame.x * innerWidth,y:frame.y * innerHeight,width:frame.width * innerWidth,height:frame.height * innerHeight},
+            actual:{x:islandRect.left,y:islandRect.top,width:islandRect.width,height:islandRect.height}}};
+      });
+    });
+    assert.equal(anchors.length,6);
+    for (const anchor of anchors) {
+      for (const key of ['x','y']) assert.ok(Math.abs(anchor.configured[key] - anchor.intended[key]) < .01,anchor.route + ': resize updates the shared anchor');
+      for (const key of ['x','y','width','height']) assert.ok(Math.abs(anchor.frame.actual[key] - anchor.frame.expected[key]) < 1,anchor.route + ': the real renderer uses the shared frame');
+      if (anchor.compact) assert.equal(anchor.visible,false,'compact displays use the reachable map instead of scenery hitboxes');
+      else {
+        assert.equal(anchor.visible,true);
+        for (const key of ['x','y']) assert.ok(Math.abs(anchor.actual[key] - anchor.clamped[key]) < 1,anchor.route + ': actual signpost center stays attached to its rendered island');
+      }
+    }
+    await assertNoViewportOverflow(page);
+  }
+});
+
+test('navigation: visible 4K Home play panes park secondary signposts and retain actual game and keyboard map controls',async (t) => {
+  const page = await integration(t,{viewport:{width:3840,height:2160},text:'md'}); if (!page) return;
+  const play = page.locator('#home-pack .play-stage iframe'); await play.waitFor({state:'visible'});
+  const point = await page.evaluate(() => {
+    const anchor = PPWorldBackground.layout(innerWidth,innerHeight).frames.race.secondary;
+    const iframe = document.querySelector('#home-pack .play-stage iframe'), r = iframe.getBoundingClientRect();
+    return {x:anchor.x * innerWidth,y:anchor.y * innerHeight,iframe:{x:r.left,y:r.top,right:r.right,bottom:r.bottom}};
+  });
+  assert.ok(point.x > point.iframe.x && point.x < point.iframe.right && point.y > point.iframe.y && point.y < point.iframe.bottom,
+    'this real 4K layout reproduces the secondary economy signpost position over the playable iframe');
+  await page.waitForFunction(() => document.querySelector('#world-navigation').dataset.islandHomeMode === 'compact');
+  assert.equal(await page.locator('.island-nav-marker:visible').count(),0,'visible play panes must park all world signpost hitboxes');
+  assert.equal(await page.evaluate(({x,y}) => document.elementFromPoint(x,y) === document.querySelector('#home-pack .play-stage iframe'),point),true,
+    'the former economy-marker position must hit the actual playable iframe');
+  await page.mouse.click(point.x,point.y);
+  assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('#home-pack .play-stage iframe')),true,
+    'an actual game click must focus the playable frame');
+  for (const route of ['economy','business']) {
+    const toggle = page.getByRole('button',{name:'Visit island',exact:true}); await toggle.focus(); await page.keyboard.press('Enter');
+    await page.locator('.island-nav-overlay').waitFor({state:'visible'});
+    const link = page.locator('.island-nav-map a[data-nav="' + route + '"]'); await link.focus(); await page.keyboard.press('Enter');
+    await page.waitForFunction((route) => __pp.route === route,route);
+    assert.equal(await page.locator('.island-nav-overlay').isVisible(),false,'secondary destinations close their map after keyboard activation');
+    await page.locator('.island-nav-home').click(); await page.waitForFunction(() => __pp.route === 'home');
+    await page.waitForFunction(() => document.querySelector('#world-navigation').dataset.islandHomeMode === 'compact');
+  }
+  await page.getByRole('button',{name:'Visit island',exact:true}).focus();
+  await page.setViewportSize({width:1440,height:900});
+  await page.waitForFunction(() => document.querySelector('#world-navigation').dataset.islandHomeMode === 'map');
+  assert.equal(await page.locator('.island-nav-marker:visible').count(),6,'the single invitation pane retains its island signposts');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.nav),'create','returning to signposts keeps navigation focus visible');
+  await assertNoViewportOverflow(page);
+});
+
+test('navigation: titles and island lettering prefer smooth Outfit with a usable sans fallback when fonts are blocked',async (t) => {
+  const page = await integration(t,{viewport:{width:1440,height:900},text:'md'}); if (!page) return;
+  const fontState = await page.evaluate(() => {
+    const family = (node) => getComputedStyle(node).fontFamily;
+    return {heading:family(document.querySelector('#view h1')),brand:family(document.querySelector('.world-brand .mark b')),
+      labels:[...document.querySelectorAll('.island-nav strong')].map(family),
+      display:getComputedStyle(document.documentElement).getPropertyValue('--display'),stylesheet:document.querySelector('#optional-fonts').href,
+      loadedOutfit:[...document.fonts].filter((face) => face.family.replace(/["']/g,'') === 'Outfit' && face.status === 'loaded').length};
+  });
+  for (const family of [fontState.heading,fontState.brand,...fontState.labels]) {
+    assert.match(family,/^['"]?Outfit['"]?(?:,|$)/,'display text must prefer Outfit');
+    assert.match(family,/sans-serif/,'the fallback remains smooth sans typography');
+    assert.doesNotMatch(family,/Silkscreen|Press Start|Pixel/i,'display text must not fall back to the retired pixel face');
+  }
+  assert.match(fontState.display,/Outfit/); assert.match(fontState.stylesheet,/family=Outfit/);
+  assert.equal(fontState.loadedOutfit,0,'this case intentionally blocks optional external fonts; loaded-face verification belongs to the font-enabled design audit');
+  await page.locator('#home-prompt').fill('A smooth sky adventure');
+  assert.equal(await page.locator('#home-prompt').inputValue(),'A smooth sky adventure','font loading must not gate creation controls');
+});

@@ -1,4 +1,4 @@
-/* Scene-first interface. The world carries the headings; only working surfaces
+/* Illustrated-world interface. The world carries the headings; only working surfaces
    add glass. Existing route, form and fitter selectors remain unchanged. */
 body.world-interface {
   --wi-glass: color-mix(in srgb, var(--panel) 80%, transparent);
@@ -40,8 +40,8 @@ body.world-interface {
   color: var(--wi-letter);
 }
 .world-interface .world-brand .mark b {
-  font: 700 clamp(1.25rem, 2.2vw, 1.85rem)/1.15 var(--display);
-  letter-spacing: -.065em;
+  font: 800 clamp(1.25rem, 2.2vw, 1.85rem)/1.15 var(--display);
+  letter-spacing: -.025em;
   color: var(--wi-letter);
   text-shadow: var(--wi-type-shadow);
 }
@@ -94,6 +94,7 @@ body.world-interface {
 }
 .world-interface :is(.page-head h1, .gp-head h1, .page-title, .section-head h2, .pack-shelf-head h2, .section > h2) {
   color: var(--wi-letter);
+  letter-spacing: -.025em;
   text-shadow: var(--wi-type-shadow);
   background: transparent;
   border: 0;
@@ -218,8 +219,9 @@ body.world-interface {
   font-size: clamp(2.5rem, 5vw, 4rem);
   line-height: 1.04;
   color: var(--wi-letter);
-  letter-spacing: -.065em;
-  text-shadow: -2px -2px 0 var(--wi-edge), 0 -2px 0 var(--wi-edge), 2px -2px 0 var(--wi-edge), -2px 0 0 var(--wi-edge), 2px 0 0 var(--wi-edge), -2px 2px 0 var(--wi-edge), 0 2px 0 var(--wi-edge), 2px 2px 0 var(--wi-edge), 0 5px 0 var(--wi-edge), 0 10px 18px rgba(12,32,48,.16);
+  letter-spacing: -.025em;
+  font-weight: 800;
+  text-shadow: var(--wi-type-shadow);
 }
 .world-interface .pack-copy .lede { font-size: .9rem; padding: 9px 12px; }
 .world-interface .pack .pack-copy .page-kicker { padding: 0; background: transparent; color: var(--wi-letter); font-size: .72rem; }
@@ -260,7 +262,7 @@ body.world-interface {
   body.world-interface { --wi-top: 96px; --wi-bottom: 122px; }
   .world-interface .wrap { padding-inline: 16px; }
   .world-interface .world-brand { top: calc(18px + env(safe-area-inset-top, 0px)); left: 16px; max-width: calc(100% - 168px); }
-  .world-interface .world-brand .mark b { font-size: .98rem; letter-spacing: -.07em; }
+  .world-interface .world-brand .mark b { font-size: .98rem; letter-spacing: -.025em; }
   .world-interface .world-brand .mark span { font-size: .52rem; }
   .world-interface .world-tools { top: calc(16px + env(safe-area-inset-top, 0px)); right: 14px; bottom: auto; max-width: 142px; gap: 6px; flex-wrap: nowrap; }
   .world-interface .world-tools .hbtn { padding: 9px; min-width: 42px; }

@@ -7,10 +7,12 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
 
-let browser, source, art, servedHash;
+let browser, source, assets, servedHash;
 before(async (t) => {
   source = await readFile(new URL('../src/world-background.js', import.meta.url), 'utf8');
-  art = 'data:image/webp;base64,' + (await readFile(new URL('../src/assets/play-world-v1.webp', import.meta.url))).toString('base64');
+  const files = {forest:'island-forest',castle:'island-castle',race:'island-race',city:'island-city',cloud:'cloud',car:'flying-car'};
+  assets = Object.fromEntries(await Promise.all(Object.entries(files).map(async ([key,file]) => [key,
+    'data:image/webp;base64,' + (await readFile(new URL('../src/assets/world-hd/' + file + '.webp',import.meta.url))).toString('base64')])));
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, headless: true,
     args: ['--no-sandbox', '--disable-background-networking', '--disable-component-update', '--disable-breakpad'] });
   t.diagnostic('Native Chromium ' + browser.version() + '; world source SHA-256 ' + createHash('sha256').update(source).digest('hex'));
@@ -70,11 +72,12 @@ async function fixture(t, options = {}) {
   page.on('pageerror', (error) => errors.push(error.message));
   t.after(async () => { await context.close(); assert.deepEqual(errors, [], 'the world must not throw browser errors'); });
   await page.setContent('<html><head><style>body{margin:0;background:#e5f4fa}main{position:relative;z-index:2;background:#fff;width:320px;padding:8px}button,input,textarea,select{display:block;margin:8px}</style></head><body><div id="host"><span id="unowned">Preserved</span></div><main><input id="ask"><textarea id="text"></textarea><select id="choice"><option>A</option></select><div id="edit" contenteditable="true">Write</div><button id="outside">Outside</button><div id="dialogs"></div><iframe id="toy" title="Game" srcdoc="<button>Game</button>"></iframe></main></body></html>');
-  await page.evaluate((art) => { document.documentElement.style.setProperty('--world-art', 'url("' + art + '")'); }, art);
+  await page.evaluate((assets) => { window.GP_WORLD_ASSETS = assets; },assets);
   await page.evaluate(instrument);
   await page.addScriptTag({ content: source });
   await page.evaluate((options) => __mountWorld(options), options.mount || {});
   await page.waitForSelector('.world-camera', { state: 'attached' });
+  await page.waitForFunction(() => [...document.querySelectorAll('#host img')].every((img) => img.complete && img.naturalWidth > 0));
   return page;
 }
 const snapshot = (page) => page.evaluate(() => __worldSnapshot());
@@ -102,22 +105,79 @@ function freed(state) {
   assert.equal(state.pending, 0, 'no module frame may remain scheduled');
 }
 
-test('world: original illustration, floating islands, clouds and vehicles compose a decorative full viewport', async (t) => {
+test('world: standalone HD alpha islands, clouds and vehicles compose a decorative full viewport', async (t) => {
   const page = await fixture(t);
   assert.equal(await page.getAttribute('#host', 'aria-hidden'), 'true');
   assert.equal(await page.locator('#host .world-camera').count(), 1);
   assert.equal(await page.locator('#host .world-island-forest, #host .world-island-castle, #host .world-island-race, #host .world-island-city').count(), 4);
-  assert.ok(await page.locator('#host .world-island-art').count() >= 4);
+  assert.equal(await page.locator('#host img.world-island-art').count(),4);
   assert.ok(await page.locator('#host .world-cloud').count() >= 2);
   assert.ok(await page.locator('#host .world-vehicle').count() >= 2);
   const geometry = await page.evaluate(() => {
     const el = document.querySelector('#host'), style = getComputedStyle(el), rect = el.getBoundingClientRect();
     return { width: rect.width, height: rect.height, position: style.position, pointerEvents: style.pointerEvents,
-      illustrated: [...el.querySelectorAll('.world-island-art')].every((island) => getComputedStyle(island).backgroundImage.includes('data:image/webp')) };
+      images:[...el.querySelectorAll('img')].map((img) => {
+        const style = getComputedStyle(img), canvas = document.createElement('canvas'); canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d',{willReadFrequently:true}); ctx.drawImage(img,0,0);
+        const pixels = ctx.getImageData(0,0,canvas.width,canvas.height).data;
+        let edgeAlpha = 0;
+        for (let x=0;x<canvas.width;x++) edgeAlpha = Math.max(edgeAlpha,pixels[x*4+3],pixels[((canvas.height-1)*canvas.width+x)*4+3]);
+        for (let y=1;y<canvas.height-1;y++) edgeAlpha = Math.max(edgeAlpha,pixels[y*canvas.width*4+3],pixels[(y*canvas.width+canvas.width-1)*4+3]);
+        const corners = [[0,0],[canvas.width-1,0],[0,canvas.height-1],[canvas.width-1,canvas.height-1]]
+          .map(([x,y]) => ctx.getImageData(x,y,1,1).data[3]);
+        return {className:img.className,width:img.naturalWidth,height:img.naturalHeight,src:img.currentSrc.startsWith('data:image/webp'),
+          objectFit:style.objectFit,rendering:style.imageRendering,mask:style.maskImage,clip:style.clipPath,background:style.backgroundImage,corners,edgeAlpha,
+          sourceKey:Object.entries(GP_WORLD_ASSETS).find(([,source]) => source === img.currentSrc)?.[0]};
+      }) };
   });
   assert.equal(geometry.position, 'fixed'); assert.equal(geometry.pointerEvents, 'none');
-  assert.equal(geometry.width, 1280); assert.equal(geometry.height, 900); assert.equal(geometry.illustrated, true);
+  assert.equal(geometry.width,1280); assert.equal(geometry.height,900);
+  assert.equal(geometry.images.length,12,'four islands, five clouds and three cars use independent images');
+  for (const img of geometry.images) {
+    assert.ok(img.width >= 1024 && img.height >= 1024,img.className + ': source has native HD detail');
+    assert.equal(img.src,true); assert.equal(img.objectFit,'contain'); assert.equal(img.rendering,'auto');
+    assert.equal(img.mask,'none'); assert.equal(img.clip,'none'); assert.equal(img.background,'none');
+    assert.deepEqual(img.corners,[0,0,0,0],img.className + ': standalone asset has actual transparent surroundings');
+    assert.ok(img.edgeAlpha <= 2,img.className + ': visible art is fully surrounded by transparent margins');
+  }
+  assert.deepEqual(new Set(geometry.images.map((img) => img.sourceKey)),new Set(['forest','castle','race','city','cloud','car']));
+  assert.equal(await page.locator('.world-sky img').count(),0,'the old pixel panorama/sky plate must not be rendered');
   await page.evaluate(() => __runWorld(() => world.destroy())); freed(await snapshot(page));
+});
+
+test('world: responsive overview and every route contain complete islands without atlas cropping or source enlargement',async (t) => {
+  const page = await fixture(t,{mount:{reducedMotion:true}});
+  for (const viewport of [{width:320,height:568},{width:390,height:430},{width:390,height:844},{width:1280,height:600},{width:1440,height:900},{width:1920,height:1080},{width:3840,height:2160}]) {
+    await page.setViewportSize(viewport);
+    await page.waitForFunction(({width,height}) => world.getGeometry().width === width && world.getGeometry().height === height,viewport);
+    await route(page,'home');
+    const shared = await page.evaluate(() => ({exposed:PPWorldBackground.layout(innerWidth,innerHeight),active:world.getGeometry()}));
+    assert.deepEqual(shared.active.frames,shared.exposed.frames,'navigation and actual image placement share the same complete frames');
+    for (const name of ['home','explore','create','game','maker','group','wallet','ledger','economy','business']) {
+      await route(page,name);
+      const frames = await page.evaluate(() => {
+        const current = world.getGeometry();
+        const nodes = current.island === 'overview' ? [...document.querySelectorAll('.world-island')] : [document.querySelector('.world-island[data-world-selected]')];
+        return nodes.map((node) => {
+          const r = node.getBoundingClientRect(), img = node.querySelector('img'), style = getComputedStyle(node);
+          return {name:node.dataset.worldAsset,left:r.left,top:r.top,right:r.right,bottom:r.bottom,opacity:style.opacity,
+            sourceScale:Math.min(r.width/img.naturalWidth,r.height/img.naturalHeight),objectFit:getComputedStyle(img).objectFit};
+        });
+      });
+      assert.equal(frames.length,name === 'home' ? 4 : 1);
+      for (const frame of frames) {
+        assert.ok(frame.left >= 0 && frame.top >= 0 && frame.right <= viewport.width && frame.bottom <= viewport.height,
+          `${viewport.width}×${viewport.height} ${name}/${frame.name}: complete image frame stays in the viewport`);
+        assert.ok(frame.sourceScale <= 1.001,`${name}/${frame.name}: native source is not magnified above its pixel dimensions`);
+        assert.equal(frame.objectFit,'contain'); assert.equal(frame.opacity,'1');
+      }
+      if (name !== 'home') {
+        assert.equal(await page.locator('.world-island:not([data-world-selected])').evaluateAll((nodes) => nodes.every((el) => Number(getComputedStyle(el).opacity) <= .1)),true,
+          'other islands recede instead of obstructing the selected destination');
+      }
+    }
+  }
+  await page.evaluate(() => __runWorld(() => world.stop())); freed(await snapshot(page));
 });
 
 test('world: clouds drift, vehicles fly and each island floats in the real renderer', async (t) => {
@@ -273,10 +333,31 @@ async function integration(t, configuration) {
   if (!servedHash) { servedHash = hash; t.diagnostic('Served HTML SHA-256 ' + hash); }
   else assert.equal(hash, servedHash, 'finish integration/build before testing; served HTML changed between contexts');
   await page.waitForFunction(() => window.__pp?.ready && document.querySelector('#site-world .world-camera'));
+  await page.waitForFunction(() => [...document.querySelectorAll('#site-world img')].every((img) => img.complete && img.naturalWidth > 0));
   assert.equal(await page.evaluate(() => __pp.mode), 'local', 'integration fixture must stay local and spend no credits');
   await page.evaluate(() => { window.savedWorldHost = document.querySelector('#site-world'); window.savedWorldCamera = savedWorldHost.querySelector('.world-camera'); });
   return page;
 }
+
+test('world: the embedded local artifact decodes every HD asset without external image requests',async (t) => {
+  if (!process.env.WORLD_SITE_URL) { t.skip('Set WORLD_SITE_URL to a built local static page to verify the embedded artifact.'); return; }
+  const site = new URL(process.env.WORLD_SITE_URL);
+  assert.ok(site.protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(site.hostname));
+  const context = await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce'}),page = await context.newPage(),errors = [],externalImages = [];
+  t.after(async () => { await context.close(); assert.deepEqual(errors,[]); assert.deepEqual(externalImages,[],'all background assets are truly embedded'); });
+  page.on('pageerror',(error) => errors.push(error.message));
+  await context.route('**/*',(request) => {
+    const target = new URL(request.request().url());
+    if (request.request().resourceType() === 'image') externalImages.push(target.href);
+    return target.origin === site.origin && target.pathname === '/local.html' ? request.continue() : request.abort();
+  });
+  const response = await page.goto(new URL('/local.html',site).href);
+  assert.equal(response?.ok(),true);
+  await page.waitForFunction(() => window.__pp?.ready && document.querySelectorAll('#site-world img').length === 12
+    && [...document.querySelectorAll('#site-world img')].every((img) => img.complete && img.naturalWidth >= 1024 && img.currentSrc.startsWith('data:image/webp')));
+  assert.equal(await page.evaluate(() => __pp.mode),'local');
+});
+
 async function navigate(page, hash) {
   const expected = hash.split('-')[0];
   await page.evaluate((hash) => { location.hash = hash; }, hash);
