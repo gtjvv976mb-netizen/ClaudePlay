@@ -282,6 +282,39 @@ async def scenario_mock(browser):
     check(not real, 'no console/page errors in mock scenario ' + str(real[:5]))
     await ctx.close()
 
+async def scenario_player_resize(browser):
+    # Recreate an initial zero viewport whose later size is not delivered as a native resize event.
+    ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900})
+    await page.goto(BASE)
+    await page.wait_for_selector('.cart', timeout=10000)
+    # Install the missing-notification fixture in the game's own script context. The cartridge stays
+    # unchanged; only the runtime wrapper drops native resize notifications, retaining SDK events.
+    await page.evaluate('''() => {
+      const withSDK = PPKits.withSDK;
+      const shim = '<script>const listen=window.addEventListener.bind(window);'
+        + 'window.addEventListener=(type,callback,options)=>listen(type,type===\"resize\"?function(e){'
+        + 'if(!e.isTrusted)callback.call(this,e)}:callback,options);<\\/script>';
+      PPKits.withSDK = (...args) => withSDK(...args).replace(/<head[^>]*>/i, head => head + shim);
+    }''')
+    zero_size = await page.add_style_tag(content='#gp-screen {width:0!important;height:0!important;min-height:0!important;aspect-ratio:auto!important}')
+    await page.locator('.cart', has_text='Neon Dash').first.click()
+    await page.wait_for_selector('#gp-screen iframe', state='attached', timeout=10000)
+    frame = await (await page.locator('#gp-screen iframe').element_handle()).content_frame()
+    await frame.wait_for_function('() => window.E && E.W === 0 && E.H === 0 && E.t > 0.2 && document.readyState === "complete" && document.getElementById("c").width === 1', timeout=5000)
+    check(True, 'the player regression starts with a zero viewport and a 1px canvas')
+    await zero_size.evaluate('el => el.remove()')
+    await frame.wait_for_function('''() => {
+      const c = document.getElementById('c');
+      return E.W > 1 && E.H > 1 && c.width > 1 && c.height > 1 && E.t > 0 && c.getContext('2d').getImageData(0, 0, 1, 1).data[3] > 0;
+    }''', timeout=5000)
+    check(True, 'the SDK resizes a zero-sized player when its host grows without a native resize event')
+    await frame.locator('#c').click()
+    await page.wait_for_selector('.toast:has-text("New best")', timeout=12000)
+    check(await page.locator('#gp-panel tbody tr').count() == 1, 'the recovered player signs a real run after a canvas click')
+    real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+    check(not real, 'no console/page errors during player resize recovery ' + str(real[:5]))
+    await ctx.close()
+
 async def scenario_dark(browser):
     ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900}, color_scheme='dark')
     await page.goto(BASE)
@@ -292,6 +325,135 @@ async def scenario_dark(browser):
     await page.screenshot(path=f'{OUT}/15-dark-economy.png', full_page=True)
     await page.evaluate('location.hash = "game-kit-star-siege"'); await page.wait_for_timeout(900)
     await page.screenshot(path=f'{OUT}/16-dark-game.png', full_page=False)
+    await ctx.close()
+
+async def scenario_studio_recovery(browser):
+    # A published game's image assets and unfinished changes survive editing and switching drafts.
+    ctx, page, errs = await new_page(browser, mock=True, viewport={'width': 1280, 'height': 900})
+    await page.goto(BASE + '#create')
+    await skip_guide(page)
+    picture = os.path.join(OUT, 'recovery-hero.png')
+    with open(picture, 'wb') as f:
+        f.write(png_square(40, 30, (255, 255, 255), (200, 40, 40), 10))
+    async with page.expect_file_chooser() as fc:
+        await page.click('button[data-act="pic-add"]')
+    await (await fc.value).set_files(picture)
+    await page.wait_for_selector('.pic img', timeout=5000)
+    uploaded = await page.evaluate('__pp.studio.pics')
+    await page.click('button[data-act="new-game"]')
+    asset_draft = await page.evaluate('JSON.parse(localStorage.getItem("pp.drafts.v1"))[0]')
+    check(asset_draft['snap']['pics'] == uploaded and not asset_draft['snap']['versions'], 'an uploaded image is saved as a draft before the first prompt or build')
+    await page.locator('.drafts-list summary').click()
+    await page.click('button[data-act="open-draft"][data-id="' + asset_draft['id'] + '"]')
+    await skip_guide(page)
+    check(await page.evaluate('__pp.studio.pics') == uploaded, 'reopening the image-only draft restores the uploaded asset')
+    await page.fill('#st-prompt', 'Pop targets with recovery-hero as the hero.')
+    await page.click('button[data-act="gen-new"]')
+    await page.wait_for_selector('#st-status .chip:has-text("Play-tested")', timeout=20000)
+    original = await page.evaluate('PPHarness.picturesOf(__pp.studio.versions[__pp.studio.vi].code)')
+    check(len(original) == 1, 'the recovery fixture contains one published picture')
+    await page.click('button[data-act="publish"]')
+    await page.wait_for_selector('button[data-act="edit-game"]', timeout=10000)
+    gid = await page.evaluate('__pp.arg')
+    await page.click('button[data-act="edit-game"]')
+    restored = await page.evaluate('__pp.studio.pics.map(p => ({name:p.name,data:p.raw.split(",")[1]}))')
+    check(restored == original, 'Edit and republish restores the published picture into the studio')
+    await page.fill('#st-prompt', 'Make the targets bigger.')
+    await page.evaluate('''() => {
+      const sample = __pp.caps.sample;
+      window.__recoveryBuildStudio = __pp.studio;
+      __pp.caps.sample = async (...args) => {
+        await new Promise(resolve => { window.__releaseRecoveryBuild = resolve; });
+        __pp.caps.sample = sample;
+        return sample(...args);
+      };
+    }''')
+    await page.click('button[data-act="gen-edit"]')
+    await page.wait_for_function('typeof __releaseRecoveryBuild === "function" && __pp.studio.busy', timeout=5000)
+    check(await page.locator('button[data-act="new-game"]').is_disabled() and await page.locator('button[data-act="studio-mode"][data-mode="kit"]').is_disabled(), 'switching games and modes is disabled during an active build')
+    # Force stale controls enabled to exercise the action guards as well as the disabled UI.
+    await page.evaluate('''() => {
+      for (const selector of ['button[data-act="new-game"]', 'button[data-act="studio-mode"][data-mode="kit"]']) {
+        const button = document.querySelector(selector); button.disabled = false; button.click();
+      }
+    }''')
+    await page.wait_for_selector('.toast:has-text("Wait for the current build to finish")', timeout=5000)
+    check(await page.evaluate('__pp.studio === __recoveryBuildStudio && __pp.studio.mode === "ai" && __pp.studio.busy'), 'stale New game and mode controls cannot replace a running build')
+    await page.evaluate('__releaseRecoveryBuild()')
+    await page.wait_for_selector('button[data-act="version"][data-i="1"]', timeout=20000)
+    await page.wait_for_selector('button[data-act="gen-edit"]', timeout=15000)
+    edited = await page.evaluate('__pp.studio.versions[__pp.studio.vi].code')
+    check(await page.evaluate('PPHarness.picturesOf(__pp.studio.versions[__pp.studio.vi].code)') == original, 'an AI edit keeps the existing picture asset')
+    await page.click('button[data-act="new-game"]')
+    draft = await page.evaluate('JSON.parse(localStorage.getItem("pp.drafts.v1"))[0]')
+    check(draft['snap'].get('editing') == gid and draft['snap']['versions'][0]['code'] == edited, 'New game saves unpublished edits to a published game as a draft')
+    await page.locator('.drafts-list summary').click()
+    await page.click('button[data-act="open-draft"][data-id="' + draft['id'] + '"]')
+    check(await page.evaluate('__pp.studio.editing') == gid and await page.locator('button[data-act="publish"]').inner_text() == 'Sign & republish', 'reopening an editing draft keeps its original game identity')
+    await page.click('button[data-act="publish"]')
+    await page.wait_for_selector('button[data-act="edit-game"]', timeout=10000)
+    await page.click('.nav a[data-nav="create"]')
+    async with page.expect_file_chooser() as fc:
+        await page.click('button[data-act="pic-add"]')
+    await (await fc.value).set_files(picture)
+    await page.wait_for_function('__pp.studio.pics.length === 2', timeout=5000)
+    await page.click('button[data-act="new-game"]')
+    picture_draft = await page.evaluate('JSON.parse(localStorage.getItem("pp.drafts.v1"))[0]')
+    check(len(picture_draft['snap']['pics']) == 2, 'a new picture added after publishing is saved before another build')
+    await page.locator('.drafts-list summary').click()
+    await page.click('button[data-act="open-draft"][data-id="' + picture_draft['id'] + '"]')
+    check(await page.evaluate('__pp.studio.pics.length') == 2, 'the post-publish image draft restores both pictures')
+    await page.evaluate('location.hash = "game-" + ' + json.dumps(gid))
+    await page.wait_for_selector('#remix-in', timeout=8000)
+    await page.fill('#remix-in', 'Make the targets bigger again.')
+    await page.locator('.remix-box button[type="submit"]').click()
+    await page.wait_for_selector('button[data-act="version"][data-i="1"]', timeout=20000)
+    await page.wait_for_selector('button[data-act="gen-edit"]', timeout=15000)
+    check(await page.evaluate('PPHarness.picturesOf(__pp.studio.versions[__pp.studio.vi].code)') == original, 'one-tap remix keeps the original image asset')
+    older = await page.evaluate('__pp.studio.versions[0]')
+    await page.click('button[data-act="publish"]')
+    await page.wait_for_selector('button[data-act="edit-game"]', timeout=10000)
+    await page.click('.nav a[data-nav="create"]')
+    await page.wait_for_selector('button[data-act="version"][data-i="0"]', timeout=5000)
+    await page.click('button[data-act="version"][data-i="0"]')
+    await page.click('button[data-act="new-game"]')
+    draft = await page.evaluate('JSON.parse(localStorage.getItem("pp.drafts.v1"))[0]')
+    check(draft['snap']['vi'] == 0 and draft['snap']['versions'][0]['ts'] == older['ts'] and draft['snap']['versions'][0]['code'] == older['code'], 'a compact draft saves the selected older version even after publishing the latest version')
+    await page.locator('.drafts-list summary').click()
+    await page.click('button[data-act="open-draft"][data-id="' + draft['id'] + '"]')
+    await page.wait_for_selector('#st-screen iframe', timeout=5000)
+    check(await page.evaluate('__pp.studio.versions[__pp.studio.vi].ts') == older['ts'] and not await page.locator('button[data-act="publish"]').is_disabled(), 'the selected older version reopens as a playable, publishable draft')
+    # Choosing Remix without a prompt uses the regular remix path, which must restore images too.
+    await page.evaluate('location.hash = "game-" + ' + json.dumps(gid))
+    await page.wait_for_selector('#remix-in', timeout=8000)
+    await page.locator('.remix-box button[type="submit"]').click()
+    await page.wait_for_selector('#st-prompt', timeout=5000)
+    check(await page.evaluate('__pp.studio.pics.map(p => ({name:p.name,data:p.raw.split(",")[1]}))') == original, 'the regular remix studio restores the original picture')
+    await page.click('button[data-act="new-game"]')
+    await page.click('button[data-act="studio-mode"][data-mode="kit"]')
+    await page.fill('#kn-title', 'Unfinished kit')
+    await page.click('button[data-act="new-game"]')
+    draft = await page.evaluate('JSON.parse(localStorage.getItem("pp.drafts.v1"))[0]')
+    check(draft['snap']['mode'] == 'kit' and draft['snap']['params']['title'] == 'Unfinished kit', 'New game keeps a tuned kit as a draft')
+    # Seed history beyond the six-version storage cap, then select an old version through the UI.
+    await page.evaluate('''v => {
+      const st = __pp.studio;
+      Object.assign(st, {mode:'ai', guide:-1, parent:null, editing:null, published:null,
+        versions:Array.from({length:8}, (_, i) => Object.assign({}, v, {ts:1000+i})), vi:7});
+      localStorage.setItem('pp.studio.v1', JSON.stringify(st));
+    }''', older)
+    await page.reload()
+    await page.wait_for_selector('button[data-act="version"][data-i="7"]', timeout=10000)
+    await page.click('button[data-act="version"][data-i="0"]')
+    await page.wait_for_function('''() => {
+      const st = JSON.parse(localStorage.getItem('pp.studio.v1'));
+      return st.versions.length === 6 && st.vi === 0 && st.versions[0].ts === 1000;
+    }''', timeout=5000)
+    await page.reload()
+    await page.wait_for_selector('#st-screen iframe', timeout=10000)
+    check(await page.evaluate('__pp.studio.versions.length === 6 && __pp.studio.vi === 0 && __pp.studio.versions[0].ts === 1000') and not await page.locator('button[data-act="publish"]').is_disabled(), 'trimming stored history preserves the selected old version across reload')
+    real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+    check(not real, 'no console/page errors while recovering studio work ' + str(real[:5]))
     await ctx.close()
 
 AUDIT = r'''() => {
@@ -658,8 +820,38 @@ async def scenario_server(browser):
         check(m1['players'] == 2 and m3['players'] == 2 and m1['got'] > 2 and m3['got'] > 2 and m1['host'] and not m3['host'], f'two browsers play together through the room ({m1}, {m3})')
         check('2 players' in await page.locator('#gp-room').inner_text(), 'the room shows both players')
         await page3.screenshot(path=f'{OUT}/38-room-friend.png', full_page=True)
-        await page3.click('button[data-act="room-leave"]')
-        await page.wait_for_function("document.querySelector('#gp-room').innerText.includes('1 player')", timeout=8000)
+        # Hold overlapping sends until the server has removed this player. Leaving must abort every
+        # pending request before closing the event stream, otherwise the delayed send gets a 403.
+        held_sends, canceled_sends, send_responses = set(), set(), []
+        sends_held, release_sends, sends_settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        def settled_send():
+            if len(canceled_sends) + len(send_responses) == len(held_sends): sends_settled.set()
+        def canceled_send(request):
+            if request in held_sends:
+                canceled_sends.add(request)
+                settled_send()
+        def answered_send(response):
+            if response.request in held_sends:
+                send_responses.append(response.status)
+                settled_send()
+        async def hold_send(route):
+            held_sends.add(route.request)
+            if len(held_sends) >= 2: sends_held.set()
+            await release_sends.wait()
+            try: await route.continue_()
+            except Exception: pass  # An aborted request may already have left Playwright's route table.
+        page3.on('requestfailed', canceled_send)
+        page3.on('response', answered_send)
+        await page3.route('**/api/rooms/*/send', hold_send)
+        try:
+            await asyncio.wait_for(sends_held.wait(), timeout=5)
+            await page3.click('button[data-act="room-leave"]')
+            await page.wait_for_function("document.querySelector('#gp-room').innerText.includes('1 player')", timeout=8000)
+        finally:
+            release_sends.set()
+        try: await asyncio.wait_for(sends_settled.wait(), timeout=5)
+        except asyncio.TimeoutError: pass
+        check(len(held_sends) >= 2 and canceled_sends == held_sends and not send_responses, f'leaving aborts all overlapping room sends ({len(canceled_sends)}/{len(held_sends)} aborted, responses {send_responses})')
         check(True, 'leaving the room updates the other player')
         real3 = [e for e in errs3 if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real3, 'no console/page errors for the friend ' + str(real3[:5]))
@@ -985,6 +1177,14 @@ async def scenario_fit(browser):
             check(vis, f'every shown part fits the window at {w}x{h} ({r})')
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real, f'no console/page errors in one-screen layout at {w}x{h} {real[:3]}')
+        if not mobile:
+            # A real graphics chip shows the fixed background game; it must never become a part of the page.
+            await page.evaluate('location.hash = "home"'); await page.wait_for_timeout(600)
+            shown = await page.evaluate('''async () => { const w = document.getElementById('home-world'); if (!w) return 'no canvas';
+              const parts = () => document.querySelectorAll('#view .pg-dot').length;
+              const before = parts(); w.hidden = false; dispatchEvent(new Event('resize')); await new Promise((r) => setTimeout(r, 300));
+              const ok = parts() === before && document.querySelector('.hero-copy').getBoundingClientRect().height > 0; w.hidden = true; return ok; }''')
+            check(shown is True, f'the front page stays whole with the background game showing at {w}x{h} ({shown})')
         await ctx.close()
     ctx, page, errs = await new_page(browser, fit=True, viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
     await page.goto(SITE + '#business')
@@ -1008,7 +1208,7 @@ async def main():
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader'])
         only = os.environ.get('E2E_ONLY', '').split(',')
-        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_social, scenario_chain, scenario_mainnet, scenario_engines, scenario_fit, scenario_a11y):
+        for sc in (scenario_local, scenario_mock, scenario_player_resize, scenario_dark, scenario_studio_recovery, scenario_site, scenario_server, scenario_social, scenario_chain, scenario_mainnet, scenario_engines, scenario_fit, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
             try:
                 await sc(browser)
@@ -1017,3 +1217,4 @@ async def main():
         await browser.close()
     print('\n' + ('ALL PASSED' if not fails else f'{len(fails)} FAILED:\n- ' + '\n- '.join(fails)))
 asyncio.run(main())
+sys.exit(1 if fails else 0)

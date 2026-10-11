@@ -6,4 +6,9 @@ node_modules/
 /dist/playpark.html
 /dist/local.html
 data/
+.env
+.env.*
+/reports/*.log
+/reports/*-shots/
+__pycache__/
 .impeccable/questions/

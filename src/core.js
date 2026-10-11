@@ -467,8 +467,14 @@
           if (g.creator !== tx.from) { fail('Only the creator can update a game'); break; }
           if (b.hash != null) {
             if (!/^[0-9a-f]{64}$/.test(String(b.hash))) { fail('Bad content hash'); break; }
-            if (b.hash !== g.hash) { g.hash = b.hash; g.size = Math.floor(num(b.size)) || 0; g.versions.push({ hash: b.hash, ts: tx.ts }); }
+            if (b.hash !== g.hash) { g.hash = b.hash; g.size = Math.floor(num(b.size)) || 0; g.versions.push({ hash: b.hash, ts: tx.ts }); g.scores.clear(); }
+            if (b.kit != null) {
+              const kit = cleanText(b.kit, 20) || 'ai';
+              if (kit !== g.kit || kit === 'ai') g.params = null;
+              g.kit = kit;
+            }
             if (b.params && typeof b.params === 'object' && g.kit !== 'ai') g.params = b.params;
+            if (b.genre != null) g.genre = cleanText(b.genre, 24) || 'Arcade';
           }
           if (b.title != null) g.title = cleanText(b.title, 40) || g.title;
           if (b.desc != null) g.desc = cleanText(b.desc, 200);

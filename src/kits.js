@@ -504,6 +504,15 @@
         window.requestAnimationFrame = function (cb) { return raf(function (t) { cb(vt(t)); }); };
       } catch (e) {}
     }
+    /* A newly mounted iframe can report a zero viewport while its game starts, then gain its
+       real size without a browser resize event. Notify games once the loaded frame has a size. */
+    window.addEventListener('load', function () {
+      function sized() {
+        if (innerWidth > 0 && innerHeight > 0) window.dispatchEvent(new Event('resize'));
+        else requestAnimationFrame(sized);
+      }
+      requestAnimationFrame(sized);
+    });
     /* Calm motion: kit games read their screen shake from E.shake, so pin it at zero. */
     if (o.calm) {
       try {

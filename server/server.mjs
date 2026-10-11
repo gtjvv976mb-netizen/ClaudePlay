@@ -256,6 +256,7 @@ export function createServer(opts = {}) {
   /* Multiplayer rooms: POST /api/rooms { gid } opens one; GET /api/rooms/<code>/events?gid=&name= streams
      it (Server-Sent Events); POST /api/rooms/<code>/send { id, token, msgs } relays a player's messages. */
   async function room(req, res, url) {
+    if (rooms.ready && !(await rooms.ready())) return send(res, 503, { code: 'unavailable', message: 'Multiplayer rooms cannot check today\u2019s traffic allowance right now. Try again in a minute.' });
     const who = visitor(req);
     const parts = url.pathname.split('/').filter(Boolean); // api, rooms, code, action
     const reply = (r) => (r.status === 204 ? (res.writeHead(204, { 'cache-control': 'no-store' }), res.end()) : send(res, r.status, r.body));

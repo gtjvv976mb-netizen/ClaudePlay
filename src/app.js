@@ -583,7 +583,7 @@
   function netDeliver(p, m) { try { p.frame.contentWindow.postMessage(Object.assign({ __ppnet: 1 }, m), '*'); } catch (e) { /* the frame is gone */ } }
   function unmountPlayer(id) {
     const p = S.players.get(id);
-    if (p) { try { p.frame.remove(); } catch (e) { /* ignore */ } if (p.opts.room) p.opts.room.close(); S.players.delete(id); }
+    if (p) { clearTimeout(p.scoreTimer); try { p.frame.remove(); } catch (e) { /* ignore */ } if (p.opts.room) p.opts.room.close(); S.players.delete(id); }
   }
   window.addEventListener('message', (e) => {
     const d = e.data;
@@ -634,24 +634,35 @@
       const url = roomBase() + '/' + encodeURIComponent(code) + '/events?gid=' + encodeURIComponent(gid) + '&name=' + encodeURIComponent(S.wallet ? nameOf(S.wallet.from) : 'Player');
       const es = new EventSource(url);
       let ep = null, queue = [], timer = null, closed = false;
+      const sends = new Set();
+      const stop = () => {
+        if (closed) return;
+        closed = true;
+        clearTimeout(timer); timer = null; queue = [];
+        sends.forEach((ctl) => ctl.abort()); sends.clear();
+        es.close();
+      };
       const flush = async () => {
         timer = null;
         if (!queue.length || closed) return;
         const msgs = queue.splice(0, 40);
-        try { await fetch(roomBase() + '/' + code + '/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: ep.hello.me, token: ep.token, msgs }) }); } catch (e) { /* dropped, like a lost packet */ }
-        if (queue.length && !timer) timer = setTimeout(flush, 50);
+        const ctl = new AbortController(); sends.add(ctl);
+        try { await fetch(roomBase() + '/' + code + '/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: ep.hello.me, token: ep.token, msgs }), signal: ctl.signal }); } catch (e) { /* dropped, like a lost packet */ }
+        finally { sends.delete(ctl); }
+        if (!closed && queue.length && !timer) timer = setTimeout(flush, 50);
       };
       es.onmessage = (e) => {
+        if (closed) return;
         let m; try { m = JSON.parse(e.data); } catch (err) { return; }
         if (m.t === 'hello') {
-          ep = endpoint({ me: m.you, host: m.host, players: m.players }, m.seed, (d, to) => { if (queue.length < 400) queue.push({ d, to }); if (!timer) timer = setTimeout(flush, 50); }, () => { closed = true; es.close(); });
+          ep = endpoint({ me: m.you, host: m.host, players: m.players }, m.seed, (d, to) => { if (closed) return; if (queue.length < 400) queue.push({ d, to }); if (!timer) timer = setTimeout(flush, 50); }, stop);
           ep.token = m.token;
           ok(ep); onChange(ep);
         } else if (ep) { ep.emit(m); if (m.t !== 'msg') onChange(ep); }
       };
       es.onerror = () => {
         if (closed) return;
-        closed = true; es.close();
+        stop();
         if (!ep) fail(new Error('Could not join that room. It may have closed or be full.'));
         else { ep.emit({ t: 'closed' }); onChange(ep, true); }
       };
@@ -892,6 +903,15 @@
     }
   }
   const stylePics = (pics, style) => Promise.all((pics || []).map(async (p) => Object.assign({ name: p.name }, await stylePic(p.raw, style))));
+  const savedPics = (code) => H.picturesOf(code).map((p) => ({ name: p.name, raw: 'data:image/png;base64,' + p.data }));
+  // A small change marker for draft recovery, without storing another copy of each image.
+  function pictureStamp(pics) {
+    return JSON.stringify((pics || []).map((p) => {
+      const raw = String(p.raw || ''); let hash = 2166136261;
+      for (let i = 0; i < raw.length; i++) hash = Math.imul(hash ^ raw.charCodeAt(i), 16777619);
+      return [p.name, raw.length, hash >>> 0];
+    }));
+  }
   function picsHTML() {
     const st = S.studio, pics = st.pics || [];
     return '<div class="stack" style="gap:8px"><p class="eyebrow" id="pics-label">Your pictures</p>'
@@ -918,6 +938,11 @@
       parent: null, title: '', desc: '', price: 0.05, cap: 0, busy: false, stream: null, error: null, lastRun: null,
     };
   }
+  function studioIdle() {
+    if (!S.studio || !S.studio.busy) return true;
+    toast('Wait for the current build to finish, or stop it first.');
+    return false;
+  }
   function loadStudio() {
     const st = LS.get(KEY.studio);
     S.studio = Object.assign(newStudio(), st || {}, { busy: false, stream: null });
@@ -927,9 +952,11 @@
   let studioSaveTimer = null;
   /* What the studio keeps between visits: the settings, the chat and the last n versions. */
   function studioSnapshot(st, n) {
-    const keep = { guide: st.guide, guided: st.guided, mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-n), vi: st.vi, chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, players: st.players, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap, vis: st.vis, editing: st.editing, draftId: st.draftId, published: st.published };
-    if (st.versions.length > n) keep.vi = Math.max(-1, st.vi - (st.versions.length - n));
-    return keep;
+    const versions = st.versions.slice(-n), selected = st.versions[st.vi];
+    // Trimming history must keep the game the creator selected, including an undone change.
+    if (selected && !versions.includes(selected)) versions[0] = selected;
+    const published = st.published && st.published.n === st.versions.length ? Object.assign({}, st.published, { n: versions.length }) : st.published;
+    return { guide: st.guide, guided: st.guided, mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions, vi: selected ? versions.indexOf(selected) : -1, chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, players: st.players, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap, vis: st.vis, editing: st.editing, draftId: st.draftId, published };
   }
   function saveStudio() {
     clearTimeout(studioSaveTimer);
@@ -942,10 +969,25 @@
      or delete them. Starting a new game or editing a published one files the current studio as a draft. */
   const studioTitle = (st) => (st.mode === 'kit' ? st.params.title : st.title || ((st.versions[st.vi] || {}).meta || {}).title || ideaName(st.prompt || '')) || 'Untitled draft';
   // A studio whose game was just published, with nothing new since, is not a draft.
-  const studioHasWork = (st) => !!(st && ((st.prompt || '').trim() || (!(st.published && st.published.n === st.versions.length) && (st.versions.length || (st.mode === 'kit' && st.parent)))));
+  function studioHasWork(st) {
+    if (!st) return false;
+    if ((st.prompt || '').trim()) return true;
+    const pics = !!(st.pics && st.pics.length);
+    const samePics = st.published && (st.published.pics != null ? st.published.pics === pictureStamp(st.pics) : !pics);
+    if (st.published && !samePics) return true;
+    if (st.mode === 'kit') {
+      const params = JSON.stringify(st.params);
+      if (st.published && st.published.kit === st.kit && st.published.params === params) return false;
+      return !!(pics || st.parent || st.editing || st.kit !== 'runner' || params !== JSON.stringify(newStudio().params));
+    }
+    const selected = st.versions[st.vi];
+    const publishedSelected = st.published && (st.published.version != null ? selected && selected.ts === st.published.version : st.vi === st.published.n - 1);
+    if (st.published && st.published.n === st.versions.length && publishedSelected) return false;
+    return !!(st.versions.length || pics);
+  }
   function listDrafts() { const d = LS.get(KEY.drafts); return Array.isArray(d) ? d : []; }
   function stashDraft(st) {
-    if (!studioHasWork(st) || st.editing) return;
+    if (!studioHasWork(st)) return;
     const id = st.draftId || 'd' + C.randHex(6);
     const entry = { id, title: studioTitle(st).slice(0, 40), ts: Date.now(), snap: Object.assign(studioSnapshot(st, 1), { draftId: id }) };
     const list = [entry].concat(listDrafts().filter((d) => d.id !== id)).slice(0, 8);
@@ -954,9 +996,10 @@
   function dropDraft(id) { LS.set(KEY.drafts, listDrafts().filter((d) => d.id !== id)); }
   function draftsHTML() {
     const st = S.studio, list = listDrafts().filter((d) => d.id !== st.draftId);
-    return '<div class="drafts row"><button class="btn small" type="button" data-act="new-game">New game</button>'
+    const disabled = st.busy ? ' disabled' : '';
+    return '<div class="drafts row"><button class="btn small" type="button" data-act="new-game"' + disabled + '>New game</button>'
       + (st.editing ? '<span class="chip accent">Editing your published game</span>' : '')
-      + (list.length ? '<details class="drafts-list"><summary>Drafts (' + list.length + ')</summary><ul>' + list.map((d) => '<li><button class="linkish" type="button" data-act="open-draft" data-id="' + esc(d.id) + '">' + esc(d.title) + '</button> <span class="muted">' + esc(ago(d.ts)) + '</span> <button class="btn small ghost" type="button" data-act="del-draft" data-id="' + esc(d.id) + '" aria-label="Delete draft ' + esc(d.title) + '">Delete</button></li>').join('') + '</ul></details>' : '')
+      + (list.length ? '<details class="drafts-list"><summary>Drafts (' + list.length + ')</summary><ul>' + list.map((d) => '<li><button class="linkish" type="button" data-act="open-draft" data-id="' + esc(d.id) + '"' + disabled + '>' + esc(d.title) + '</button> <span class="muted">' + esc(ago(d.ts)) + '</span> <button class="btn small ghost" type="button" data-act="del-draft" data-id="' + esc(d.id) + '" aria-label="Delete draft ' + esc(d.title) + '">Delete</button></li>').join('') + '</ul></details>' : '')
       + '</div>';
   }
   function studioCode() {
@@ -1032,7 +1075,8 @@
   function paneBlocks(v) {
     const out = [];
     for (const el of v.children) {
-      if (el.classList.contains('pager')) continue;
+      // The pager and anything out of the flow (the fixed background game on the front page) never take a pane.
+      if (el.classList.contains('pager') || /fixed|absolute/.test(getComputedStyle(el).position)) continue;
       // One-column layouts on narrow screens split into their columns, so each column can get a pane of its own.
       if (el.matches('.pack, .gp-grid, .studio, .grid2, .hero') && matchMedia('(max-width: 960px)').matches) out.push(...el.children); else out.push(el);
     }
@@ -1083,7 +1127,7 @@
     S.ui.panes = groups;
     groups.forEach((g, gi) => g.forEach((bi, k) => { if (gi !== S.ui.pane) blocks[bi].classList.add('fit-off'); else if (!k) blocks[bi].classList.add('fit-lead'); }));
     // A split layout whose columns are all on other panes is hidden too, so its margin takes no room.
-    for (const el of v.children) if (!blocks.includes(el)) el.classList.toggle('fit-off', [...el.children].every((c) => c.classList.contains('fit-off')));
+    for (const el of v.children) if (!blocks.includes(el) && el.firstElementChild && blocks.includes(el.firstElementChild)) el.classList.toggle('fit-off', [...el.children].every((c) => c.classList.contains('fit-off')));
     if (groups.length < 2) { if (pager) pager.remove(); return; }
     const names = groups.map((g, gi) => paneName(g.map((i) => blocks[i]), gi));
     const html = '<button class="pg-step" type="button" data-act="pane" data-pane="' + (S.ui.pane - 1) + '"' + (S.ui.pane ? '' : ' disabled') + ' aria-label="Previous part">' + I.chev + '</button>'
@@ -1945,7 +1989,8 @@
   }
   function studioLeft() {
     const st = S.studio;
-    const seg = '<div class="seg" role="group" aria-label="How to build"><button type="button" data-act="studio-mode" data-mode="ai" aria-pressed="' + (st.mode === 'ai') + '">Describe with AI</button><button type="button" data-act="studio-mode" data-mode="kit" aria-pressed="' + (st.mode === 'kit') + '">Tune a kit</button></div>';
+    const disabled = st.busy ? ' disabled' : '';
+    const seg = '<div class="seg" role="group" aria-label="How to build"><button type="button" data-act="studio-mode" data-mode="ai" aria-pressed="' + (st.mode === 'ai') + '"' + disabled + '>Describe with AI</button><button type="button" data-act="studio-mode" data-mode="kit" aria-pressed="' + (st.mode === 'kit') + '"' + disabled + '>Tune a kit</button></div>';
     let body;
     if (st.mode === 'ai') {
       if (!aiReady()) {
@@ -1975,7 +2020,7 @@
     } else {
       const k = K.KITS[st.kit];
       body = '<div class="panel stack"><p class="eyebrow">Pick a kit</p><div class="kitpick">'
-        + Object.values(K.KITS).map((x) => '<button type="button" data-act="kit" data-kit="' + x.id + '" aria-pressed="' + (st.kit === x.id) + '"><b>' + esc(x.name) + '</b><small>' + esc(x.blurb) + '</small></button>').join('') + '</div>'
+        + Object.values(K.KITS).map((x) => '<button type="button" data-act="kit" data-kit="' + x.id + '" aria-pressed="' + (st.kit === x.id) + '"' + disabled + '><b>' + esc(x.name) + '</b><small>' + esc(x.blurb) + '</small></button>').join('') + '</div>'
         + '<label class="field">Title<input id="kn-title" type="text" maxlength="40" data-in="kit-title" value="' + esc(st.params.title) + '"></label>'
         + '<div class="stack" style="gap:8px"><p class="eyebrow">Palette</p><div class="swatches" role="group" aria-label="Palette">' + Object.entries(K.PALETTES).map(([key, p]) => '<button class="swatch" type="button" data-act="palette" data-pal="' + key + '" aria-pressed="' + (st.params.palette === key) + '" title="' + p.name + '" style="background:linear-gradient(135deg,' + p.bg1 + ' 0 45%,' + p.a1 + ' 45% 70%,' + p.a2 + ' 70%)"><span class="sr">' + p.name + '</span></button>').join('')
         + brandSwatch(st) + '</div>' + (st.params.palette === 'custom' ? brandFields(st.params.colors) : '') + '</div>'
@@ -2063,7 +2108,7 @@
     const ready = !!studioCode();
     const v = st.mode === 'ai' && !st.busy ? st.versions[st.vi] : null, bi = v && v.base ? st.versions.findIndex((x) => x.ts === v.base) : -1;
     const hist = bi >= 0 ? '<button class="btn small ghost" type="button" data-act="undo-version">Undo change</button><button class="btn small ghost" type="button" data-act="compare" aria-pressed="' + !!st.compare + '">Before and after</button><button class="btn small ghost" type="button" data-act="view-changes">What changed</button>' : '';
-    const versions = st.mode === 'ai' && st.versions.length > 1 ? '<div class="versions" role="group" aria-label="Versions">' + st.versions.map((v, i) => '<button class="chip" type="button" data-act="version" data-i="' + i + '" aria-pressed="' + (i === st.vi) + '">v' + (i + 1) + '</button>').join('') + '</div>' : '';
+    const versions = st.mode === 'ai' && st.versions.length > 1 ? '<div class="versions" role="group" aria-label="Versions">' + st.versions.map((v, i) => '<button class="chip" type="button" data-act="version" data-i="' + i + '" aria-pressed="' + (i === st.vi) + '"' + (st.busy ? ' disabled' : '') + '>v' + (i + 1) + '</button>').join('') + '</div>' : '';
     return '<button class="btn small" type="button" data-act="restart"' + (ready ? '' : ' disabled') + '>Restart</button>'
       + '<button class="btn small ghost" type="button" data-act="fullscreen-studio"' + (ready ? '' : ' disabled') + '>Fullscreen</button>'
       + (st.mode === 'ai' && isMulti(studioCode()) ? '<button class="btn small" type="button" data-act="mp-test" aria-pressed="' + !!st.mp + '">' + (st.mp ? 'One player' : 'Test 2 players') + '</button>' : '')
@@ -2263,13 +2308,13 @@
     const errText = kind === 'fix' ? (found ? 'Problems an automatic play-test found:\n- ' + found.join('\n- ') : st.error || '') : '';
     if (kind === 'fix' && !errText) return;
     const ask = kind === 'fix' ? lastAsk(st) : prompt;
-    await ensureWallet();
-    await ensureSparks(R.GEN_COST[kind]);
     st.busy = true;
+    try { await ensureWallet(); await ensureSparks(R.GEN_COST[kind]); }
+    catch (e) { st.busy = false; throw e; }
     st.stream = { phase: 'Thinking…', tail: '' };
     if (!o.auto) st.chat.push({ role: 'user', text: kind === 'fix' ? (found ? 'Fix what the play-test found.' : 'Fix the error: ' + errText) : prompt });
     if (kind !== 'fix') st.prompt = '';
-    rerenderStudioLeft();
+    rerenderStudioLeft(); rerenderStudioRight();
     const ctl = new AbortController();
     S.ctl = ctl;
     let added = false, autoFix = null;
@@ -2365,7 +2410,7 @@
     const firstPrompt = st.mode === 'ai' ? (st.chat.find((m) => m.role === 'user') || {}).text || '' : '';
     const vis = st.vis === 'unlisted' ? 'unlisted' : 'listed', players = isMulti(code) ? 'multi' : '';
     const { tx } = live
-      ? await signAndAppend('update', { gid, hash, size: code.length, title, desc: (st.desc || meta.desc || '').slice(0, 200), vis, players, params: st.mode === 'kit' ? st.params : null })
+      ? await signAndAppend('update', { gid, hash, size: code.length, title, genre: st.mode === 'kit' ? K.KITS[st.kit].genre : meta.genre || 'Arcade', desc: (st.desc || meta.desc || '').slice(0, 200), vis, players, kit: st.mode === 'kit' ? st.kit : 'ai', params: st.mode === 'kit' ? st.params : null })
       : await signAndAppend('publish', {
         gid, title, genre: st.mode === 'kit' ? K.KITS[st.kit].genre : meta.genre || 'Arcade', desc: (st.desc || meta.desc || '').slice(0, 200),
         prompt: firstPrompt.slice(0, 600), hash, size: code.length, parent: st.parent || null,
@@ -2373,7 +2418,7 @@
       });
     toast((live ? 'Republished ' : 'Published ') + title + (vis === 'unlisted' ? ' as unlisted: share the link to let people play.' : '. Signed with your wallet.'), null, short(tx.sig, 6, 6));
     if (st.draftId) dropDraft(st.draftId);
-    S.studio.parent = null; S.studio.title = ''; S.studio.desc = ''; S.studio.editing = null; S.studio.draftId = null; S.studio.published = { gid, n: st.versions.length };
+    S.studio.parent = null; S.studio.title = ''; S.studio.desc = ''; S.studio.editing = null; S.studio.draftId = null; S.studio.published = { gid, n: st.versions.length, version: v ? v.ts : null, pics: pictureStamp(st.pics), kit: st.mode === 'kit' ? st.kit : null, params: st.mode === 'kit' ? JSON.stringify(st.params) : null };
     saveStudio();
     nav('game', gid);
   }
@@ -2401,14 +2446,17 @@
     return { ok: true };
   }
   async function oneTapRemix(gid, prompt) {
+    if (!studioIdle()) return;
     const g = S.world.games.get(gid);
     if (!g) return;
     if (!prompt || !aiReady()) return startRemix(gid);
     const code = await getBlob(g.hash);
+    if (!studioIdle()) return;
     if (!code) throw new Error('The game file is not available, so it cannot be remixed here.');
     const st = newStudio();
     st.parent = gid; st.mode = 'ai'; st.guide = -1;
     st.versions = [{ code, meta: readMeta(code), kind: 'original', ts: Date.now() }]; st.vi = 0;
+    st.pics = savedPics(code);
     st.title = (g.title + ' Remix').slice(0, 40);
     st.chat = [{ role: 'note', text: 'Remixing ' + g.title + (g.starter ? ', a free starter kit.' : ' by ' + nameOf(g.creator) + '. They are credited on your game and earn ' + pct(R.PARENT_BPS) + ' of its collects.') }];
     st.prompt = prompt;
@@ -2417,6 +2465,7 @@
     await generate('edit');
   }
   async function startRemix(gid) {
+    if (!studioIdle()) return;
     const g = S.world.games.get(gid);
     if (!g) return;
     stashDraft(S.studio);
@@ -2428,10 +2477,12 @@
       st.params = K.normalizeParams(g.kit, Object.assign({}, g.params, { title: (g.title + ' Remix').slice(0, 40) }));
     } else {
       const code = await getBlob(g.hash);
+      if (!studioIdle()) return;
       if (!code) throw new Error('The game file is not available, so it cannot be remixed here.');
       st.mode = 'ai';
       st.versions = [{ code, meta: readMeta(code), kind: 'original', ts: Date.now() }];
       st.vi = 0;
+      st.pics = savedPics(code);
       st.title = (g.title + ' Remix').slice(0, 40);
       st.chat = [{ role: 'note', text: 'Remixing ' + g.title + ' by ' + nameOf(g.creator) + '. Describe what to change, then press Apply change.' }];
     }
@@ -2797,8 +2848,8 @@
       updateGame(g);
     },
     'restart': () => loadPreview(),
-    'studio-mode': (el) => { S.studio.mode = el.dataset.mode; saveStudio(); rerenderStudioLeft(); loadPreview(); },
-    'kit': (el) => { const st = S.studio; const prevTitle = st.params.title; st.kit = el.dataset.kit; st.params = K.normalizeParams(st.kit, { title: prevTitle, palette: st.params.palette, colors: st.params.colors, shape: st.params.shape }); saveStudio(); rerenderStudioLeft(); refocus('[data-act="kit"][data-kit="' + st.kit + '"]'); loadPreview(); },
+    'studio-mode': (el) => { if (!studioIdle()) return; S.studio.mode = el.dataset.mode; saveStudio(); rerenderStudioLeft(); loadPreview(); },
+    'kit': (el) => { if (!studioIdle()) return; const st = S.studio; const prevTitle = st.params.title; st.kit = el.dataset.kit; st.params = K.normalizeParams(st.kit, { title: prevTitle, palette: st.params.palette, colors: st.params.colors, shape: st.params.shape }); saveStudio(); rerenderStudioLeft(); refocus('[data-act="kit"][data-kit="' + st.kit + '"]'); loadPreview(); },
     'palette': (el) => {
       const st = S.studio, pal = el.dataset.pal;
       if (pal === 'custom') { st.params.palette = 'custom'; st.params.colors = K.cleanColors(st.brand || st.params.colors); }
@@ -2806,6 +2857,7 @@
       saveStudio(); rerenderStudioLeft(); refocus('[data-act="palette"][data-pal="' + pal + '"]'); loadPreview(150);
     },
     'brand-demo': () => {
+      if (!studioIdle()) return;
       const st = S.studio || newStudio();
       st.mode = 'kit'; st.parent = null; st.kit = 'runner';
       st.brand = K.cleanColors(st.brand || K.CUSTOM_DEFAULT);
@@ -2821,8 +2873,8 @@
     'dim': (el) => { S.studio.dim = el.dataset.dim; $$('[data-act="dim"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.dim === S.studio.dim))); saveStudio(); },
     'style': (el) => { const s = el.dataset.style; S.studio.style = S.studio.style === s ? '' : s; $$('[data-act="style"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.style === S.studio.style))); saveStudio(); },
     'idea': (el) => { const idea = el.dataset.idea || el.textContent; S.studio.prompt = idea; const t = $('#st-prompt'); if (t) { t.value = idea; t.focus(); } saveStudio(); },
-    'home-idea': (el) => { S.studio.mode = 'ai'; S.studio.prompt = el.dataset.idea; S.studio.guide = -1; saveStudio(); nav('create'); },
-    'home-kit': () => { if (!S.studio.versions.length) S.studio.mode = 'kit'; saveStudio(); nav('create'); },
+    'home-idea': (el) => { if (!studioIdle()) return; S.studio.mode = 'ai'; S.studio.prompt = el.dataset.idea; S.studio.guide = -1; saveStudio(); nav('create'); },
+    'home-kit': () => { if (!studioIdle()) return; if (!S.studio.versions.length) S.studio.mode = 'kit'; saveStudio(); nav('create'); },
     'guide-genre': (el) => { const st = S.studio; st.genre = el.dataset.v; st.guided = true; guideNext(st); },
     'guide-dim': (el) => { const st = S.studio; st.dim = el.dataset.v; guideNext(st); },
     'guide-players': (el) => { const st = S.studio; st.players = el.dataset.v; guideNext(st); },
@@ -2877,6 +2929,7 @@
       return generate('edit');
     },
     'undo-version': (el) => {
+      if (!studioIdle()) return;
       if (el && el.dataset.close) closeModal();
       const st = S.studio, v = st.versions[st.vi], i = v ? st.versions.findIndex((x) => x.ts === v.base) : -1;
       if (i < 0) return;
@@ -2886,17 +2939,19 @@
     },
     'compare': () => { S.studio.compare = !S.studio.compare; if (S.studio.compare) S.studio.mp = false; loadPreview(); },
     'view-changes': () => showChanges(),
-    'version': (el) => { S.studio.vi = Number(el.dataset.i); saveStudio(); rerenderStudioLeft(); loadPreview(); },
+    'version': (el) => { if (!studioIdle()) return; S.studio.vi = Number(el.dataset.i); saveStudio(); rerenderStudioLeft(); loadPreview(); },
     'clear-parent': () => { S.studio.parent = null; saveStudio(); rerenderStudioLeft(); },
     'publish': async () => { await publish(); },
     'vis': (el) => { S.studio.vis = el.dataset.vis; saveStudio(); const p = $('#st-publish'); if (p) p.outerHTML = publishPanel(); refocus('[data-act="vis"][data-vis="' + S.studio.vis + '"]'); },
     'new-game': () => {
+      if (!studioIdle()) return;
       stashDraft(S.studio);
       unmountPlayer('st-p1'); unmountPlayer('st-p2');
       S.studio = newStudio(); saveStudio(); mountStudio();
       toast(listDrafts().length ? 'Started a new game. Your last one is in Drafts.' : 'Started a new game.');
     },
     'open-draft': (el) => {
+      if (!studioIdle()) return;
       const d = listDrafts().find((x) => x.id === el.dataset.id); if (!d) return;
       stashDraft(S.studio);
       S.studio = Object.assign(newStudio(), d.snap, { busy: false, stream: null, draftId: d.id });
@@ -2905,13 +2960,16 @@
     },
     'del-draft': (el) => { dropDraft(el.dataset.id); rerenderStudioLeft(); const b = $('[data-act="new-game"]'); if (b) b.focus(); toast('Draft deleted.'); },
     'edit-game': async (el) => {
+      if (!studioIdle()) return;
       const g = gameOf(el); if (!g || !S.wallet || g.creator !== S.wallet.from) return;
       const st = newStudio();
       if (g.kit !== 'ai' && K.KITS[g.kit]) { st.mode = 'kit'; st.kit = g.kit; st.params = K.normalizeParams(g.kit, Object.assign({}, g.params, { title: g.title })); }
       else {
         const code = await getBlob(g.hash);
+        if (!studioIdle()) return;
         if (!code) throw new Error('The game file is not on this device, so it cannot be edited here.');
         st.mode = 'ai'; st.versions = [{ code, meta: readMeta(code), kind: 'original', ts: Date.now() }]; st.vi = 0;
+        st.pics = savedPics(code);
         st.chat = [{ role: 'note', text: 'Editing ' + g.title + '. Ask for changes, play them here, then republish. The live game stays as it is until you do.' }];
       }
       st.editing = g.gid; st.title = g.title; st.desc = g.desc || ''; st.vis = g.vis || 'listed'; st.guide = -1;
@@ -3012,6 +3070,7 @@
         toast('Handle saved.');
         renderView(true);
       } else if (kind === 'home-build') {
+        if (!studioIdle()) return;
         const t = $('#home-prompt'), v = ((t && t.value) || '').trim();
         if (!v) { toast('Describe your game first.'); if (t) t.focus(); return; }
         S.studio.mode = 'ai'; S.studio.prompt = v; S.studio.guide = -1; saveStudio();
