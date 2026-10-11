@@ -14,7 +14,7 @@ const SITE = { contact: process.env.GP_CONTACT || '', mascot: 'mascot-wave.webp'
 // The mascot: a small still is inlined into the page (so the claude.ai artifact shows it too);
 // its animated loop ships next to the website as its own file and loads after the page.
 const MASCOT_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/mascot.webp')).toString('base64');
-const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'app.js'].map((f) => {
+const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'qr.js', 'app.js'].map((f) => {
   const s = read(f).replace("'MASCOT_STILL'", () => JSON.stringify(MASCOT_STILL));
   for (const bad of ['</script', '<!--', '<script']) if (s.toLowerCase().includes(bad)) throw new Error(f + ' contains ' + bad);
   return s;

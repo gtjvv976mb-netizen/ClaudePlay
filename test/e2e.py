@@ -6,6 +6,7 @@ SITE = 'http://127.0.0.1:8765/site/index.html'
 AI_SITE = 'http://127.0.0.1:8766/'
 CHAIN_SITE = 'http://127.0.0.1:8767/'
 MAIN_SITE = 'http://127.0.0.1:8768/'
+SOCIAL_SITE = 'http://127.0.0.1:8769/'
 OUT = sys.argv[1] if len(sys.argv) > 1 else '/tmp/shots'
 os.makedirs(OUT, exist_ok=True)
 MOCK = open(os.path.join(os.path.dirname(__file__), 'mock_claude.js')).read()
@@ -38,6 +39,12 @@ async def new_page(browser, mock=False, fit=False, **kw):
     page.on('console', lambda m: errs.append('console.' + m.type + ': ' + m.text) if m.type in ('error',) else None)
     return ctx, page, errs
 
+async def skip_guide(page, timeout=15000):
+    # A fresh studio opens on the guided steps; skip them to reach the full form.
+    await page.wait_for_selector('#st-prompt, button[data-act="guide-skip"]', timeout=timeout)
+    if await page.locator('button[data-act="guide-skip"]').count(): await page.click('button[data-act="guide-skip"]')
+    await page.wait_for_selector('#st-prompt', timeout=5000)
+
 async def toast_text(page):
     return ' | '.join(await page.locator('.toast').all_inner_texts())
 
@@ -58,8 +65,17 @@ async def scenario_local(browser):
     await page.locator('.cart', has_text='Neon Dash').first.click()
     await page.wait_for_selector('#gp-screen iframe', timeout=10000)
     await page.wait_for_timeout(600)
-    await play_until_over(page, '#gp-screen iframe')
-    await page.wait_for_selector('.toast:has-text("New best")', timeout=15000)
+    for attempt in range(3):
+        await play_until_over(page, '#gp-screen iframe')
+        try:
+            await page.wait_for_selector('.toast:has-text("New best")', timeout=8000)
+            break
+        except Exception:
+            if attempt == 2:
+                await page.screenshot(path=f'{OUT}/debug-local.png', full_page=True)
+                print('DEBUG toasts', await page.locator('.toast').all_inner_texts(), errs[:5], await page.evaluate('scrollY'))
+                raise
+            print('     retrying the first run (attempt', attempt + 2, ')')
     check(True, 'runner game over -> score signed: ' + await toast_text(page))
     await page.wait_for_timeout(400)
     rows = await page.locator('#gp-panel tbody tr').count()
@@ -68,7 +84,7 @@ async def scenario_local(browser):
     check('…' in chip, 'wallet auto-created: ' + chip.replace('\n', ' '))
     await page.screenshot(path=f'{OUT}/02-game.png', full_page=True)
     # remix via kit knobs and publish
-    await page.click('button[data-act="remix"]')
+    await page.click('.remix-box button[type="submit"]')
     await page.wait_for_selector('#st-screen iframe', timeout=8000)
     title = await page.input_value('#kn-title')
     check(title == 'Neon Dash Remix', 'remix prefilled title: ' + title)
@@ -173,6 +189,16 @@ async def scenario_mock(browser):
     check(seg.startswith('Describe'), 'AI mode active when sample capability exists: ' + seg)
     foot = await page.locator('.foot').inner_text()
     check('Connected to the shared gallery' in foot, 'shared mode footer')
+    # The guided start: kind of game, then 2D or 3D, then players, then the description.
+    await page.wait_for_selector('#guide-q', timeout=5000)
+    check('kind of game' in await page.locator('#guide-q').inner_text(), 'a fresh studio opens on the guided steps')
+    await page.screenshot(path=f'{OUT}/10a-guide.png')
+    await page.click('button.pick[data-act="guide-genre"][data-v="Arcade"]')
+    await page.wait_for_selector('button.pick[data-act="guide-dim"]', timeout=3000)
+    await page.click('button.pick[data-act="guide-dim"][data-v="2d"]')
+    await page.click('button.pick[data-act="guide-players"][data-v=""]')
+    await page.wait_for_selector('#st-prompt', timeout=3000)
+    check(await page.input_value('#st-genre') == 'Arcade' and await page.evaluate('document.activeElement.id') == 'st-prompt', 'the guided picks carry into the form and focus the description')
     await page.fill('#st-prompt', 'Pop glowing targets before they fade, 30 second rounds.')
     await page.click('button[data-act="style"][data-style="Neon arcade"]')
     await page.click('button[data-act="gen-new"]')
@@ -183,11 +209,21 @@ async def scenario_mock(browser):
     await page.wait_for_selector('#st-screen iframe', timeout=5000)
     t = await page.input_value('#pub-title')
     check(t == 'Target Pop', 'meta title read from generated file: ' + t)
+    chat = await page.locator('#st-chat').inner_text()
+    check('Play-tested v1' in chat and await page.locator('#st-status .chip:has-text("Play-tested")').count() == 1 and await page.locator('#st-test').count() == 0, 'every build is play-tested before the creator sees it')
     await page.screenshot(path=f'{OUT}/10-studio-ai.png', full_page=True)
     # test run in preview
+    # After a full-page screenshot of a scrolled page, headless Chrome sends clicks past the game frame
+    # until the page scrolls again, so scroll to the top first (the guided start leaves the description in view).
+    await page.evaluate('scrollTo(0, 0)'); await page.wait_for_timeout(200)
     box = await page.locator('#st-screen iframe').bounding_box()
-    await page.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
-    await page.wait_for_selector('#st-status:has-text("Test run scored")', timeout=8000)
+    for attempt in range(3):
+        await page.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
+        try:
+            await page.wait_for_selector('#st-status:has-text("Test run scored")', timeout=5000)
+            break
+        except Exception:
+            if attempt == 2: raise
     check(True, 'preview reports test run score')
     # edit
     await page.fill('#st-prompt', 'Make the targets bigger.')
@@ -454,6 +490,9 @@ async def scenario_server(browser):
         check(True, 'server build streamed and loaded: ' + await toast_text(page))
         await page.wait_for_selector('#st-screen iframe', timeout=5000)
         check(await page.input_value('#pub-title') == 'Block Miner', 'game title read from the built file')
+        tests = json.loads(urllib.request.urlopen(AI_SITE + '__playtests').read())
+        check(len(tests) == 1 and tests[0]['images'] == 3 and tests[0]['model'] == 'claude-haiku-5-5' and 'errors: none' in tests[0]['log'], 'Claude reviews three play-test screenshots and the run log: ' + json.dumps(tests)[:200])
+        check('Claude played it and found nothing to fix' in await page.locator('#st-chat').inner_text(), 'the play-test result shows in the chat')
         calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
         check(len(calls) == 1 and calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nBlock Miner'), 'free plan sent the new game idea to Sonnet 5.5: ' + json.dumps(calls)[:160])
         plan = await page.locator('#st-plan').inner_text()
@@ -464,6 +503,44 @@ async def scenario_server(browser):
         await page.wait_for_selector('button[data-act="version"][data-i="1"]', timeout=20000)
         calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
         check(len(calls) == 2 and calls[1]['model'] == 'claude-haiku-5-5', 'change request went to Haiku 5.5')
+        # Changes are small patches, with what changed, before and after, and undo.
+        await page.wait_for_selector('.toast:has-text("Built Block Miner")', timeout=20000)
+        check(calls[1].get('patch') and 'Changed 1 part of the game for v2' in await page.locator('#st-chat').inner_text(), 'the change came back as a patch: ' + (await page.locator('#st-chat').inner_text())[-160:])
+        await page.wait_for_selector('#st-screen iframe', timeout=5000)
+        frame = next(f for f in page.frames if f != page.main_frame)
+        html = await frame.evaluate('document.documentElement.outerHTML')
+        check('#7df9ff' in html and '#ffd84d' not in html and 'BLOCK MINER' in html, 'the patch changed one line and kept the rest of the game')
+        await page.click('button[data-act="view-changes"]')
+        diff = await page.locator('.modal .changes').inner_text()
+        check("− x.fillStyle='#ffd84d'" in diff and "+ x.fillStyle='#7df9ff'" in diff, 'What changed shows the removed and added lines')
+        await page.screenshot(path=f'{OUT}/30b-what-changed.png')
+        await page.click('[data-act="modal-close"]')
+        await page.click('button[data-act="compare"]')
+        await page.wait_for_selector('#st-p2 iframe', timeout=5000)
+        tags = await page.locator('.split-tag').all_inner_texts()
+        check(tags == ['Before · v1', 'After · v2'], 'Before and after plays both versions side by side: ' + str(tags))
+        await page.screenshot(path=f'{OUT}/30c-before-after.png')
+        await page.click('button[data-act="compare"]')
+        # A patch that no longer fits the file falls back to a complete rewrite.
+        await page.fill('#st-prompt', 'Make the blocks glow even more.')
+        await page.click('button[data-act="gen-edit"]')
+        await page.wait_for_selector('button[data-act="version"][data-i="2"]', timeout=25000)
+        chat = await page.locator('#st-chat').inner_text()
+        calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
+        check('did not fit the file' in chat and 'Rebuilt the game as v3' in chat and len(calls) == 4, 'a patch that does not fit is rebuilt as a whole file')
+        await page.wait_for_selector('button[data-act="undo-version"]', timeout=10000)
+        await page.click('button[data-act="undo-version"]')
+        await page.wait_for_selector('button[data-act="version"][data-i="1"][aria-pressed="true"]', timeout=5000)
+        check('Undid the change: back to v2' in await page.locator('#st-chat').inner_text(), 'Undo change goes back to the version the change was made from')
+        # A big request: Claude plans a checklist, builds it, and ticks it off.
+        await page.click('button[data-act="version"][data-i="0"]')
+        await page.fill('#st-prompt', 'Make the blocks glow, and do three things: faster blocks and a boss.')
+        await page.click('button[data-act="gen-edit"]')
+        await page.wait_for_selector('button[data-act="version"][data-i="3"]', timeout=25000)
+        await page.wait_for_selector('button[data-act="build-rest"]', timeout=20000)
+        items = await page.locator('#st-chat .checklist li').all_inner_texts()
+        check(len(items) == 3 and 'a boss' in items[2] and 'not built yet' in items[2] and await page.locator('button[data-act="build-rest"]').count() == 1, 'the checklist is ticked off in the reply, with Build the rest: ' + str(items))
+        await page.screenshot(path=f'{OUT}/30d-checklist.png')
         await page.click('button[data-act="publish"]')
         await page.wait_for_selector('.gp-head h1:has-text("Block Miner")', timeout=8000)
         check(True, 'published the AI-built crypto game')
@@ -542,9 +619,11 @@ async def scenario_server(browser):
         await page.click('button[data-act="style"][data-style="Neon arcade"]')
         await page.fill('#st-prompt', 'Make the cat faster.')
         await page.click('button[data-act="gen-edit"]')
-        await page.wait_for_selector('button[data-act="version"][data-i="4"]', timeout=20000)
+        await page.wait_for_selector('button[data-act="version"][data-i="6"]', timeout=20000)
         calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
         check(calls[-1]['pics'] == ["- 'cat': 24x14 px"] and calls[-1]['images'] == 1 and not calls[-1]['picBlock'], 'a change restyles the picture and never sends its data as code: ' + str(calls[-1]['pics']))
+        # Let v6's play-test finish before starting the next build, so the studio is idle.
+        await page.wait_for_function("() => /(Play-tested|play-test of|Skipped the play-test for) v6/.test(document.querySelector('#st-chat').innerText) && !document.querySelector('#st-test')", timeout=20000)
         await page.click('button[data-act="style"][data-style="Neon arcade"]')
         # Multiplayer: build a room game, test two players in the studio, then play it with a friend through a room link.
         await page.click('button[data-act="pic-del"][data-i="0"]')
@@ -585,9 +664,114 @@ async def scenario_server(browser):
         real3 = [e for e in errs3 if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real3, 'no console/page errors for the friend ' + str(real3[:5]))
         await ctx3.close()
+        # When the play-test finds a problem, Claude fixes it once by itself, then hands the rest to the creator.
+        await page.goto(AI_SITE + '#create')
+        await page.wait_for_selector('button[data-act="players"]', timeout=10000)
+        if await page.locator('button[data-act="players"][aria-pressed="true"]').count(): await page.click('button[data-act="players"]')
+        n0 = len(json.loads(urllib.request.urlopen(AI_SITE + '__playtests').read()))
+        await page.fill('#st-prompt', 'Block Miner PLAYTESTFIX')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_selector('#st-status .banner:has-text("The play-test found a problem")', timeout=40000)
+        chat = await page.locator('#st-chat').inner_text()
+        calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
+        tests = json.loads(urllib.request.urlopen(AI_SITE + '__playtests').read())
+        check(len(tests) - n0 == 2 and calls[-1]['task'].startswith('The current game has this problem') and 'title text is cut off' in calls[-1]['task'] and 'Fixing it now' in chat, 'the play-test problem went back to Claude as one automatic fix')
+        check(await page.locator('#st-status button[data-act="gen-fix"]').count() == 1, 'a problem left after the fix is shown with Fix with AI')
+        await page.screenshot(path=f'{OUT}/39-playtest-fix.png')
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real, 'no console/page errors with the ClaudePlay server ' + str(real[:5]))
         await ctx.close()
+    finally:
+        proc.terminate()
+
+async def scenario_social(browser):
+    # Unlisted games, follows, friends boards, the phone QR code, republishing and drafts, with two visitors.
+    proc = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), '8769'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        for _ in range(50):
+            try: urllib.request.urlopen(SOCIAL_SITE + 'api/status', timeout=1); break
+            except Exception: time.sleep(0.1)
+        ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page.goto(SOCIAL_SITE + '#create')
+        await skip_guide(page)
+        await page.fill('#st-prompt', 'Block Miner: tap to fill blocks before gas runs out.')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_selector('button[data-act="publish"]:enabled', timeout=25000)
+        await page.click('button[data-act="vis"][data-vis="unlisted"]')
+        check('open it with the link' in await page.locator('fieldset.vis').inner_text(), 'the publish panel offers Unlisted')
+        await page.click('button[data-act="publish"]')
+        await page.wait_for_selector('.gp-head h1:has-text("Block Miner")', timeout=8000)
+        check(await page.locator('#gp-chips .chip:has-text("Unlisted")').count() == 1, 'an unlisted game says so on its page')
+        link = page.url
+        # A second visitor: the game is not in Explore, but the link opens it.
+        ctx2, page2, errs2 = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page2.goto(SOCIAL_SITE + '#explore')
+        await page2.wait_for_selector('.cart', timeout=15000)
+        await page2.wait_for_timeout(1500)
+        check(await page2.locator('.cart:has-text("Block Miner")').count() == 0, 'unlisted games stay out of Explore')
+        await page2.goto(link.replace(SOCIAL_SITE, SOCIAL_SITE + '?v=2'))
+        await page2.wait_for_selector('#gp-screen iframe', timeout=15000)
+        check(await page2.locator('.gp-head h1').inner_text() == 'Block Miner', 'the link opens an unlisted game')
+        await page2.wait_for_timeout(500)
+        box = await page2.locator('#gp-screen iframe').bounding_box()
+        for attempt in range(3):
+            await page2.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
+            try:
+                await page2.wait_for_selector('.toast:has-text("New best")', timeout=6000)
+                break
+            except Exception:
+                if attempt == 2: raise
+        await page2.click('button[data-act="follow"]')
+        await page2.wait_for_selector('button[data-act="follow"][aria-pressed="true"]', timeout=8000)
+        check('Following' in await page2.locator('button[data-act="follow"]').inner_text(), 'a player follows the maker')
+        await page2.click('button[data-act="phone"]')
+        await page2.wait_for_selector('.modal .qr svg', timeout=5000)
+        qr = await page2.locator('.modal .qr svg').get_attribute('aria-label')
+        check(bool(qr) and '#game-' in await page2.input_value('#phone-link'), 'Play on your phone shows a QR code and the link')
+        await page2.screenshot(path=f'{OUT}/40-phone-qr.png')
+        await page2.click('.modal [data-act="modal-close"]')
+        await page2.click('button[data-act="tab"][data-tab="board"]')
+        await page2.click('button[data-act="group-new"]')
+        await page2.fill('#group-name', 'Lunch crew')
+        await page2.click('.modal button[type="submit"]')
+        await page2.wait_for_selector('h1:has-text("Lunch crew")', timeout=8000)
+        invite = await page2.input_value('#group-link')
+        await page2.wait_for_selector('table.data td:has-text("Block Miner")', timeout=8000)
+        check('#group-' in invite, 'a friends board gets an invite link and shows the members\' best runs')
+        await page2.screenshot(path=f'{OUT}/41-friends-board.png', full_page=True)
+        # The maker joins through the invite, sees the follower, then republishes and lists the game.
+        await page.goto(invite)
+        await page.wait_for_selector('button[data-act="group-join"]', timeout=15000)
+        await page.click('button[data-act="group-join"]')
+        await page.wait_for_selector('#group-link', timeout=8000)
+        check('2 members' in await page.locator('.page-head').inner_text(), 'the invite link lets a friend join')
+        await page.goto(link)
+        await page.wait_for_function("document.querySelector('#gp-about') && document.querySelector('#gp-about').innerText.includes('1 follower')", timeout=15000)
+        check(True, 'the maker sees their new follower')
+        await page.click('button[data-act="edit-game"]')
+        await page.wait_for_selector('.drafts .chip:has-text("Editing your published game")', timeout=8000)
+        await page.fill('#st-prompt', 'Make the blocks glow.')
+        await page.click('button[data-act="gen-edit"]')
+        await page.wait_for_selector('button[data-act="publish"]:enabled:has-text("republish")', timeout=25000)
+        await page.click('button[data-act="publish"]')
+        await page.wait_for_selector('#gp-chips .chip:has-text("Version 2")', timeout=10000)
+        check(page.url == link, 'republishing keeps the same game and link, now at version 2')
+        await page.click('button[data-act="set-vis"]')
+        await page.wait_for_function("!document.querySelector('#gp-chips').innerText.includes('Unlisted')", timeout=8000)
+        await page2.goto(SOCIAL_SITE + '#explore')
+        await page2.wait_for_selector('.cart:has-text("Block Miner")', timeout=15000)
+        check(True, 'listing the game puts it in Explore')
+        # Drafts: starting a new game files the current one as a draft.
+        await page.goto(SOCIAL_SITE + '#create')
+        await page.wait_for_selector('button[data-act="new-game"]', timeout=8000)
+        await page.fill('#st-prompt', 'A half-finished idea')
+        await page.click('button[data-act="new-game"]')
+        await page.wait_for_selector('.drafts-list summary:has-text("Drafts (1)")', timeout=5000)
+        check(True, 'New game keeps the unfinished one as a draft')
+        for name, e in (('maker', errs), ('player', errs2)):
+            real = [x for x in e if 'fonts.g' not in x and 'ERR_FAILED' not in x]
+            check(not real, f'no console/page errors for the {name} ' + str(real[:5]))
+        await ctx2.close(); await ctx.close()
     finally:
         proc.terminate()
 
@@ -601,7 +785,7 @@ async def scenario_chain(browser):
             except Exception: time.sleep(0.1)
         ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900})
         await page.goto(CHAIN_SITE + '#create')
-        await page.wait_for_selector('#st-prompt', timeout=15000)
+        await skip_guide(page)
         await page.fill('#st-prompt', 'Block Miner: tap to fill blocks before gas runs out.')
         await page.click('button[data-act="gen-new"]')
         await page.wait_for_selector('.toast:has-text("Built")', timeout=20000)
@@ -677,7 +861,7 @@ async def scenario_mainnet(browser):
         check('real SOL on Solana mainnet' in foot and 'no real funds move' not in foot, 'mainnet site says payments are real SOL')
         check('test tokens' not in await page.locator('#view').inner_text(), 'mainnet site never calls balances test tokens')
         await page.goto(MAIN_SITE + '#create')
-        await page.wait_for_selector('#st-prompt', timeout=15000)
+        await skip_guide(page)
         await page.fill('#st-prompt', 'Block Miner: tap to fill blocks before gas runs out.')
         await page.click('button[data-act="gen-new"]')
         await page.wait_for_selector('.toast:has-text("Built")', timeout=20000)
@@ -824,7 +1008,7 @@ async def main():
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader'])
         only = os.environ.get('E2E_ONLY', '').split(',')
-        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_mainnet, scenario_engines, scenario_fit, scenario_a11y):
+        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_social, scenario_chain, scenario_mainnet, scenario_engines, scenario_fit, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
             try:
                 await sc(browser)

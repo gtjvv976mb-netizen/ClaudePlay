@@ -234,6 +234,7 @@
     MAX_SUPPLY: 1000000000,
     MAX_SCORE: 1e9,
     MAX_PRICE_LAMPORTS: 100 * LAMPORTS,
+    GROUP_MAX: 100,
   });
   const emissionFor = (n) => Math.floor(RULES.EPOCH_BASE * Math.pow(RULES.EPOCH_DECAY, Math.max(0, n - 1)));
   const TREASURY = 'TREASURY';
@@ -364,7 +365,7 @@
     const W = (pk) => {
       let w = wallets.get(pk);
       if (!w) {
-        w = { pk, sol: 0, sparks: 0, park: 0, handle: null, lastAirdrop: 0, weeks: new Set(), sparksEarned: 0, sparksSpent: 0, earnedSol: 0, earnedPark: 0, uids: new Set(), txs: [], created: Infinity };
+        w = { pk, sol: 0, sparks: 0, park: 0, handle: null, lastAirdrop: 0, weeks: new Set(), sparksEarned: 0, sparksSpent: 0, earnedSol: 0, earnedPark: 0, uids: new Set(), txs: [], created: Infinity, following: new Set(), followers: new Set() };
         wallets.set(pk, w);
       }
       return w;
@@ -372,8 +373,10 @@
     const treasury = { sol: 0, feesTotal: 0, packsTotal: 0, paidOut: 0 };
     const supply = { emitted: 0, burned: 0 };
     const games = new Map();
+    // Friend groups: invite-link leaderboards of up to RULES.GROUP_MAX members.
+    const groups = new Map();
     for (const s of starters) {
-      games.set(s.gid, { ...s, creator: STARTER, ts: 0, collects: [], tips: [], scores: new Map(), ratings: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, starter: true });
+      games.set(s.gid, { ...s, creator: STARTER, ts: 0, vis: 'listed', multiplayer: false, versions: [{ hash: s.hash, ts: 0 }], updated: 0, collects: [], tips: [], scores: new Map(), ratings: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, starter: true });
     }
     const log = [];
     const epochs = [];
@@ -448,10 +451,30 @@
             title: cleanText(b.title, 40) || 'Untitled', genre: cleanText(b.genre, 24) || 'Arcade',
             desc: cleanText(b.desc, 200), prompt: cleanText(b.prompt, 600), hash: b.hash, size: Math.floor(num(b.size)) || 0,
             parent: b.parent || null, price, cap, kit: cleanText(b.kit, 20) || 'ai', params: b.params && typeof b.params === 'object' ? b.params : null,
+            // vis: 'listed' shows in Explore; 'unlisted' only opens from its link. multiplayer: made with SP.room.
+            vis: b.vis === 'unlisted' ? 'unlisted' : 'listed', multiplayer: b.players === 'multi', versions: [{ hash: b.hash, ts: tx.ts }], updated: tx.ts,
             collects: [], tips: [], scores: new Map(), ratings: new Map(), reports: [], remixes: [], revenue: 0, boost: 0, players: new Set(), plays: 0, local: e.local,
           };
           games.set(gid, g);
           if (g.parent) games.get(g.parent).remixes.push(gid);
+          rec.ok = true; break;
+        }
+        case 'update': {
+          // The creator republishes a new version (the live one stays until this lands), renames it, or
+          // changes who can see it. Price, editions and lineage never change after publishing.
+          const g = games.get(b.gid);
+          if (!g || g.starter) { fail('Game not found'); break; }
+          if (g.creator !== tx.from) { fail('Only the creator can update a game'); break; }
+          if (b.hash != null) {
+            if (!/^[0-9a-f]{64}$/.test(String(b.hash))) { fail('Bad content hash'); break; }
+            if (b.hash !== g.hash) { g.hash = b.hash; g.size = Math.floor(num(b.size)) || 0; g.versions.push({ hash: b.hash, ts: tx.ts }); }
+            if (b.params && typeof b.params === 'object' && g.kit !== 'ai') g.params = b.params;
+          }
+          if (b.title != null) g.title = cleanText(b.title, 40) || g.title;
+          if (b.desc != null) g.desc = cleanText(b.desc, 200);
+          if (b.vis === 'listed' || b.vis === 'unlisted') g.vis = b.vis;
+          if (b.players != null) g.multiplayer = b.players === 'multi';
+          g.updated = tx.ts;
           rec.ok = true; break;
         }
         case 'collect': {
@@ -542,6 +565,34 @@
           g.ratings.set(e.uid || tx.from, { pk: tx.from, stars, ts: tx.ts });
           rec.ok = true; break;
         }
+        case 'follow': {
+          const pk = String(b.pk || '');
+          if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pk)) { fail('Bad account'); break; }
+          if (pk === tx.from) { fail('You cannot follow yourself'); break; }
+          if (b.on === false) w.following.delete(pk); else w.following.add(pk);
+          rec.ok = true; break;
+        }
+        case 'group': {
+          const id = String(b.id || '');
+          if (!/^[a-z0-9]{8,16}$/.test(id)) { fail('Bad group id'); break; }
+          if (groups.has(id)) { fail('Group id already taken'); break; }
+          groups.set(id, { id, name: cleanText(b.name, 32) || 'Friends', owner: tx.from, ts: tx.ts, members: new Set([tx.from]) });
+          rec.ok = true; break;
+        }
+        case 'join': {
+          const gr = groups.get(String(b.id || ''));
+          if (!gr) { fail('Group not found'); break; }
+          if (gr.members.has(tx.from)) { rec.ok = true; break; }
+          if (gr.members.size >= RULES.GROUP_MAX) { fail('This group is full'); break; }
+          gr.members.add(tx.from);
+          rec.ok = true; break;
+        }
+        case 'leave': {
+          const gr = groups.get(String(b.id || ''));
+          if (!gr) { fail('Group not found'); break; }
+          gr.members.delete(tx.from);
+          rec.ok = true; break;
+        }
         case 'report': {
           const g = games.get(b.gid);
           if (!g) { fail('Game not found'); break; }
@@ -578,13 +629,14 @@
       cw.sparks += earned; cw.sparksEarned += earned;
     }
     for (const [gid, reason] of Object.entries(delisted)) { const g = games.get(gid); if (g) g.delisted = reason || 'Delisted'; }
+    for (const w of wallets.values()) for (const pk of w.following) W(pk).followers.add(w.pk);
     for (const g of games.values()) {
       const n = g.ratings.size;
       let sum = 0; for (const r of g.ratings.values()) sum += r.stars;
       g.ratingCount = n; g.rating = n ? sum / n : 0;
     }
 
-    return { wallets, games, treasury, supply, log, epochs, playersByAccount, config, now, delisted };
+    return { wallets, games, groups, treasury, supply, log, epochs, playersByAccount, config, now, delisted };
   }
 
   /* Rewards for the next epoch, computed from activity since the last one. */

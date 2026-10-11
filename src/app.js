@@ -44,7 +44,7 @@
     chev: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 10.2 4.5-4.5 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
 
-  const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1', pending: 'pp.pending.v1', pro: 'pp.pro.v1' };
+  const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', drafts: 'pp.drafts.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1', pending: 'pp.pending.v1', pro: 'pp.pro.v1' };
   const PREF_DEFAULTS = { theme: 'system', text: 'md', motion: 'system', speed: 1, sound: true, layout: 'fit' };
   const ADJ = ['brisk', 'quiet', 'lucky', 'neon', 'sunny', 'swift', 'cosmic', 'mellow', 'bold', 'tiny', 'jolly', 'pixel', 'rapid', 'calm', 'wild', 'zesty'];
   const NOUN = ['lynx', 'otter', 'comet', 'falcon', 'gecko', 'panda', 'koi', 'badger', 'heron', 'moth', 'yak', 'wombat', 'raven', 'ibis', 'tapir', 'newt'];
@@ -61,7 +61,7 @@
     sharedProtocol: { config: null, epochs: [], moderation: { delisted: {} } },
     localProtocol: LS.get(KEY.protocol) || { config: null, epochs: [], moderation: { delisted: {} } },
     world: null, starters: [], wallet: null, storageOk: true,
-    blobs: new Map(), ui: { sort: 'new', ledger: 'all', tab: 'board', openTx: null, deferred: false, verify: {} },
+    blobs: new Map(), ui: { sort: 'popular', board: '', ledger: 'all', tab: 'board', openTx: null, deferred: false, verify: {} },
     studio: null, ctl: null, players: new Map(), ready: false,
   };
 
@@ -552,13 +552,33 @@
     frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock');
     frame.setAttribute('title', opts.title || 'Game');
     frame.setAttribute('allow', 'autoplay');
-    frame.srcdoc = K.withSDK(code, seed, Object.assign(gameOpts(), opts.room ? { room: opts.room.hello } : {}));
+    frame.srcdoc = K.withSDK(code, seed, Object.assign(gameOpts(), opts.conf || {}, opts.room ? { room: opts.room.hello } : {}));
     host.querySelectorAll('iframe').forEach((f) => f.remove());
     host.appendChild(frame);
     const player = { id: host.id, frame, seed, opts, running: false, netReady: false, netQueue: [] };
     S.players.set(host.id, player);
-    if (opts.room) opts.room.listen((m) => { if (player.netReady) netDeliver(player, m); else player.netQueue.push(m); });
+    if (opts.room) {
+      // The page shares each player's score with the room for the live scoreboard. Page messages
+      // ({ __score }) and game messages ({ __g }) travel apart, so a game never sees the page's.
+      const ep = opts.room;
+      ep.scores = ep.scores || {};
+      ep.listen((m) => {
+        if (m.t === 'msg' && m.d && typeof m.d === 'object' && !Array.isArray(m.d)) {
+          if ('__score' in m.d) { ep.scores[m.from] = Math.max(0, Math.floor(+m.d.__score || 0)); renderRoomBoard(ep); return; }
+          if ('__g' in m.d) m = Object.assign({}, m, { d: m.d.__g });
+        }
+        if (m.t === 'join' && ep.scores[ep.hello.me] != null) ep.send({ __score: ep.scores[ep.hello.me] }, m.id);
+        if (m.t === 'leave') { delete ep.scores[m.id]; renderRoomBoard(ep); }
+        if (player.netReady) netDeliver(player, m); else player.netQueue.push(m);
+      });
+    }
     return player;
+  }
+  function shareScore(p, v) {
+    const ep = p.opts.room;
+    ep.scores[ep.hello.me] = Math.max(0, Math.floor(+v || 0));
+    renderRoomBoard(ep);
+    if (!p.scoreTimer) p.scoreTimer = setTimeout(() => { p.scoreTimer = null; ep.send({ __score: ep.scores[ep.hello.me] }, null); }, 300);
   }
   function netDeliver(p, m) { try { p.frame.contentWindow.postMessage(Object.assign({ __ppnet: 1 }, m), '*'); } catch (e) { /* the frame is gone */ } }
   function unmountPlayer(id) {
@@ -573,7 +593,8 @@
       if (d.t === 'score' && !p.running) { p.running = true; if (p.opts.onStart) p.opts.onStart(); }
       if (d.t === 'over') { if (!p.running && p.opts.onStart) p.opts.onStart(); p.running = false; }
       if (d.t === 'net-ready' && p.opts.room) { p.netReady = true; p.netQueue.splice(0).forEach((m) => netDeliver(p, m)); }
-      if (d.t === 'net' && p.opts.room) p.opts.room.send(d.d, typeof d.to === 'string' ? d.to : null);
+      if (d.t === 'net' && p.opts.room) p.opts.room.send({ __g: d.d === undefined ? null : d.d }, typeof d.to === 'string' ? d.to : null);
+      if ((d.t === 'score' || d.t === 'over') && p.opts.room) shareScore(p, d.v);
       if (p.opts.onMessage) p.opts.onMessage(d, p);
     }
   });
@@ -626,7 +647,7 @@
           ep = endpoint({ me: m.you, host: m.host, players: m.players }, m.seed, (d, to) => { if (queue.length < 400) queue.push({ d, to }); if (!timer) timer = setTimeout(flush, 50); }, () => { closed = true; es.close(); });
           ep.token = m.token;
           ok(ep); onChange(ep);
-        } else if (ep) { ep.emit(m); onChange(ep); }
+        } else if (ep) { ep.emit(m); if (m.t !== 'msg') onChange(ep); }
       };
       es.onerror = () => {
         if (closed) return;
@@ -643,10 +664,16 @@
     if (state.kind === 'error') return '<div class="banner bad"><b>' + esc(state.message) + '</b><button class="btn small" type="button" data-act="room-leave" data-gid="' + esc(g.gid) + '" style="justify-self:start">Play solo</button></div>';
     const ep = state.ep, link = location.href.split('#')[0] + '#game-' + g.gid + '&room=' + state.code;
     return '<div class="banner info"><b>Room ' + esc(state.code) + (state.lost ? ' · disconnected' : ' · ' + ep.hello.players.length + (ep.hello.players.length === 1 ? ' player' : ' players')) + '</b>'
-      + '<span>' + esc(ep.hello.players.map((p) => p.name + (p.id === ep.hello.me ? ' (you)' : '')).join(', ')) + '</span>'
+      + '<ol class="room-board" id="room-board" aria-label="Room scoreboard">' + roomBoardHTML(ep) + '</ol>'
       + '<label class="field"><span class="sr">Room link</span><input type="text" readonly id="room-link" value="' + esc(link) + '"></label>'
       + '<div class="row"><button class="btn small" type="button" data-act="room-copy">Copy link</button><button class="btn small ghost" type="button" data-act="room-leave" data-gid="' + esc(g.gid) + '">Leave room</button></div></div>';
   }
+  /* The live scoreboard of a room: everyone in it, best score first. */
+  function roomBoardHTML(ep) {
+    const sc = ep.scores || {};
+    return ep.hello.players.slice().sort((a, b) => (sc[b.id] || 0) - (sc[a.id] || 0)).map((p) => '<li' + (p.id === ep.hello.me ? ' class="me"' : '') + '><span>' + esc(p.name) + (p.id === ep.hello.me ? ' (you)' : '') + '</span><b>' + fmtInt(sc[p.id] || 0) + '</b></li>').join('');
+  }
+  function renderRoomBoard(ep) { const el = $('#room-board'); if (el && S.ui.room && S.ui.room.ep === ep) el.innerHTML = roomBoardHTML(ep); }
   function renderRoom(g) { const el = $('#gp-room'); if (el) el.innerHTML = roomHTML(g, S.ui.room); }
 
   /* ---------------- AI harness ---------------- */
@@ -887,7 +914,7 @@
   function newStudio() {
     return {
       mode: aiReady() ? 'ai' : 'kit', kit: 'runner', params: K.normalizeParams('runner', { title: 'My Runner', palette: 'neon', shape: 'block' }),
-      versions: [], vi: -1, chat: [], prompt: '', style: '', pics: [], quality: 'default', brand: null,
+      versions: [], vi: -1, chat: [], prompt: '', style: '', pics: [], quality: 'default', brand: null, guide: 0,
       parent: null, title: '', desc: '', price: 0.05, cap: 0, busy: false, stream: null, error: null, lastRun: null,
     };
   }
@@ -898,17 +925,39 @@
     S.studio.params = K.normalizeParams(S.studio.kit, S.studio.params);
   }
   let studioSaveTimer = null;
+  /* What the studio keeps between visits: the settings, the chat and the last n versions. */
+  function studioSnapshot(st, n) {
+    const keep = { guide: st.guide, guided: st.guided, mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-n), vi: st.vi, chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, players: st.players, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap, vis: st.vis, editing: st.editing, draftId: st.draftId, published: st.published };
+    if (st.versions.length > n) keep.vi = Math.max(-1, st.vi - (st.versions.length - n));
+    return keep;
+  }
   function saveStudio() {
     clearTimeout(studioSaveTimer);
     studioSaveTimer = setTimeout(() => {
       const st = S.studio;
-      const keep = { mode: st.mode, kit: st.kit, params: st.params, brand: st.brand, versions: st.versions.slice(-6), vi: Math.min(st.vi, 5), chat: st.chat.slice(-20), prompt: st.prompt, style: st.style, pics: st.pics, dim: st.dim, players: st.players, genre: st.genre, quality: st.quality, parent: st.parent, title: st.title, desc: st.desc, price: st.price, cap: st.cap };
-      if (st.versions.length > 6) keep.vi = Math.max(-1, st.vi - (st.versions.length - 6));
-      if (!LS.set(KEY.studio, keep) && keep.versions.length > 2) {
-        keep.vi = Math.max(-1, keep.vi - (keep.versions.length - 2)); keep.versions = keep.versions.slice(-2);
-        LS.set(KEY.studio, keep);
-      }
+      if (!LS.set(KEY.studio, studioSnapshot(st, 6)) && st.versions.length > 2) LS.set(KEY.studio, studioSnapshot(st, 2));
     }, 300);
+  }
+  /* Drafts: games you are still working on, kept on this device (up to 8, newest first) until you publish
+     or delete them. Starting a new game or editing a published one files the current studio as a draft. */
+  const studioTitle = (st) => (st.mode === 'kit' ? st.params.title : st.title || ((st.versions[st.vi] || {}).meta || {}).title || ideaName(st.prompt || '')) || 'Untitled draft';
+  // A studio whose game was just published, with nothing new since, is not a draft.
+  const studioHasWork = (st) => !!(st && ((st.prompt || '').trim() || (!(st.published && st.published.n === st.versions.length) && (st.versions.length || (st.mode === 'kit' && st.parent)))));
+  function listDrafts() { const d = LS.get(KEY.drafts); return Array.isArray(d) ? d : []; }
+  function stashDraft(st) {
+    if (!studioHasWork(st) || st.editing) return;
+    const id = st.draftId || 'd' + C.randHex(6);
+    const entry = { id, title: studioTitle(st).slice(0, 40), ts: Date.now(), snap: Object.assign(studioSnapshot(st, 1), { draftId: id }) };
+    const list = [entry].concat(listDrafts().filter((d) => d.id !== id)).slice(0, 8);
+    while (list.length && !LS.set(KEY.drafts, list)) list.pop();
+  }
+  function dropDraft(id) { LS.set(KEY.drafts, listDrafts().filter((d) => d.id !== id)); }
+  function draftsHTML() {
+    const st = S.studio, list = listDrafts().filter((d) => d.id !== st.draftId);
+    return '<div class="drafts row"><button class="btn small" type="button" data-act="new-game">New game</button>'
+      + (st.editing ? '<span class="chip accent">Editing your published game</span>' : '')
+      + (list.length ? '<details class="drafts-list"><summary>Drafts (' + list.length + ')</summary><ul>' + list.map((d) => '<li><button class="linkish" type="button" data-act="open-draft" data-id="' + esc(d.id) + '">' + esc(d.title) + '</button> <span class="muted">' + esc(ago(d.ts)) + '</span> <button class="btn small ghost" type="button" data-act="del-draft" data-id="' + esc(d.id) + '" aria-label="Delete draft ' + esc(d.title) + '">Delete</button></li>').join('') + '</ul></details>' : '')
+      + '</div>';
   }
   function studioCode() {
     const st = S.studio;
@@ -968,7 +1017,7 @@
         break;
       default:
         if (!full && typing) { S.ui.deferred = true; return; }
-        v.innerHTML = S.route === 'wallet' ? viewWallet() : S.route === 'ledger' ? viewLedger() : S.route === 'economy' ? viewEconomy() : viewExplore();
+        v.innerHTML = S.route === 'wallet' ? viewWallet() : S.route === 'ledger' ? viewLedger() : S.route === 'economy' ? viewEconomy() : S.route === 'maker' ? viewMaker() : S.route === 'group' ? viewGroup() : viewExplore();
     }
     fitSoon();
   }
@@ -1102,14 +1151,20 @@
       + '<span class="cart-by"><span>by <b>' + esc(nameOf(g.creator)) + '</b></span><span>' + esc(price) + '</span></span>'
       + '<span class="cart-tags">' + tags.join('') + '</span></a>';
   }
-  const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['rated', 'Top rated'], ['boosted', 'Boosted']];
+  const SORTS = [['popular', 'Popular'], ['following', 'Following'], ['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['rated', 'Top rated'], ['boosted', 'Boosted']];
   /* Ranks by rating, pulled toward 3 stars until a game has a few ratings, so one 5-star vote does not top the list. */
   const ratedScore = (g) => ((g.rating || 0) * (g.ratingCount || 0) + 3 * 3) / ((g.ratingCount || 0) + 3);
+  /* Popular: plays and unique players, weighted by rating, so a well-liked game that people play rises. */
+  const popScore = (g) => (ratedScore(g) / 3) * Math.log2(2 + (g.players ? g.players.size : 0) * 4 + (g.plays || 0) + (g.remixes ? g.remixes.length * 3 : 0));
+  const listed = (g) => !g.starter && !g.delisted && g.vis !== 'unlisted';
   function viewExplore() {
     const w = S.world;
     const starters = S.starters.map((s) => (w && w.games.get(s.gid)) || Object.assign({ creator: C.STARTER, starter: true, players: new Set(), collects: [] }, s));
-    let community = w ? [...w.games.values()].filter((g) => !g.starter && !g.delisted) : [];
+    const follow = (myWallet() || {}).following || new Set();
+    let community = w ? [...w.games.values()].filter((g) => listed(g) && (S.ui.sort !== 'following' || follow.has(g.creator))) : [];
     const by = {
+      popular: (a, b) => (popScore(b) - popScore(a)) || (b.ts - a.ts),
+      following: (a, b) => b.ts - a.ts,
       new: (a, b) => b.ts - a.ts,
       played: (a, b) => (b.players.size - a.players.size) || (b.plays - a.plays),
       earning: (a, b) => (b.revenue - a.revenue) || (b.collects.length - a.collects.length),
@@ -1123,7 +1178,7 @@
     return '<section class="page-head"><div class="stack">'
       + '<h1>Play any game free</h1>'
       + '<p class="lede">Open a cartridge and play in your browser. Your best runs are signed to the leaderboard. Slower game speed, sound and contrast are in <button class="linkish" type="button" data-act="settings">Accessibility settings</button>.</p></div>'
-      + '<div class="facts"><div class="fact"><b>' + fmtInt(w ? [...w.games.values()].filter((g) => !g.starter).length : 0) + '</b><span>community cartridges</span></div><div class="fact"><b>' + fmtInt(totalPlayers) + '</b><span>' + (totalPlayers === 1 ? 'unique player' : 'unique players') + '</span></div><div class="fact"><b>' + fmtInt(sigs) + '</b><span>signed transactions</span></div></div>'
+      + '<div class="facts"><div class="fact"><b>' + fmtInt(w ? [...w.games.values()].filter(listed).length : 0) + '</b><span>community cartridges</span></div><div class="fact"><b>' + fmtInt(totalPlayers) + '</b><span>' + (totalPlayers === 1 ? 'unique player' : 'unique players') + '</span></div><div class="fact"><b>' + fmtInt(sigs) + '</b><span>signed transactions</span></div></div>'
       + '</section>'
       + '<section class="section"><div class="section-head"><h2>Starter cartridges</h2><p class="muted">Free to play. Open one and press Remix to tune it.</p></div>'
       + '<div class="shelf">' + starters.map(cartHTML).join('') + '</div></section>'
@@ -1131,8 +1186,41 @@
       + SORTS.map(([k, l]) => '<button class="chip" type="button" data-act="sort" data-sort="' + k + '" aria-pressed="' + (S.ui.sort === k) + '">' + l + '</button>').join('')
       + '</div></div>'
       + (community.length ? '<div class="shelf">' + community.map(cartHTML).join('') + '</div>'
+        : S.ui.sort === 'following' ? '<div class="empty"><h3>Nothing from makers you follow yet</h3><p>Open a game you like and press Follow maker. Their new games show up here.</p></div>'
         : '<div class="empty"><h3>No community cartridges yet</h3><p>Publish the first one: describe a game or tune a starter kit, then sign it with your wallet.</p><a class="btn primary" href="#create" data-nav="create">Open Create</a></div>')
       + '</section>' + footHTML();
+  }
+
+  /* ---------- makers and friend groups ---------- */
+  function myGroups() { const me = S.wallet && S.wallet.from; return me && S.world ? [...S.world.groups.values()].filter((x) => x.members.has(me)) : []; }
+  function viewMaker() {
+    const pk = S.arg, w = S.world && S.world.wallets.get(pk);
+    const me = S.wallet && S.wallet.from === pk;
+    const games = S.world ? [...S.world.games.values()].filter((g) => g.creator === pk && !g.delisted && (me || g.vis !== 'unlisted')).sort((a, b) => b.ts - a.ts) : [];
+    const plays = games.reduce((a, g) => a + (g.plays || 0), 0);
+    return '<section class="page-head"><div class="stack"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(nameOf(pk)) + '</h1>'
+      + '<p class="mono muted">' + esc(short(pk)) + '</p>' + (me || !S.world ? '' : '<div class="row">' + followBtn(pk) + '</div>') + '</div>'
+      + '<div class="facts"><div class="fact"><b>' + fmtInt(games.length) + '</b><span>games</span></div><div class="fact"><b>' + fmtInt(w ? w.followers.size : 0) + '</b><span>followers</span></div><div class="fact"><b>' + fmtInt(plays) + '</b><span>runs played</span></div></div></section>'
+      + '<section class="section"><div class="section-head"><h2>' + (me ? 'Your games' : 'Games by ' + esc(nameOf(pk))) + '</h2></div>'
+      + (games.length ? '<div class="shelf">' + games.map(cartHTML).join('') + '</div>' : '<div class="empty"><h3>No games yet</h3></div>') + '</section>' + footHTML();
+  }
+  function viewGroup() {
+    const gr = S.world && S.world.groups.get(S.arg);
+    if (!gr) return '<div class="empty"><h1>' + (S.world ? 'Group not found' : 'Loading ClaudePlay…') + '</h1><p>' + (S.world ? 'The invite may be from another copy of ClaudePlay, or it is still syncing.' : '') + '</p><a class="btn" href="#explore" data-nav="explore">Back to Explore</a></div>';
+    const me = S.wallet && S.wallet.from, inIt = me && gr.members.has(me);
+    const link = location.href.split('#')[0] + '#group-' + gr.id;
+    // The group's best run on every game any member has played, best first.
+    const boards = [...S.world.games.values()].map((g) => ({ g, rows: [...g.scores.values()].filter((x) => gr.members.has(x.pk)).sort((a, b) => b.score - a.score) })).filter((b) => b.rows.length).sort((a, b) => b.rows.length - a.rows.length).slice(0, 12);
+    return '<section class="page-head"><div class="stack"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(gr.name) + '</h1>'
+      + '<p class="lede">A friends leaderboard: ' + plural(gr.members.size, 'member') + ' of ' + R.GROUP_MAX + '. Anyone with the invite link can join.</p>'
+      + '<div class="row">' + (inIt ? '<button class="btn" type="button" data-act="group-leave" data-id="' + esc(gr.id) + '">Leave group</button>' : '<button class="btn primary" type="button" data-act="group-join" data-id="' + esc(gr.id) + '"' + (gr.members.size >= R.GROUP_MAX ? ' disabled' : '') + '>Join ' + esc(gr.name) + '</button>') + '</div>'
+      + (inIt ? '<label class="field">Invite link<input type="text" readonly id="group-link" value="' + esc(link) + '"></label><div class="row"><button class="btn small" type="button" data-act="copy-group">Copy invite link</button></div>' : '') + '</div>'
+      + '<div class="facts"><div class="fact"><b>' + fmtInt(gr.members.size) + '</b><span>members</span></div><div class="fact"><b>' + fmtInt(boards.length) + '</b><span>games played</span></div></div></section>'
+      + '<section class="section"><div class="section-head"><h2>Group leaderboards</h2></div>'
+      + (boards.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Game</th><th>Leader</th><th class="r">Best</th><th class="r">Players</th></tr></thead><tbody>'
+        + boards.map((b) => '<tr><td><a href="#game-' + esc(b.g.gid) + '" data-act="open-game" data-gid="' + esc(b.g.gid) + '">' + esc(b.g.title) + '</a></td><td>' + esc(nameOf(b.rows[0].pk)) + '</td><td class="n">' + fmtInt(b.rows[0].score) + '</td><td class="n">' + fmtInt(b.rows.length) + '</td></tr>').join('')
+        + '</tbody></table></div>' : '<div class="empty"><h3>No runs yet</h3><p>Open any game and play. Members’ best runs show up here.</p></div>')
+      + '<h2 style="margin-top:20px">Members</h2><p>' + [...gr.members].map((pk) => '<a class="chip" href="#maker-' + esc(pk) + '" data-act="open-maker" data-pk="' + esc(pk) + '">' + esc(nameOf(pk)) + '</a>').join(' ') + '</p></section>' + footHTML();
   }
 
   /* ---------- home: the public front door ---------- */
@@ -1142,7 +1230,7 @@
   }
   function homeShelf() {
     const w = S.world;
-    const community = w ? [...w.games.values()].filter((g) => !g.starter && !g.delisted).sort((a, b) => (b.players.size - a.players.size) || (b.ts - a.ts)).slice(0, 3) : [];
+    const community = w ? [...w.games.values()].filter(listed).sort((a, b) => (popScore(b) - popScore(a)) || (b.ts - a.ts)).slice(0, 3) : [];
     return community.concat(startersList()).slice(0, 8).map(cartHTML).join('');
   }
   // The front page is one screen over the background game: the copy card with the prompt, the playable console and a rail of games.
@@ -1670,8 +1758,11 @@
     const out = ['<span class="chip">' + esc(g.genre || 'Arcade') + '</span>', '<span class="chip">' + (g.kit === 'ai' ? 'AI-built' : esc((K.KITS[g.kit] || {}).name || g.kit) + ' kit') + '</span>', '<span class="chip">' + serial(g.hash) + '</span>'];
     if (g.parent) { const p = S.world.games.get(g.parent); if (p) out.push('<a class="chip accent" href="#game-' + esc(p.gid) + '" data-act="open-game" data-gid="' + esc(p.gid) + '">Remix of ' + esc(p.title) + '</a>'); }
     if (g.delisted) out.push('<span class="chip bad">Delisted</span>');
+    if (g.vis === 'unlisted') out.push('<span class="chip" title="Kept out of Explore. People open it with the link.">Unlisted</span>');
+    if (g.multiplayer) out.push('<span class="chip">Multiplayer</span>');
+    if (g.versions && g.versions.length > 1) out.push('<span class="chip" title="Republished ' + esc(when(g.updated)) + '">Version ' + g.versions.length + '</span>');
     if (g.local) out.push('<span class="chip">Saved on this device</span>');
-    if (!g.starter) out.push('<span class="chip">by ' + esc(nameOf(g.creator)) + '</span>');
+    if (!g.starter) out.push('<a class="chip" href="#maker-' + esc(g.creator) + '" data-act="open-maker" data-pk="' + esc(g.creator) + '">by ' + esc(nameOf(g.creator)) + '</a>');
     return out.join('');
   }
   function gameActions(g) {
@@ -1684,14 +1775,33 @@
       else out.push(btn('collect', soldOut ? 'Sold out' : 'Collect · ' + (g.price ? fmtSOL(g.price) + ' SOL' : 'free'), 'primary', soldOut || g.delisted ? ' disabled' : ''));
       out.push(btn('tip', 'Tip creator'));
     }
-    out.push(btn('remix', 'Remix', g.starter ? 'primary' : ''));
+    const mineGame = !g.starter && S.wallet && g.creator === S.wallet.from;
+    if (mineGame) {
+      out.push(btn('edit-game', 'Edit and republish'));
+      out.push(btn('set-vis', g.vis === 'unlisted' ? 'List in Explore' : 'Unlist'));
+    } else if (!g.starter) out.push(followBtn(g.creator));
     if (!g.starter) out.push(btn('boost', 'Boost'));
+    out.push(btn('phone', 'Play on your phone', 'ghost'));
     out.push(btn('fullscreen', 'Fullscreen', 'ghost'));
     out.push(btn('view-code', 'View code', 'ghost'));
     if (canDownload()) out.push(btn('download', 'Download .html', 'ghost'));
     if (!g.starter) out.push(btn('report', 'Report', 'ghost'));
     if (!g.starter && canModerate()) out.push(btn('delist', g.delisted ? 'Relist' : 'Delist', 'danger'));
     return out.join('');
+  }
+  function followBtn(pk) {
+    const w = myWallet(), on = !!(w && w.following.has(pk));
+    return '<button class="btn" type="button" data-act="follow" data-pk="' + esc(pk) + '" aria-pressed="' + on + '">' + (on ? I.ok + ' Following' : 'Follow maker') + '</button>';
+  }
+  const gameLink = (gid, extra) => location.href.split('#')[0] + '#game-' + gid + (extra || '');
+  /* One-tap remix: say what to change and Claude builds your version right away. The original maker is
+     credited on the page and earns royalties on every collect, set by the ledger. */
+  function remixBox(g) {
+    const ai = aiReady();
+    const cut = g.starter ? 'Starter kits are free to remix.' : 'Credit stays with ' + esc(nameOf(g.creator)) + ', who earns ' + pct(R.PARENT_BPS) + ' of every collect of your remix.';
+    return '<form class="remix-box" data-form="remix" data-gid="' + esc(g.gid) + '"><label for="remix-in"><b>Remix this game</b> <span class="muted">' + cut + '</span></label>'
+      + '<div class="row">' + (ai ? '<input id="remix-in" type="text" maxlength="400" placeholder="What would you change? “Make it a cat in space”">' : '')
+      + '<button class="btn ' + (g.starter ? 'primary' : '') + '" type="submit">' + (ai ? I.spark + ' Remix it' : 'Remix') + '</button></div></form>';
   }
   function rateHTML(g) {
     const ratings = g.ratings ? [...g.ratings.values()] : [];
@@ -1707,7 +1817,9 @@
     const facts = [[fmtInt(players), 'unique players'], [fmtInt(g.plays), 'runs'], [fmtInt(g.scores.size), 'signed scores']];
     if (!g.starter) facts.push([fmtInt(g.collects.length) + (g.cap ? ' / ' + fmtInt(g.cap) : ''), 'editions owned'], [fmtSOL(g.revenue), 'SOL earned'], [fmtInt(g.remixes.length), 'remixes']);
     if (g.reports && g.reports.length) facts.push([fmtInt(g.reports.length), 'reports']);
-    return '<div class="stack">' + rateHTML(g) + (g.desc ? '<p>' + esc(g.desc) + '</p>' : '')
+    const maker = g.starter ? '' : S.world.wallets.get(g.creator);
+    const makerLine = maker ? '<p class="muted">Made by <a href="#maker-' + esc(g.creator) + '" data-act="open-maker" data-pk="' + esc(g.creator) + '">' + esc(nameOf(g.creator)) + '</a> · ' + plural(maker.followers.size, 'follower') + '</p>' : '';
+    return '<div class="stack">' + rateHTML(g) + makerLine + (g.desc ? '<p>' + esc(g.desc) + '</p>' : '')
       + (g.prompt ? '<p class="muted">Prompt: “' + esc(g.prompt) + '”</p>' : '')
       + '<div class="facts">' + facts.map(([b, s]) => '<div class="fact"><b>' + b + '</b><span>' + s + '</span></div>').join('') + '</div></div>';
   }
@@ -1715,12 +1827,18 @@
   function gamePanel(g) {
     const tab = S.ui.tab;
     if (tab === 'board') {
-      const rows = [...g.scores.values()].sort((a, b) => b.score - a.score).slice(0, 25);
+      const mine = myGroups();
+      const grp = S.ui.board && S.world.groups.get(S.ui.board);
+      const pool = grp && grp.members.has(S.wallet && S.wallet.from) ? grp : null;
+      const rows = [...g.scores.values()].filter((x) => !pool || pool.members.has(x.pk)).sort((a, b) => b.score - a.score).slice(0, 25);
       const me = S.wallet && g.scores.get(S.wallet.from);
-      return '<div class="stack"><p class="muted" style="font-size:0.875rem">Each score is signed by the player’s wallet and bound to this exact file (' + serial(g.hash) + '). Prize tournaments add replay checks first.</p>'
+      const boards = '<div class="row" role="group" aria-label="Which leaderboard"><button class="chip" type="button" data-act="board" data-id="" aria-pressed="' + !pool + '">Everyone</button>'
+        + mine.map((x) => '<button class="chip" type="button" data-act="board" data-id="' + esc(x.id) + '" aria-pressed="' + (pool === x) + '">' + esc(x.name) + '</button>').join('')
+        + '<button class="chip" type="button" data-act="group-new" data-gid="' + esc(g.gid) + '">+ Friends board</button></div>';
+      return '<div class="stack">' + boards + (pool ? '<p class="muted" style="font-size:0.875rem">' + esc(pool.name) + ': ' + plural(pool.members.size, 'member') + '. <a href="#group-' + esc(pool.id) + '" data-act="open-group" data-id="' + esc(pool.id) + '">Invite friends</a></p>' : '<p class="muted" style="font-size:0.875rem">Each score is signed by the player’s wallet and bound to this exact file (' + serial(g.hash) + '). Prize tournaments add replay checks first.</p>')
         + (rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Player</th><th class="r">Score</th><th>Proof</th></tr></thead><tbody>'
           + rows.map((s, i) => '<tr' + (me && s.pk === me.pk ? ' style="font-weight:700"' : '') + '><td class="n">' + (i + 1) + '</td><td>' + esc(nameOf(s.pk)) + '<br><span class="mono muted">' + esc(short(s.pk)) + '</span></td><td class="n">' + fmtInt(s.score) + '</td><td><span class="chip ok" title="Signature ' + esc(s.sig) + '">' + I.ok + ' signed</span></td></tr>').join('')
-          + '</tbody></table></div>' : '<div class="empty"><h2>No scores yet</h2><p>Finish a run. Your first score is signed automatically.</p></div>')
+          + '</tbody></table></div>' : '<div class="empty"><h2>No scores yet</h2><p>' + (pool ? 'Nobody in this group has a score here yet. Play a run, then send them the invite.' : 'Finish a run. Your first score is signed automatically.') + '</p></div>')
         + '</div>';
     }
     if (tab === 'cart') {
@@ -1762,7 +1880,7 @@
     }
     v.innerHTML = '<div class="gp-head"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(g.title) + '</h1><div class="row" id="gp-chips">' + gameChips(g) + '</div></div>'
       + '<div class="gp-grid"><div class="gp-main" data-part="Play"><div class="screen" id="gp-screen" data-gid="' + esc(g.gid) + '" style="background:#05070a url(' + K.cover(g) + ') center/cover"></div>'
-      + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-room"></div><div id="gp-about">' + gameAbout(g) + '</div></div>'
+      + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-room"></div>' + remixBox(g) + '<div id="gp-about">' + gameAbout(g) + '</div></div>'
       + '<aside class="gp-side"><div class="tabs" role="tablist" id="gp-tabs">' + TABS.map(([k, l]) => '<button role="tab" type="button" data-act="tab" data-tab="' + k + '" aria-selected="' + (S.ui.tab === k) + '">' + l + '</button>').join('') + '</div><div class="panel" id="gp-panel">' + gamePanel(g) + '</div></aside></div>' + footHTML();
     const code = await getBlob(g.hash);
     const host = $('#gp-screen');
@@ -1834,11 +1952,14 @@
         body = ENV === 'claude'
           ? '<div class="banner warn"><b>Describing games with AI needs a Claude sign-in.</b><span>The AI studio runs on your own Claude account. Sign in to Claude and open ClaudePlay again to use it. Tuning a kit works for everyone, and publishing, scores and collecting work the same either way.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>'
           : '<div class="banner warn"><b>The AI studio is not switched on for this copy of ClaudePlay yet.</b><span>It needs a ClaudePlay server with an AI key. Tune a kit instead: publishing, scores and collecting work the same.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>';
+      } else if (st.guide >= 0 && !st.versions.length) {
+        body = guideHTML(st);
       } else {
-        const chat = st.chat.length ? st.chat.map((m) => '<div class="msg ' + (m.role === 'user' ? 'me' : m.role === 'note' ? 'note' : '') + '">' + esc(m.text) + '</div>').join('')
+        const last = st.chat.length - 1;
+        const chat = st.chat.length ? st.chat.map((m, i) => '<div class="msg ' + (m.role === 'user' ? 'me' : m.role === 'note' ? 'note' : '') + '">' + esc(m.text) + (m.list && m.list.length ? checklistHTML(m.list) + (i >= last - 2 && !st.busy && m.list.some((x) => !x.done) ? '<button class="btn small" type="button" data-act="build-rest" data-i="' + i + '">Build the rest · ' + R.GEN_COST.edit + ' Sparks</button>' : '') : '') + '</div>').join('')
           : '<div class="msg note">Describe the game you want. Each build is a full game file you can play right away, then refine with follow-up requests.</div>';
         const has = !!st.versions.length;
-        body = '<div class="panel stack"><div class="split"><p class="eyebrow">Describe your game</p><span class="chip" title="Your Sparks">' + I.spark + ' <span id="st-sparks">' + fmtInt(studioSparks()) + '</span> Sparks</span></div>'
+        body = '<div class="panel stack"><div class="split"><p class="eyebrow">Describe your game' + (has ? '' : ' · <button class="linkish" type="button" data-act="guide-restart">Use the guided steps</button>') + '</p><span class="chip" title="Your Sparks">' + I.spark + ' <span id="st-sparks">' + fmtInt(studioSparks()) + '</span> Sparks</span></div>'
           + '<div class="chat" id="st-chat">' + chat + '</div><div id="st-stream"></div>'
           + (has ? '' : '<div class="stack" style="gap:8px"><p class="eyebrow" id="crypto-ideas">Make a crypto game</p><div class="row" role="group" aria-labelledby="crypto-ideas">' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></div>')
           + '<label class="field"><span class="sr">Your idea or change</span><textarea id="st-prompt" data-in="prompt" placeholder="' + (has ? 'Ask for a change: “make the jump higher and add a double-jump power-up”' : 'Block Miner: stack falling transaction blocks before the gas meter runs dry…') + '">' + esc(st.prompt) + '</textarea></label>'
@@ -1864,7 +1985,40 @@
           : '<label class="knob"><span>' + esc(kn.label) + '</span><output id="out-' + kn.key + '">' + fmtKnob(st.params[kn.key], kn) + '</output><input type="range" id="kn-' + kn.key + '" data-in="knob" data-key="' + kn.key + '" min="' + kn.min + '" max="' + kn.max + '" step="' + kn.step + '" value="' + st.params[kn.key] + '"></label>').join('') + '</div>'
         + '</div>';
     }
-    return seg + remixBanner() + body + publishPanel();
+    return seg + draftsHTML() + remixBanner() + body + publishPanel();
+  }
+  /* Claude's checklist for a big request: what it planned and what it built. */
+  function checklistHTML(list) {
+    return '<ul class="checklist">' + list.map((x) => '<li class="' + (x.done ? 'done' : 'todo') + '"><span aria-hidden="true">' + (x.done ? I.ok : '○') + '</span><span>' + esc(x.text) + '<span class="sr">' + (x.done ? ' (built)' : ' (not built yet)') + '</span></span></li>').join('') + '</ul>';
+  }
+  /* The guided start: genre, then 2D or 3D, then players, then describe, one question at a time.
+     "Skip the steps" (or arriving with an idea from the front page) goes straight to the full form. */
+  const GENRE_HINT = { Arcade: 'Quick runs, high scores', Platformer: 'Run, jump, explore levels', Racing: 'Tracks, laps and boosts', Shooter: 'Waves of enemies', Puzzle: 'Think, match, solve', Trivia: 'Questions against the clock', 'Tower defense': 'Build towers, hold the line', Rhythm: 'Hit notes to the beat', Adventure: 'Explore, collect, survive', Sports: 'Balls, goals and matches' };
+  function guideHTML(st) {
+    const step = Math.max(0, Math.min(2, st.guide | 0));
+    const names = ['Kind of game', '2D or 3D', 'Players', 'Describe it'];
+    const dots = '<ol class="steps" aria-label="Steps">' + names.map((n, i) => '<li' + (i === step ? ' aria-current="step"' : '') + (i < step ? ' class="done"' : '') + '>' + esc(n) + '</li>').join('') + '</ol>';
+    const pick = (act, val, title, hint, on) => '<button type="button" class="pick" data-act="' + act + '" data-v="' + esc(val) + '" aria-pressed="' + !!on + '"><b>' + esc(title) + '</b><small>' + esc(hint) + '</small></button>';
+    let q, opts;
+    if (step === 0) {
+      q = 'What kind of game do you want to make?';
+      opts = GENRES.map((g) => pick('guide-genre', g, g, GENRE_HINT[g] || '', st.genre === g)).join('') + pick('guide-genre', '', 'Surprise me', 'Claude picks the genre', st.genre === '' && st.guided);
+    } else if (step === 1) {
+      q = 'Flat 2D or full 3D?';
+      opts = pick('guide-dim', '2d', '2D', 'Pixel-art sprites, side or top view', (st.dim || '2d') === '2d') + pick('guide-dim', '3d', '3D', 'A world with depth and a moving camera', st.dim === '3d');
+    } else {
+      q = 'Who plays it?';
+      opts = pick('guide-players', '', 'Just me', 'Single player, with a global leaderboard', st.players !== 'multi') + pick('guide-players', 'multi', 'Me and friends', 'Online rooms: share a link, play together', st.players === 'multi');
+    }
+    return '<div class="panel stack guide"><div class="split"><p class="eyebrow">Step ' + (step + 1) + ' of 4</p><button class="linkish" type="button" data-act="guide-skip">Skip the steps</button></div>' + dots
+      + '<h2 class="guide-q" id="guide-q" tabindex="-1">' + esc(q) + '</h2><div class="picks" role="group" aria-labelledby="guide-q">' + opts + '</div>'
+      + (step ? '<div class="row"><button class="btn small ghost" type="button" data-act="guide-back">Back</button></div>' : '') + '<div id="st-plan">' + planHTML() + '</div></div>';
+  }
+  function guideNext(st) {
+    st.guide = st.guide >= 2 ? -1 : st.guide + 1;
+    saveStudio(); rerenderStudioLeft();
+    const f = st.guide >= 0 ? $('#guide-q') : $('#st-prompt');
+    if (f) f.focus();
   }
   function fmtKnob(v, kn) { return kn.step >= 1 ? String(Math.round(v)) : Number(v).toFixed(2) + '×'; }
   function brandColors(st) { return K.cleanColors(st.params.palette === 'custom' ? st.params.colors : st.brand); }
@@ -1880,7 +2034,7 @@
   function genButtons() {
     const st = S.studio;
     const has = !!st.versions.length;
-    if (st.busy) return '<button class="btn" type="button" data-act="stop">Stop</button><span class="muted" id="st-phase">' + esc((st.stream && st.stream.phase) || 'Thinking…') + '</span>';
+    if (st.busy) return '<button class="btn" type="button" data-act="stop">' + (st.testing ? 'Skip the play-test' : 'Stop') + '</button><span class="muted" id="st-phase">' + esc((st.stream && st.stream.phase) || 'Thinking…') + '</span>';
     return '<button class="btn primary" type="button" data-act="gen-new">Build new game · ' + R.GEN_COST.new + ' Sparks</button>'
       + (has ? '<button class="btn" type="button" data-act="gen-edit">Apply change · ' + R.GEN_COST.edit + ' Sparks</button>' : '')
       + '<select id="st-quality" data-in="quality" aria-label="Build quality" style="width:auto"><option value="default"' + (st.quality === 'default' ? ' selected' : '') + '>Standard build</option><option value="complex"' + (st.quality === 'complex' ? ' selected' : '') + '>' + (S.plan && S.plan.pro && S.plan.plan !== 'pro' ? 'Best build (Pro)' : 'Best build (slower)') + '</option></select>';
@@ -1890,31 +2044,41 @@
     const ai = st.mode === 'ai';
     const meta = ai && st.versions[st.vi] ? st.versions[st.vi].meta || {} : {};
     const ready = !!studioCode();
-    return '<div class="panel stack" id="st-publish"><p class="eyebrow">Publish</p>'
+    const live = st.editing && S.world && S.world.games.get(st.editing);
+    const vis = '<fieldset class="field vis"><legend>Who can see it</legend><div class="seg" role="group">'
+      + [['listed', 'Listed'], ['unlisted', 'Unlisted']].map(([k, l]) => '<button type="button" data-act="vis" data-vis="' + k + '" aria-pressed="' + ((st.vis || 'listed') === k) + '">' + l + '</button>').join('')
+      + '</div><small class="muted">' + ((st.vis || 'listed') === 'unlisted' ? 'It stays out of Explore and the front page, so people open it with the link. It is not secret: the ledger is public.' : 'Anyone can find it in Explore.') + ' Not ready? It stays here as a draft until you publish.</small></fieldset>';
+    return '<div class="panel stack" id="st-publish"><p class="eyebrow">' + (live ? 'Republish ' + esc(live.title) : 'Publish') + '</p>'
+      + (live ? '<p class="muted" style="font-size:0.875rem">The live version stays up until you republish. Price, editions and remix credit stay the same; leaderboard scores from now on count for the new version.</p>' : '')
       + (ai ? '<label class="field">Title<input id="pub-title" type="text" maxlength="40" data-in="pub-title" value="' + esc(st.title || meta.title || '') + '" placeholder="Game title"></label>' : '')
       + '<label class="field">Description<input id="pub-desc" type="text" maxlength="200" data-in="pub-desc" value="' + esc(st.desc || meta.desc || '') + '" placeholder="One line players see on the cartridge"></label>'
-      + '<div class="grid2"><label class="field">Collect price <small>' + UNIT + ', 0 for a free collect</small><input id="pub-price" type="number" min="0" max="100" step="0.01" data-in="pub-price" value="' + esc(st.price) + '"></label>'
-      + '<label class="field">Editions <small>0 for an open edition</small><input id="pub-cap" type="number" min="0" max="100000" step="1" data-in="pub-cap" value="' + esc(st.cap) + '"></label></div>'
+      + (live ? '' : '<div class="grid2"><label class="field">Collect price <small>' + UNIT + ', 0 for a free collect</small><input id="pub-price" type="number" min="0" max="100" step="0.01" data-in="pub-price" value="' + esc(st.price) + '"></label>'
+      + '<label class="field">Editions <small>0 for an open edition</small><input id="pub-cap" type="number" min="0" max="100000" step="1" data-in="pub-cap" value="' + esc(st.cap) + '"></label></div>') + vis
       + (st.blocked ? '<div class="banner bad" role="alert"><b>The safety check stopped this game</b><span>' + esc(st.blocked.join(' ')) + '</span><span class="muted">Ask for a change that fixes it, then publish again.</span></div>' : '')
       + '<p class="muted" style="font-size:0.875rem">Every game gets an automatic safety check before it goes public. Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
-      + '<div class="row"><button class="btn primary" type="button" data-act="publish"' + (ready && !st.busy ? '' : ' disabled') + '>Sign &amp; publish</button>' + (ready ? '' : '<span class="muted">Build a game first.</span>') + '</div></div>';
+      + '<div class="row"><button class="btn primary" type="button" data-act="publish"' + (ready && !st.busy ? '' : ' disabled') + '>' + (live ? 'Sign &amp; republish' : 'Sign &amp; publish') + '</button>' + (ready ? '' : '<span class="muted">Build a game first.</span>') + '</div></div>';
   }
   function studioTools() {
     const st = S.studio;
     const ready = !!studioCode();
+    const v = st.mode === 'ai' && !st.busy ? st.versions[st.vi] : null, bi = v && v.base ? st.versions.findIndex((x) => x.ts === v.base) : -1;
+    const hist = bi >= 0 ? '<button class="btn small ghost" type="button" data-act="undo-version">Undo change</button><button class="btn small ghost" type="button" data-act="compare" aria-pressed="' + !!st.compare + '">Before and after</button><button class="btn small ghost" type="button" data-act="view-changes">What changed</button>' : '';
     const versions = st.mode === 'ai' && st.versions.length > 1 ? '<div class="versions" role="group" aria-label="Versions">' + st.versions.map((v, i) => '<button class="chip" type="button" data-act="version" data-i="' + i + '" aria-pressed="' + (i === st.vi) + '">v' + (i + 1) + '</button>').join('') + '</div>' : '';
     return '<button class="btn small" type="button" data-act="restart"' + (ready ? '' : ' disabled') + '>Restart</button>'
       + '<button class="btn small ghost" type="button" data-act="fullscreen-studio"' + (ready ? '' : ' disabled') + '>Fullscreen</button>'
       + (st.mode === 'ai' && isMulti(studioCode()) ? '<button class="btn small" type="button" data-act="mp-test" aria-pressed="' + !!st.mp + '">' + (st.mp ? 'One player' : 'Test 2 players') + '</button>' : '')
       + '<button class="btn small ghost" type="button" data-act="view-code-studio"' + (ready ? '' : ' disabled') + '>View code</button>'
       + (canDownload() ? '<button class="btn small ghost" type="button" data-act="download-studio"' + (ready ? '' : ' disabled') + '>Download .html</button>' : '')
-      + versions;
+      + hist + versions;
   }
   function studioStatus() {
     const st = S.studio;
     if (st.error) return '<div class="banner bad"><b>The game hit an error</b><span class="mono">' + esc(st.error) + '</span>' + (st.mode === 'ai' && aiReady() ? '<button class="btn small" type="button" data-act="gen-fix" style="justify-self:start">Fix it with AI · free</button>' : '') + '</div>';
+    if (st.testing) return '<p class="muted" role="status">Play-testing the new version before you see it…</p>';
+    const v = st.mode === 'ai' && !st.busy ? st.versions[st.vi] : null, test = v && v.test;
+    if (test && !test.ok && test.problems && test.problems.length) return '<div class="banner warn"><b>The play-test found ' + (test.problems.length === 1 ? 'a problem' : test.problems.length + ' problems') + '</b><ul class="problems">' + test.problems.map((p) => '<li>' + esc(p) + '</li>').join('') + '</ul>' + (aiReady() ? '<button class="btn small" type="button" data-act="gen-fix" style="justify-self:start">Fix with AI · free</button>' : '') + '</div>';
     if (st.lastRun != null) return '<p class="muted">Test run scored ' + fmtInt(st.lastRun) + '. Scores count once the game is published.</p>';
-    return '<p class="muted">' + (studioCode() ? 'Unpublished preview. Click the game to play.' : 'Your game appears here.') + '</p>';
+    return '<p class="muted">' + (test && test.ok ? '<span class="chip ok">' + I.ok + ' Play-tested</span> ' : '') + (studioCode() ? 'Unpublished preview. Click the game to play.' : 'Your game appears here.') + '</p>';
   }
   function mountStudio() {
     if (!S.studio) loadStudio();
@@ -1951,6 +2115,18 @@
         if (d.t === 'error') { S.studio.error = d.v; rerenderStudioRight(); }
         if (d.t === 'over') { S.studio.lastRun = Math.floor(d.v || 0); rerenderStudioRight(); }
       };
+      const v = S.studio.mode === 'ai' ? S.studio.versions[S.studio.vi] : null;
+      const before = S.studio.compare && v && v.base ? S.studio.versions.find((x) => x.ts === v.base) : null;
+      if (before) {
+        // Before and after: the version this change was made from next to the new one, on the same seed.
+        unmountPlayer('st-screen');
+        const seed = (C.randBytes(4).reduce((a, b) => a * 256 + b, 0)) >>> 0;
+        host.innerHTML = '<div class="mp-split"><div id="st-p1"><span class="split-tag">Before · v' + (S.studio.versions.indexOf(before) + 1) + '</span></div><div id="st-p2"><span class="split-tag">After · v' + (S.studio.vi + 1) + '</span></div></div>';
+        mountPlayer($('#st-p1'), before.code, { title: 'Before the change', seed });
+        mountPlayer($('#st-p2'), code, { title: 'After the change', seed, onMessage });
+        rerenderStudioRight();
+        return;
+      }
       if (S.studio.mp && isMulti(code)) {
         // Two previews in one room inside the page, so creators can test multiplayer before publishing.
         unmountPlayer('st-screen');
@@ -1964,50 +2140,185 @@
       rerenderStudioRight();
     }, delay || 0);
   }
+  /* What changed between a version and the one it was made from: the edit blocks of a patch, or for a
+     rewrite the stretch of lines that differs. */
+  function showChanges() {
+    const st = S.studio, v = st.versions[st.vi];
+    const b = v && v.base ? st.versions.find((x) => x.ts === v.base) : null;
+    if (!b) return;
+    const parts = v.edits && v.edits.length ? v.edits.map((e) => ({ del: e.search.split('\n'), add: e.replace ? e.replace.split('\n') : [] })) : roughDiff(H.stripPictures(b.code), H.stripPictures(v.code));
+    const cap = (a) => (a.length > 160 ? a.slice(0, 160).concat(['… ' + fmtInt(a.length - 160) + ' more lines']) : a);
+    const lines = (a, mark, cls) => cap(a).map((l) => '<span class="' + cls + '">' + mark + ' ' + esc(l) + '</span>').join('\n');
+    const bn = st.versions.indexOf(b) + 1, vn = st.vi + 1;
+    modal('<h2>What changed in v' + vn + '</h2><p class="muted" style="font-size:0.875rem">'
+      + (v.edits ? 'Claude changed ' + parts.length + (parts.length === 1 ? ' part' : ' parts') + ' of v' + bn + ' and left the rest of the file as it was.' : 'Claude rewrote the file. This is the stretch that differs from v' + bn + '.') + ' Lines starting with − were removed and + were added.</p>'
+      + '<div class="changes">' + (parts.length ? parts.map((p, i) => '<p class="eyebrow">Change ' + (i + 1) + '</p><pre class="code diff">' + [lines(p.del, '−', 'del'), lines(p.add, '+', 'add')].filter(Boolean).join('\n') + '</pre>').join('') : '<p class="muted">The two versions are the same.</p>') + '</div>'
+      + '<div class="row"><button class="btn" type="button" data-act="undo-version" data-close="1">Undo this change</button><button class="btn ghost" type="button" data-act="modal-close">Close</button></div>');
+  }
+  function roughDiff(a, b) {
+    const A = a.split('\n'), B = b.split('\n');
+    let i = 0, j = 0;
+    while (i < A.length && i < B.length && A[i] === B[i]) i++;
+    while (j < A.length - i && j < B.length - i && A[A.length - 1 - j] === B[B.length - 1 - j]) j++;
+    const del = A.slice(i, A.length - j), add = B.slice(i, B.length - j);
+    return del.length || add.length ? [{ del, add }] : [];
+  }
   function renderStream() {
     const box = $('#st-stream'); if (!box) return;
     const st = S.studio;
     if (!st.busy || !st.stream) { box.innerHTML = ''; return; }
-    box.innerHTML = '<div class="stream" aria-live="off">' + esc(st.stream.tail || 'Waiting for the first line of code…') + '</div>';
+    box.innerHTML = (st.stream.plan && st.stream.plan.length ? '<div class="msg note"><b>Claude’s plan</b>' + checklistHTML(st.stream.plan) + '</div>' : '') + '<div class="stream" aria-live="off">' + esc(st.stream.tail || 'Waiting for the first line of code…') + '</div>';
     const ph = $('#st-phase'); if (ph) ph.textContent = st.stream.phase;
   }
-  async function generate(kind) {
+  /* ---------------- play-test after every build ----------------
+     Before the creator sees a new build, ClaudePlay plays it for a few seconds behind a cover: the SDK's
+     test mode presses keys and taps at random and takes three screenshots. Errors and a blank screen are
+     caught here; on the website Claude also reviews the screenshots and the run log. Problems go straight
+     back as one free fix, so the creator gets a game that already starts, draws and reacts. */
+  function runPlaytest(code, signal) {
+    return new Promise((done) => {
+      const screen = $('#st-screen');
+      const log = { errors: [], started: false, scored: false };
+      if (!screen || document.hidden || (signal && signal.aborted)) { done({ skipped: true, log }); return; }
+      // The test frame sits in a fixed, invisible box that stays in the viewport (browsers pause frames
+      // that are scrolled away or hidden), and is inert so it can never take focus.
+      let host = $('#st-test');
+      if (!host) { host = document.createElement('div'); host.id = 'st-test'; host.className = 'test-box'; host.setAttribute('aria-hidden', 'true'); host.inert = true; document.body.appendChild(host); }
+      let finished = false, timer = null;
+      const onAbort = () => finish({ skipped: true });
+      const finish = (r) => {
+        if (finished) return;
+        finished = true; clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        unmountPlayer('st-test'); host.remove();
+        const veil = screen.querySelector('.testing-veil'); if (veil) veil.remove();
+        done(Object.assign({ log }, r));
+      };
+      if (signal) signal.addEventListener('abort', onAbort);
+      unmountPlayer('st-screen'); unmountPlayer('st-p1'); unmountPlayer('st-p2');
+      screen.innerHTML = '<div class="testing-veil" role="status"><span class="spin" aria-hidden="true"></span><b>Play-testing your game</b><small>Checking that it starts, draws and reacts to keys and taps.</small><button class="btn small" type="button" data-act="stop">Skip</button></div>';
+      mountPlayer(host, code, {
+        title: 'Play-test', conf: { test: true, speed: 1, calm: false, mute: true },
+        onMessage: (d) => {
+          if (d.t === 'error' && log.errors.length < 5) log.errors.push(String(d.v || 'Script error').slice(0, 200));
+          if (d.t === 'score' || d.t === 'over') { log.started = true; if (+d.v > 0) log.scored = true; }
+          if (d.t === 'test') finish({ shots: (Array.isArray(d.shots) ? d.shots : []).map(String).filter((x) => x.startsWith('data:image/jpeg;base64,')).slice(0, 3), colors: Array.isArray(d.colors) ? d.colors.map(Number) : [], canvases: Math.floor(+d.canvases || 0), moved: !!d.moved, text: String(d.text || '').slice(0, 300) });
+        },
+      });
+      timer = setTimeout(() => finish({ timeout: true }), 9000);
+    });
+  }
+  /* What the page can tell without Claude: errors, and a canvas game whose screen stays one flat color. */
+  function localProblems(t) {
+    const out = [];
+    if (t.log.errors.length) out.push('Fix this error from the play-test: ' + t.log.errors[0]);
+    if (t.shots && t.shots.length && t.canvases > 0 && t.colors.length && t.colors.every((c) => c <= 1)) out.push('The screen stays blank or one flat color. Make sure the title screen and the play area are drawn.');
+    return out;
+  }
+  async function reviewPlaytest(t, title, ask, signal) {
+    if (ENV !== 'web' || !SITE.playtest || !t.shots || !t.shots.length) return null;
+    const blank = t.canvases > 0 && t.colors.length > 0 && t.colors.every((c) => c <= 1);
+    try {
+      const res = await fetch(SITE.playtest, {
+        method: 'POST', signal, headers: Object.assign({ 'content-type': 'application/json' }, keyHeader()),
+        body: JSON.stringify({ title, request: ask, shots: t.shots.map((x) => x.slice(23)), log: { errors: t.log.errors, started: t.log.started, scored: t.log.scored, moved: t.moved, blank, canvases: t.canvases, text: t.text } }),
+      });
+      if (!res.ok) return null;
+      const j = await res.json();
+      return { ok: !!j.ok, problems: (Array.isArray(j.problems) ? j.problems : []).map((x) => String(x).slice(0, 200)).slice(0, 4) };
+    } catch (e) { return null; }
+  }
+  async function playtestBuild(v, n, signal) {
+    const st = S.studio;
+    st.testing = true;
+    st.stream = { phase: 'Play-testing v' + n + '…', tail: 'Playing v' + n + ' for a few seconds to check that it starts, draws and reacts.' };
+    rerenderStudioLeft(); rerenderStudioRight();
+    try {
+      const t = await runPlaytest(v.code, signal);
+      if (t.skipped || (signal && signal.aborted)) return { skipped: true, stopped: true };
+      if (t.timeout && !t.log.errors.length) return { skipped: true };
+      let review = null;
+      if (!t.timeout) {
+        st.stream.phase = 'Claude is checking the play-test…'; renderStream();
+        review = await reviewPlaytest(t, (v.meta && v.meta.title) || '', v.ask || '', signal);
+        if (signal && signal.aborted) return { skipped: true, stopped: true };
+      }
+      const problems = [];
+      for (const p of localProblems(t).concat(review ? review.problems : [])) if (!problems.includes(p)) problems.push(p);
+      return { ok: !problems.length, problems: problems.slice(0, 4), reviewed: !!review, ts: Date.now() };
+    } finally { st.testing = false; }
+  }
+  /* The game's request for the play-test review: the creator's words for this build, or for the build it fixes. */
+  function lastAsk(st) { const v = st.versions[st.vi]; return (v && v.ask) || ((st.chat.filter((m) => m.role === 'user').pop() || {}).text || ''); }
+  async function generate(kind, o) {
+    o = o || {};
     const st = S.studio;
     if (!aiReady() || st.busy) return;
     if (kind === 'edit' && !st.versions.length) kind = 'new';
     const prompt = (st.prompt || '').trim();
     if (kind !== 'fix' && !prompt) { toast('Describe your game first.'); const t = $('#st-prompt'); if (t) t.focus(); return; }
     const base = studioCode();
-    const errText = st.error;
+    const cur = st.versions[st.vi];
+    const found = o.problems || (!st.error && cur && cur.test && cur.test.problems && cur.test.problems.length ? cur.test.problems : null);
+    const errText = kind === 'fix' ? (found ? 'Problems an automatic play-test found:\n- ' + found.join('\n- ') : st.error || '') : '';
+    if (kind === 'fix' && !errText) return;
+    const ask = kind === 'fix' ? lastAsk(st) : prompt;
     await ensureWallet();
     await ensureSparks(R.GEN_COST[kind]);
     st.busy = true;
     st.stream = { phase: 'Thinking…', tail: '' };
-    st.chat.push({ role: 'user', text: kind === 'fix' ? 'Fix the error: ' + errText : prompt });
+    if (!o.auto) st.chat.push({ role: 'user', text: kind === 'fix' ? (found ? 'Fix what the play-test found.' : 'Fix the error: ' + errText) : prompt });
     if (kind !== 'fix') st.prompt = '';
     rerenderStudioLeft();
     const ctl = new AbortController();
     S.ctl = ctl;
+    let added = false, autoFix = null;
     try {
       const pics = await stylePics(st.pics, st.style);
-      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', players: st.players === 'multi' ? 'multi' : '', pics, code: kind === 'new' ? '' : H.stripPictures(base || ''), error: kind === 'fix' ? errText : '', tier: st.quality === 'complex' ? 'complex' : 'default' };
-      const res = await aiBuild(req, {
-        signal: ctl.signal,
-        onText: ({ text }) => {
-          st.stream.phase = 'Writing code · ' + (text.length / 1024).toFixed(1) + ' KB';
-          st.stream.tail = text.slice(-900);
-          renderStream();
-        },
-      });
-      const code = H.withPictures(extractHTML(res.text), pics);
+      const plain = kind === 'new' ? '' : H.stripPictures(base || '');
+      const req = { kind, prompt, style: st.style, mode: st.dim || '2d', genre: st.genre || '', players: st.players === 'multi' ? 'multi' : '', pics, code: plain, error: errText.slice(0, H.LIMITS.error), tier: st.quality === 'complex' ? 'complex' : 'default', format: kind === 'new' ? 'full' : 'patch' };
+      const onText = ({ text }) => {
+        const patch = req.format === 'patch' && H.isPatch(text.slice(0, 4000));
+        st.stream.phase = (patch ? 'Writing changes · ' : 'Writing code · ') + (text.length / 1024).toFixed(1) + ' KB';
+        if (!st.stream.plan && text.length < 8000 && text.includes('END PLAN')) st.stream.plan = H.readChecklist(text).plan;
+        st.stream.tail = text.slice(-900);
+        renderStream();
+      };
+      let res = await aiBuild(req, { signal: ctl.signal, onText });
+      let list = H.readChecklist(res.text), raw = null, edits = null;
+      if (req.format === 'patch' && H.isPatch(list.rest)) {
+        const r = H.applyEdits(plain, list.rest);
+        if (r.ok) { raw = extractHTML(r.code); edits = r.edits; }
+        else {
+          // The targeted change did not line up with the file: ask once more for the complete file.
+          st.chat.push({ role: 'note', text: 'The targeted change did not fit the file (' + r.error.replace(/\.$/, '') + '), so Claude is writing the whole file instead.' });
+          st.stream = { phase: 'Rewriting the whole file…', tail: '' }; rerenderStudioLeft();
+          res = await aiBuild(Object.assign({}, req, { format: 'full' }), { signal: ctl.signal, onText });
+          list = H.readChecklist(res.text);
+        }
+      }
+      const code = H.withPictures(raw || extractHTML(list.rest), pics);
       const meta = readMeta(code);
       if (R.GEN_COST[kind]) await signAndAppend('gen', { kind, bytes: code.length });
-      st.versions.push({ code, meta, kind, ts: Date.now() });
+      const v = { code, meta, kind, ts: Date.now(), ask, base: kind !== 'new' && cur ? cur.ts : 0, edits: edits && JSON.stringify(edits).length < 40000 ? edits : null, list: list.done.length ? list.done : null };
+      st.versions.push(v);
       st.vi = st.versions.length - 1;
+      added = true;
+      const n = st.versions.length;
       if (kind === 'new') { st.title = ''; st.desc = ''; }
-      st.chat.push({ role: 'assistant', text: 'Built v' + st.versions.length + ': ' + (meta.title || 'Untitled') + ' (' + (code.length / 1024).toFixed(1) + ' KB).' + (meta.controls ? ' Controls: ' + meta.controls + '.' : '') + (res.truncated ? ' The reply was cut short, so ask for a simpler version if it misbehaves.' : '') });
-      toast('Built ' + (meta.title || 'your game') + '. Click it to play.');
-      loadPreview();
+      st.chat.push({ role: 'assistant', list: v.list, text: (kind === 'new' ? 'Built v' : edits ? 'Changed ' + edits.length + (edits.length === 1 ? ' part' : ' parts') + ' of the game for v' : 'Rebuilt the game as v') + n + ': ' + (meta.title || 'Untitled') + ' (' + (code.length / 1024).toFixed(1) + ' KB).' + (meta.controls && kind === 'new' ? ' Controls: ' + meta.controls + '.' : '') + (res.truncated ? ' The reply was cut short, so ask for a simpler version if it misbehaves.' : '') });
+      saveStudio();
+      const test = await playtestBuild(v, n, ctl.signal);
+      if (!test.skipped) v.test = test;
+      if (test.stopped) st.chat.push({ role: 'note', text: 'Skipped the play-test for v' + n + '.' });
+      else if (test.skipped) st.chat.push({ role: 'note', text: 'The play-test of v' + n + ' could not finish here, so play it yourself to check.' });
+      else if (test.ok) st.chat.push({ role: 'note', text: 'Play-tested v' + n + (test.reviewed ? ': Claude played it and found nothing to fix.' : ': it starts and runs without errors.') });
+      else {
+        const canFix = (o.depth || 0) < 1 && aiReady();
+        st.chat.push({ role: 'note', text: 'The play-test of v' + n + ' found ' + (test.problems.length === 1 ? 'a problem' : test.problems.length + ' problems') + ': ' + test.problems.join(' ') + (canFix ? ' Fixing ' + (test.problems.length === 1 ? 'it' : 'them') + ' now.' : ' Press “Fix with AI” or ask for a change.') });
+        if (canFix) autoFix = test.problems;
+      }
+      toast(autoFix ? 'Built ' + (meta.title || 'your game') + '. Fixing what the play-test found…' : 'Built ' + (meta.title || 'your game') + '. Click it to play.');
     } catch (e) {
       const code = e && e.code;
       const msg = code === 'cancelled' ? 'Stopped. Nothing was charged.'
@@ -2020,10 +2331,14 @@
       st.chat.push({ role: 'note', text: msg });
       if (code !== 'cancelled') toast(msg, 'bad');
     } finally {
-      st.busy = false; st.stream = null; S.ctl = null;
+      st.busy = false; st.stream = null; st.testing = false; S.ctl = null;
       rerenderStudioLeft(); rerenderStudioRight(); saveStudio();
       if (S.plan) loadPlan();
     }
+    if (autoFix && S.route === 'create' && S.studio === st) {
+      try { return await generate('fix', { problems: autoFix, depth: (o.depth || 0) + 1, auto: true }); } finally { if (!$('#st-screen iframe')) loadPreview(); }
+    }
+    if (added || !$('#st-screen iframe')) loadPreview();
   }
   async function publish() {
     const st = S.studio;
@@ -2037,7 +2352,9 @@
     await ensureWallet();
     if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Connect your wallet app (Phantom, Solflare or Backpack) in Wallet before publishing, so collects and tips reach a wallet you control.');
     const hash = await C.sha256hex(code);
-    const gid = 'g' + C.randHex(8);
+    const live = st.editing && S.world.games.get(st.editing);
+    if (st.editing && (!live || live.creator !== S.wallet.from)) throw new Error('Only the wallet that published this game can republish it. Start a new game instead.');
+    const gid = live ? live.gid : 'g' + C.randHex(8);
     const check = await safetyCheck(code, title, (st.desc || meta.desc || '').slice(0, 200));
     if (!check.ok) {
       st.blocked = check.reasons; rerenderStudioLeft();
@@ -2046,13 +2363,17 @@
     st.blocked = null;
     await putBlob(hash, code, check.token);
     const firstPrompt = st.mode === 'ai' ? (st.chat.find((m) => m.role === 'user') || {}).text || '' : '';
-    const { tx } = await signAndAppend('publish', {
-      gid, title, genre: st.mode === 'kit' ? K.KITS[st.kit].genre : meta.genre || 'Arcade', desc: (st.desc || meta.desc || '').slice(0, 200),
-      prompt: firstPrompt.slice(0, 600), hash, size: code.length, parent: st.parent || null,
-      price: Math.round(price * C.LAMPORTS), cap, kit: st.mode === 'kit' ? st.kit : 'ai', params: st.mode === 'kit' ? st.params : null,
-    });
-    toast('Published ' + title + '. Signed with your wallet.', null, short(tx.sig, 6, 6));
-    S.studio.parent = null; S.studio.title = ''; S.studio.desc = '';
+    const vis = st.vis === 'unlisted' ? 'unlisted' : 'listed', players = isMulti(code) ? 'multi' : '';
+    const { tx } = live
+      ? await signAndAppend('update', { gid, hash, size: code.length, title, desc: (st.desc || meta.desc || '').slice(0, 200), vis, players, params: st.mode === 'kit' ? st.params : null })
+      : await signAndAppend('publish', {
+        gid, title, genre: st.mode === 'kit' ? K.KITS[st.kit].genre : meta.genre || 'Arcade', desc: (st.desc || meta.desc || '').slice(0, 200),
+        prompt: firstPrompt.slice(0, 600), hash, size: code.length, parent: st.parent || null,
+        price: Math.round(price * C.LAMPORTS), cap, kit: st.mode === 'kit' ? st.kit : 'ai', params: st.mode === 'kit' ? st.params : null, vis, players,
+      });
+    toast((live ? 'Republished ' : 'Published ') + title + (vis === 'unlisted' ? ' as unlisted: share the link to let people play.' : '. Signed with your wallet.'), null, short(tx.sig, 6, 6));
+    if (st.draftId) dropDraft(st.draftId);
+    S.studio.parent = null; S.studio.title = ''; S.studio.desc = ''; S.studio.editing = null; S.studio.draftId = null; S.studio.published = { gid, n: st.versions.length };
     saveStudio();
     nav('game', gid);
   }
@@ -2079,10 +2400,28 @@
     }
     return { ok: true };
   }
+  async function oneTapRemix(gid, prompt) {
+    const g = S.world.games.get(gid);
+    if (!g) return;
+    if (!prompt || !aiReady()) return startRemix(gid);
+    const code = await getBlob(g.hash);
+    if (!code) throw new Error('The game file is not available, so it cannot be remixed here.');
+    const st = newStudio();
+    st.parent = gid; st.mode = 'ai'; st.guide = -1;
+    st.versions = [{ code, meta: readMeta(code), kind: 'original', ts: Date.now() }]; st.vi = 0;
+    st.title = (g.title + ' Remix').slice(0, 40);
+    st.chat = [{ role: 'note', text: 'Remixing ' + g.title + (g.starter ? ', a free starter kit.' : ' by ' + nameOf(g.creator) + '. They are credited on your game and earn ' + pct(R.PARENT_BPS) + ' of its collects.') }];
+    st.prompt = prompt;
+    stashDraft(S.studio);
+    S.studio = st; saveStudio(); nav('create');
+    await generate('edit');
+  }
   async function startRemix(gid) {
     const g = S.world.games.get(gid);
     if (!g) return;
+    stashDraft(S.studio);
     const st = newStudio();
+    st.guide = -1;
     st.parent = gid;
     if (g.kit !== 'ai' && K.KITS[g.kit]) {
       st.mode = 'kit'; st.kit = g.kit;
@@ -2261,7 +2600,7 @@
 
   /* ---------------- navigation ---------------- */
   function nav(route, arg) {
-    const hash = route === 'game' ? 'game-' + arg : route;
+    const hash = route === 'game' || route === 'maker' || route === 'group' ? route + '-' + arg : route;
     S.ui.roomCode = null;
     if (location.hash.slice(1) !== hash) { try { history.pushState(null, '', '#' + hash); } catch (e) { try { location.hash = hash; } catch (_) { /* ignore */ } } }
     go(route, arg);
@@ -2281,6 +2620,8 @@
   function parseHash() {
     const h = (location.hash || '').slice(1);
     if (h.startsWith('game-')) { const [gid, room] = h.slice(5).split('&room='); return ['game', gid, room && /^[A-HJ-NP-Z2-9]{6}$/.test(room) ? room : null]; }
+    if (/^maker-[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(h)) return ['maker', h.slice(6)];
+    if (/^group-[a-z0-9]{8,16}$/.test(h)) return ['group', h.slice(6)];
     if (['home', 'explore', 'create', 'wallet', 'ledger', 'economy', 'business'].includes(h)) return [h, null];
     return ['home', null];
   }
@@ -2388,6 +2729,29 @@
     },
     'confirm-boost': async (el) => { const g = gameOf(el); closeModal(); await signAndAppend('boost', { gid: g.gid, amt: Number(el.dataset.amt) }); toast('Burned ' + el.dataset.amt + ' GPLY to boost ' + g.title + '.'); },
     'remix': async (el) => { await startRemix(el.dataset.gid); },
+    'open-maker': (el) => nav('maker', el.dataset.pk),
+    'open-group': (el) => nav('group', el.dataset.id),
+    'follow': async (el) => {
+      const pk = el.dataset.pk;
+      await ensureWallet();
+      const w = myWallet(), on = !(w && w.following.has(pk));
+      await signAndAppend('follow', { pk, on });
+      toast(on ? 'Following ' + nameOf(pk) + '. Their games show under Following in Explore.' : 'Unfollowed ' + nameOf(pk) + '.');
+    },
+    'board': (el) => { S.ui.board = el.dataset.id; const g = S.world.games.get(S.arg); if (g) updateGame(g); },
+    'group-new': (el) => modal('<h2>Make a friends board</h2><p>A group leaderboard for you and up to ' + (R.GROUP_MAX - 1) + ' friends, across every game. You get an invite link to send them.</p><form class="stack" data-form="group-new"' + (el.dataset.gid ? ' data-gid="' + esc(el.dataset.gid) + '"' : '') + '><label class="field">Group name<input id="group-name" type="text" maxlength="32" required placeholder="Lunch crew"></label><div class="row"><button class="btn primary" type="submit">Make the group</button><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div></form>'),
+    'group-join': async (el) => { await ensureWallet(); await signAndAppend('join', { id: el.dataset.id }); toast('You joined the group. Your best runs now show on its boards.'); },
+    'group-leave': async (el) => { await signAndAppend('leave', { id: el.dataset.id }); if (S.ui.board === el.dataset.id) S.ui.board = ''; toast('You left the group.'); },
+    'copy-group': () => { const t = $('#group-link'); if (t) copyText(t.value, 'Invite link'); },
+    'phone': (el) => {
+      const g = gameOf(el); if (!g) return;
+      const url = gameLink(g.gid);
+      const web = ENV === 'web' && /^https?:/.test(url);
+      modal('<h2>Play ' + esc(g.title) + ' on your phone</h2>'
+        + (web ? '<p>Point your phone’s camera at the code to open the game. Touch controls work on phones.</p><div class="qr">' + window.PPQR.svg(url, { label: 'QR code that opens ' + g.title }) + '</div>' : '<p>Copy the link and open it on your phone.</p>')
+        + '<label class="field">Link<input type="text" readonly id="phone-link" value="' + esc(url) + '"></label><div class="row"><button class="btn" type="button" data-act="copy-phone">Copy link</button><button class="btn ghost" type="button" data-act="modal-close">Done</button></div>');
+    },
+    'copy-phone': () => { const t = $('#phone-link'); if (t) copyText(t.value, 'Link'); },
     'report': (el) => {
       const g = gameOf(el); if (!g) return;
       modal('<h2>Report ' + esc(g.title) + '</h2><p>Reports go to ClaudePlay’s moderators. Delisting hides a game from Explore; its signed record stays on the ledger.</p><div class="stack">'
@@ -2457,8 +2821,14 @@
     'dim': (el) => { S.studio.dim = el.dataset.dim; $$('[data-act="dim"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.dim === S.studio.dim))); saveStudio(); },
     'style': (el) => { const s = el.dataset.style; S.studio.style = S.studio.style === s ? '' : s; $$('[data-act="style"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.style === S.studio.style))); saveStudio(); },
     'idea': (el) => { const idea = el.dataset.idea || el.textContent; S.studio.prompt = idea; const t = $('#st-prompt'); if (t) { t.value = idea; t.focus(); } saveStudio(); },
-    'home-idea': (el) => { S.studio.mode = 'ai'; S.studio.prompt = el.dataset.idea; saveStudio(); nav('create'); },
+    'home-idea': (el) => { S.studio.mode = 'ai'; S.studio.prompt = el.dataset.idea; S.studio.guide = -1; saveStudio(); nav('create'); },
     'home-kit': () => { if (!S.studio.versions.length) S.studio.mode = 'kit'; saveStudio(); nav('create'); },
+    'guide-genre': (el) => { const st = S.studio; st.genre = el.dataset.v; st.guided = true; guideNext(st); },
+    'guide-dim': (el) => { const st = S.studio; st.dim = el.dataset.v; guideNext(st); },
+    'guide-players': (el) => { const st = S.studio; st.players = el.dataset.v; guideNext(st); },
+    'guide-back': () => { const st = S.studio; st.guide = Math.max(0, st.guide - 1); saveStudio(); rerenderStudioLeft(); const f = $('#guide-q'); if (f) f.focus(); },
+    'guide-skip': () => { const st = S.studio; st.guide = -1; saveStudio(); rerenderStudioLeft(); const f = $('#st-prompt'); if (f) f.focus(); },
+    'guide-restart': () => { const st = S.studio; st.guide = 0; saveStudio(); rerenderStudioLeft(); const f = $('#guide-q'); if (f) f.focus(); },
     'gen-new': () => generate('new'),
     'gen-edit': () => generate('edit'),
     'gen-fix': () => generate('fix'),
@@ -2492,7 +2862,7 @@
       mountGame();
     },
     'players': (el) => { S.studio.players = S.studio.players === 'multi' ? '' : 'multi'; el.setAttribute('aria-pressed', String(S.studio.players === 'multi')); saveStudio(); },
-    'mp-test': () => { S.studio.mp = !S.studio.mp; loadPreview(); },
+    'mp-test': () => { S.studio.mp = !S.studio.mp; if (S.studio.mp) S.studio.compare = false; loadPreview(); },
     'pic-add': () => {
       const inp = document.createElement('input');
       inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/gif,image/webp';
@@ -2500,9 +2870,60 @@
       inp.click();
     },
     'pic-del': (el) => { const st = S.studio; st.pics.splice(+el.dataset.i, 1); saveStudio(); rerenderStudioLeft(); const b = $('[data-act="pic-add"]'); if (b) b.focus(); },
+    'build-rest': (el) => {
+      const st = S.studio, m = st.chat[Number(el.dataset.i)];
+      if (!m || !m.list) return;
+      st.prompt = 'Also build what is still missing from your checklist: ' + m.list.filter((x) => !x.done).map((x) => x.text).join('; ') + '.';
+      return generate('edit');
+    },
+    'undo-version': (el) => {
+      if (el && el.dataset.close) closeModal();
+      const st = S.studio, v = st.versions[st.vi], i = v ? st.versions.findIndex((x) => x.ts === v.base) : -1;
+      if (i < 0) return;
+      st.vi = i; st.compare = false;
+      st.chat.push({ role: 'note', text: 'Undid the change: back to v' + (i + 1) + '. v' + (st.versions.indexOf(v) + 1) + ' is still in the version list.' });
+      saveStudio(); rerenderStudioLeft(); loadPreview();
+    },
+    'compare': () => { S.studio.compare = !S.studio.compare; if (S.studio.compare) S.studio.mp = false; loadPreview(); },
+    'view-changes': () => showChanges(),
     'version': (el) => { S.studio.vi = Number(el.dataset.i); saveStudio(); rerenderStudioLeft(); loadPreview(); },
     'clear-parent': () => { S.studio.parent = null; saveStudio(); rerenderStudioLeft(); },
     'publish': async () => { await publish(); },
+    'vis': (el) => { S.studio.vis = el.dataset.vis; saveStudio(); const p = $('#st-publish'); if (p) p.outerHTML = publishPanel(); refocus('[data-act="vis"][data-vis="' + S.studio.vis + '"]'); },
+    'new-game': () => {
+      stashDraft(S.studio);
+      unmountPlayer('st-p1'); unmountPlayer('st-p2');
+      S.studio = newStudio(); saveStudio(); mountStudio();
+      toast(listDrafts().length ? 'Started a new game. Your last one is in Drafts.' : 'Started a new game.');
+    },
+    'open-draft': (el) => {
+      const d = listDrafts().find((x) => x.id === el.dataset.id); if (!d) return;
+      stashDraft(S.studio);
+      S.studio = Object.assign(newStudio(), d.snap, { busy: false, stream: null, draftId: d.id });
+      S.studio.params = K.normalizeParams(S.studio.kit, S.studio.params);
+      saveStudio(); mountStudio(); toast('Opened ' + d.title + '.');
+    },
+    'del-draft': (el) => { dropDraft(el.dataset.id); rerenderStudioLeft(); const b = $('[data-act="new-game"]'); if (b) b.focus(); toast('Draft deleted.'); },
+    'edit-game': async (el) => {
+      const g = gameOf(el); if (!g || !S.wallet || g.creator !== S.wallet.from) return;
+      const st = newStudio();
+      if (g.kit !== 'ai' && K.KITS[g.kit]) { st.mode = 'kit'; st.kit = g.kit; st.params = K.normalizeParams(g.kit, Object.assign({}, g.params, { title: g.title })); }
+      else {
+        const code = await getBlob(g.hash);
+        if (!code) throw new Error('The game file is not on this device, so it cannot be edited here.');
+        st.mode = 'ai'; st.versions = [{ code, meta: readMeta(code), kind: 'original', ts: Date.now() }]; st.vi = 0;
+        st.chat = [{ role: 'note', text: 'Editing ' + g.title + '. Ask for changes, play them here, then republish. The live game stays as it is until you do.' }];
+      }
+      st.editing = g.gid; st.title = g.title; st.desc = g.desc || ''; st.vis = g.vis || 'listed'; st.guide = -1;
+      stashDraft(S.studio);
+      S.studio = st; saveStudio(); nav('create');
+    },
+    'set-vis': async (el) => {
+      const g = gameOf(el); if (!g) return;
+      const vis = g.vis === 'unlisted' ? 'listed' : 'unlisted';
+      await signAndAppend('update', { gid: g.gid, vis });
+      toast(vis === 'unlisted' ? g.title + ' is unlisted: only people with the link can open it.' : g.title + ' is listed in Explore again.');
+    },
     'ledger-filter': (el) => { S.ui.ledger = el.dataset.f; renderView(true); },
     'open-tx': (el) => { S.ui.openTx = S.ui.openTx === el.dataset.id ? null : el.dataset.id; renderView(true); },
     'settle': async () => { await settleEpoch(); },
@@ -2514,10 +2935,13 @@
   const canDownload = () => !!S.caps.downloads || ENV === 'web';
   async function download(filename, code) {
     if (!code) { toast('The game file is not available on this device.', 'bad'); return; }
+    // The downloaded file carries the player SDK and the engines it uses, so it plays on its own offline.
+    // (View code shows the signed file itself.)
+    const file = K.withSDK(code, (C.randBytes(4).reduce((a, b) => a * 256 + b, 0)) >>> 0, { mute: !S.prefs.sound });
     const dl = S.caps.downloads;
     if (!dl && ENV === 'web') {
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([code], { type: 'text/html' }));
+      a.href = URL.createObjectURL(new Blob([file], { type: 'text/html' }));
       a.download = filename; a.rel = 'noopener';
       document.body.appendChild(a); a.click();
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
@@ -2525,7 +2949,7 @@
       return;
     }
     if (!dl) { showCode(filename, code); return; }
-    try { await dl.save({ filename, data: code }); toast('Saved ' + filename + '.'); }
+    try { await dl.save({ filename, data: file }); toast('Saved ' + filename + '.'); }
     catch (e) { if (e && e.code !== 'declined') toast('Download is not available here. Use View code to copy it.', 'bad'); }
   }
   async function settleEpoch() {
@@ -2590,9 +3014,22 @@
       } else if (kind === 'home-build') {
         const t = $('#home-prompt'), v = ((t && t.value) || '').trim();
         if (!v) { toast('Describe your game first.'); if (t) t.focus(); return; }
-        S.studio.mode = 'ai'; S.studio.prompt = v; saveStudio();
+        S.studio.mode = 'ai'; S.studio.prompt = v; S.studio.guide = -1; saveStudio();
         nav('create');
         if (aiReady()) await generate('new');
+      } else if (kind === 'remix') {
+        const inp = $('#remix-in');
+        await oneTapRemix(f.dataset.gid, ((inp && inp.value) || '').trim());
+      } else if (kind === 'group-new') {
+        const name = (($('#group-name') || {}).value || '').trim();
+        if (!name) return;
+        await ensureWallet();
+        const id = C.randHex(5);
+        await signAndAppend('group', { id, name });
+        closeModal();
+        S.ui.board = id;
+        nav('group', id);
+        toast('Made ' + name + '. Copy the invite link and send it to friends.');
       } else if (kind === 'import') {
         await importWallet($('#import-key').value);
         closeModal();
