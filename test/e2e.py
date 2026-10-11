@@ -622,6 +622,8 @@ async def scenario_server(browser):
         await page.wait_for_selector('button[data-act="version"][data-i="6"]', timeout=20000)
         calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
         check(calls[-1]['pics'] == ["- 'cat': 24x14 px"] and calls[-1]['images'] == 1 and not calls[-1]['picBlock'], 'a change restyles the picture and never sends its data as code: ' + str(calls[-1]['pics']))
+        # Let v6's play-test finish before starting the next build, so the studio is idle.
+        await page.wait_for_function("() => /(Play-tested|play-test of|Skipped the play-test for) v6/.test(document.querySelector('#st-chat').innerText) && !document.querySelector('#st-test')", timeout=20000)
         await page.click('button[data-act="style"][data-style="Neon arcade"]')
         # Multiplayer: build a room game, test two players in the studio, then play it with a friend through a room link.
         await page.click('button[data-act="pic-del"][data-i="0"]')
