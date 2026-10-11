@@ -3939,7 +3939,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   function paneBlocks(v) {
     const out = [];
     for (const el of v.children) {
-      if (el.classList.contains('pager')) continue;
+      // The pager and anything out of the flow (the fixed background game on the front page) never take a pane.
+      if (el.classList.contains('pager') || /fixed|absolute/.test(getComputedStyle(el).position)) continue;
       // One-column layouts on narrow screens split into their columns, so each column can get a pane of its own.
       if (el.matches('.pack, .gp-grid, .studio, .grid2, .hero') && matchMedia('(max-width: 960px)').matches) out.push(...el.children); else out.push(el);
     }
@@ -3990,7 +3991,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     S.ui.panes = groups;
     groups.forEach((g, gi) => g.forEach((bi, k) => { if (gi !== S.ui.pane) blocks[bi].classList.add('fit-off'); else if (!k) blocks[bi].classList.add('fit-lead'); }));
     // A split layout whose columns are all on other panes is hidden too, so its margin takes no room.
-    for (const el of v.children) if (!blocks.includes(el)) el.classList.toggle('fit-off', [...el.children].every((c) => c.classList.contains('fit-off')));
+    for (const el of v.children) if (!blocks.includes(el) && el.firstElementChild && blocks.includes(el.firstElementChild)) el.classList.toggle('fit-off', [...el.children].every((c) => c.classList.contains('fit-off')));
     if (groups.length < 2) { if (pager) pager.remove(); return; }
     const names = groups.map((g, gi) => paneName(g.map((i) => blocks[i]), gi));
     const html = '<button class="pg-step" type="button" data-act="pane" data-pane="' + (S.ui.pane - 1) + '"' + (S.ui.pane ? '' : ' disabled') + ' aria-label="Previous part">' + I.chev + '</button>'
