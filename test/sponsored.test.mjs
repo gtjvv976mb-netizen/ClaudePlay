@@ -60,17 +60,47 @@ test('completed usage settles once, prices the whole Haiku input tier, and retai
   const kv = Object.assign(memoryKv(), { persistent: true }), funding = openBudget({ kv });
   const params = priced('claude-haiku-5-5', 500);
   const a = await funding.take(params);
-  await a.settle({ model: params.model, usage: { input_tokens: 90000, output_tokens: 100, cache_creation_input_tokens: 6000, cache_read_input_tokens: 5000 } });
+  await a.settle({ model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 90000, output_tokens: 100, cache_creation_input_tokens: 6000, cache_read_input_tokens: 5000, cache_creation: { ephemeral_1h_input_tokens: 1000, ephemeral_5m_input_tokens: 5000 }, output_tokens_details: { thinking_tokens: 30 }, server_tool_use: { web_fetch_requests: 0, web_search_requests: 0 }, iterations: [], service_tier: 'standard', speed: 'standard', inference_geo: 'global' } });
   assert.equal(await kv.get(BUDGET_KEY), 53750);
   assert.equal(await a.settle({ model: params.model, usage: { input_tokens: 0, output_tokens: 0 } }), false);
   const b = await funding.take(params);
-  await b.settle({ model: params.model, usage: { input_tokens: 100000, output_tokens: 100 } });
+  await b.settle({ model: params.model, stop_reason: 'max_tokens', usage: { input_tokens: 100000, output_tokens: 100, cache_creation_input_tokens: null, cache_read_input_tokens: null } });
   assert.equal(await kv.get(BUDGET_KEY), 63800);
   const prior = await kv.get(BUDGET_KEY), c = await funding.take(params);
   assert.equal(await c.settle({ model: 'unknown', usage: { input_tokens: 1, output_tokens: 1 } }), false);
   assert.equal(await kv.get(BUDGET_KEY), prior + reservationCost(params));
   const d = await funding.take(params);
   assert.equal(await d.settle({ model: params.model, usage: { output_tokens: 1 } }), false);
+});
+
+test('incomplete, malformed, or unexpectedly priced final usage never releases reserved dollars', async () => {
+  const valid = { input_tokens: 1000, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  const cases = [
+    { stop_reason: null }, { stop_reason: undefined }, { stop_reason: 'future_reason' },
+    { stop_reason: 'tool_use' }, { stop_reason: 'pause_turn' }, { stop_reason: 'compaction' },
+    { usage: { ...valid, output_tokens: 0 } }, { usage: { ...valid, input_tokens: 0 } },
+    { usage: { ...valid, cache_creation_input_tokens: undefined } }, { usage: { input_tokens: 1000, output_tokens: 100 } },
+    { usage: { ...valid, cache_read_input_tokens: -1 } }, { usage: { ...valid, cache_creation_input_tokens: 0.5 } },
+    { usage: { ...valid, cache_creation: { ephemeral_1h_input_tokens: 1, ephemeral_5m_input_tokens: 0 } } },
+    { usage: { ...valid, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0, new_paid_cache: 1 } } },
+    { usage: { ...valid, output_tokens_details: { thinking_tokens: 101 } } },
+    { usage: { ...valid, output_tokens_details: { thinking_tokens: 0, new_paid_output: 1 } } },
+    { usage: { ...valid, output_tokens_details: {} } },
+    { usage: { ...valid, iterations: [{ type: 'compaction', input_tokens: 1000, output_tokens: 100 }] } },
+    { usage: { ...valid, iterations: {} } },
+    { usage: { ...valid, server_tool_use: { web_fetch_requests: 0, web_search_requests: 1 } } },
+    { usage: { ...valid, server_tool_use: { web_fetch_requests: 0, web_search_requests: 0, new_paid_tool: 1 } } },
+    { usage: { ...valid, fallback_credit: {} } },
+    { usage: { ...valid, service_tier: 'priority' } }, { usage: { ...valid, speed: 'fast' } },
+    { usage: { ...valid, inference_geo: 'us' } }, { usage: { ...valid, unknown_billable_tokens: 1000 } },
+  ];
+  for (const extra of cases) {
+    const kv = Object.assign(memoryKv(), { persistent: true }), funding = openBudget({ kv });
+    const params = priced(), call = await funding.take(params);
+    assert.equal(await call.settle({ model: params.model, stop_reason: 'end_turn', usage: valid, ...extra }), false, JSON.stringify(extra));
+    assert.equal(await kv.get(BUDGET_KEY), reservationCost(params), JSON.stringify(extra));
+    assert.equal(await call.settle({ model: params.model, stop_reason: 'end_turn', usage: valid }), false, 'an uncertain report cannot be retried as a refund');
+  }
 });
 
 test('all Claude endpoints reject exhausted funds before any model call or Pro payment', async () => {

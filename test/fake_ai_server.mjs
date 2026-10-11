@@ -76,14 +76,14 @@ const text = (content) => (typeof content === 'string' ? content : content.map((
 const calls = [];
 const screens = [];
 const playtests = [];
-const reply = (params, out) => ({ async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: out } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1 } }; } });
+const reply = (params, out) => ({ async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: out } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }; } });
 const client = { beta: { messages: { stream(params, options = {}) {
   if (params.system[0].text.startsWith('You review browser games')) {
     const content = params.messages[0].content;
     const all = content.map((p) => p.text || '').join('\n');
     screens.push({ model: params.model, images: content.filter((p) => p.type === 'image').length, title: (all.match(/TITLE: (.*)/) || [])[1] });
     const verdict = /BLOCKME/.test(all) ? '{"verdict":"block","reasons":["It shows something not allowed (test)."]}' : '{"verdict":"allow","reasons":[]}';
-    return { async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: verdict } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1 } }; } };
+    return { async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: verdict } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }; } };
   }
   if (params.system[0].text.startsWith('You play-test browser games')) {
     // Play-test review: passes, unless the creator's request says PLAYTESTFIX.
@@ -109,7 +109,7 @@ const client = { beta: { messages: { stream(params, options = {}) {
         yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: doc.slice(i, i + 300) } };
       }
     },
-    async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1 } }; },
+    async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }; },
   };
 } } } };
 
