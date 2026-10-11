@@ -15,6 +15,8 @@ The continuation uses an isolated checkout in this folder. The references recove
 
 These are recovered references, not a perpetual statement of GitHub status. Verify current remote state before later actions that depend on it.
 
+The continuation fixes are published for review in [draft PR 16](https://github.com/gtjvv976mb-netizen/ClaudePlay/pull/16), stacked on PR 15's feature branch. The tested implementation commit is `6963f3e3408174c3d1e32f40f46fc8bbfb58ef22`. No production deployment or merge was performed in this continuation.
+
 ## Incomplete design recovery
 
 Claude's `claude/site-design-overhaul-417dam` thread reported a completed pixel-art title screen, menus, game cards and starter-game reskins at approximately **15:47 Asia/Manila on October 11**. The thread said the result was saved as an unpushed patch and awaited the owner's shipping choice.
