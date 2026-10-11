@@ -517,6 +517,61 @@ label.opt:has(input:checked) { border-color: var(--ink); box-shadow: inset 0 0 0
 label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 2px; }
 .hint { font-size: .84375rem; color: var(--muted); }
 
+/* ---------- one screen ---------- */
+/* data-fit (the default Page layout): the window never scrolls. app.js groups the page's blocks into panes that fit,
+   hides the others (.off) and adds a pager; a block taller than the window (.tall) keeps its own scroll box. */
+:root[data-fit] { height: 100%; overflow: hidden; }
+:root[data-fit] body { height: 100%; margin: 0; overflow: hidden; display: flex; flex-direction: column; }
+:root[data-fit] .top { flex: none; }
+:root[data-fit] .wrap { flex: 1; min-height: 0; width: 100%; overflow: hidden; display: flex; flex-direction: column; padding-block: 20px 12px; }
+:root[data-fit] #view > .section, :root[data-fit] #view > section + section { margin-top: 32px; }
+:root[data-fit] #view > .foot { margin-top: 32px; }
+:root[data-fit] #view .fit-lead { margin-top: 0; }
+/* A pane with room to spare sits in the middle of the window. */
+:root[data-fit] #view:has(> .pager) > .fit-lead { margin-top: auto; }
+:root[data-fit] #view .fit-off { display: none !important; }
+:root[data-fit] #view .fit-tall { max-height: var(--fit-h); overflow: auto; overscroll-behavior: contain; grid-auto-rows: max-content; }
+/* Phones: game shelves become a sideways row you swipe, and game screens get shorter. */
+@media (max-width: 560px) {
+  :root[data-fit] #view .shelf { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 62%; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin-inline: -16px; padding: 4px 16px 8px; }
+  :root[data-fit] #view .shelf::-webkit-scrollbar { display: none; }
+  :root[data-fit] #view .shelf > * { scroll-snap-align: start; }
+  :root[data-fit] .gp-main .screen, :root[data-fit] .st-right .screen { aspect-ratio: 4 / 3; }
+}
+/* The game page and the studio keep their columns side by side and let each column hold its own overflow. */
+:root[data-fit] #view .gp-grid.fit-tall, :root[data-fit] #view .studio.fit-tall { height: var(--fit-h); overflow: hidden; align-items: stretch; }
+:root[data-fit] .gp-grid.fit-tall > *, :root[data-fit] .studio.fit-tall > * { min-height: 0; max-height: 100%; overflow: auto; overscroll-behavior: contain; align-content: start; }
+:root[data-fit] .studio.fit-tall .st-right { position: static; }
+:root[data-fit] .gp-grid.fit-tall > *, :root[data-fit] .studio.fit-tall > * { grid-auto-rows: max-content; }
+/* The game screen shrinks to leave room for its controls, so the play column never needs its scroll box. */
+:root[data-fit] .gp-grid.fit-tall .gp-main .screen, :root[data-fit] .studio.fit-tall .st-right .screen { width: min(100%, calc((var(--fit-h) - 120px) * 1.6)); }
+.enter-up { animation: pane-up .5s cubic-bezier(.32, .72, 0, 1) backwards; }
+.enter-down { animation: pane-down .5s cubic-bezier(.32, .72, 0, 1) backwards; }
+@keyframes pane-up { from { opacity: 0; transform: translateY(28px); } }
+@keyframes pane-down { from { opacity: 0; transform: translateY(-28px); } }
+.pager { margin-top: auto; padding-top: 12px; align-self: center; display: flex; align-items: center; gap: 6px; max-width: 100%; position: relative; z-index: 1; }
+.pager { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px; box-shadow: 0 1px 2px var(--shadow), 0 10px 24px -14px var(--shadow); }
+.pg-step { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: var(--panel-2); color: var(--ink); cursor: pointer; flex: none; transition: background-color .2s, transform .3s cubic-bezier(.32, .72, 0, 1); }
+.pg-step:hover:not(:disabled) { background: var(--shell); }
+.pg-step:active:not(:disabled) { transform: scale(.94); }
+.pg-step.next .ico { rotate: 180deg; }
+.pg-step:disabled { opacity: .35; cursor: default; }
+.pg-dots { display: flex; }
+.pg-dot { display: grid; place-items: center; width: 24px; height: 28px; border: 0; background: transparent; padding: 0; cursor: pointer; border-radius: 999px; }
+.pg-dot i { width: 7px; height: 7px; border-radius: 999px; background: var(--shell-dark); transition: width .4s cubic-bezier(.32, .72, 0, 1), background-color .2s; }
+.pg-dot:hover i { background: var(--ink-2); }
+.pg-dot[aria-current] { width: 34px; }
+.pg-dot[aria-current] i { width: 22px; background: var(--ink); }
+.pg-name { font-size: .875rem; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; padding-inline: 6px 4px; }
+.pg-count { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
+@media (max-width: 560px) { .pg-dots { display: none; } .pager { align-self: stretch; justify-content: space-between; } }
+/* The front page on phones: the copy card, the console and the rail become panes. */
+@media (max-width: 960px) {
+  :root[data-fit][data-route="home"] .pack { padding: 0; }
+  :root[data-fit][data-route="home"] .stage3d { margin-top: 44px; }
+  :root[data-fit][data-route="home"] .stage3d.fit-lead { margin-top: 44px; }
+}
+
 /* ---------- contrast, motion, forced colors ---------- */
 :root[data-gp-theme="contrast"] a, :root[data-gp-theme="contrast"] .linkish { text-decoration-color: currentColor; }
 :root[data-gp-theme="contrast"] .btn, :root[data-gp-theme="contrast"] .chip, :root[data-gp-theme="contrast"] .way { border-width: 2px; }

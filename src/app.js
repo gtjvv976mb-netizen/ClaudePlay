@@ -41,10 +41,11 @@
     play: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.6v10.8l8.6-5.4z" fill="currentColor"/></svg>',
     ok: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.4 3.1 3.1L13 4.6" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>',
     no: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>',
+    chev: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 10.2 4.5-4.5 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
 
   const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1', pending: 'pp.pending.v1', pro: 'pp.pro.v1' };
-  const PREF_DEFAULTS = { theme: 'system', text: 'md', motion: 'system', speed: 1, sound: true };
+  const PREF_DEFAULTS = { theme: 'system', text: 'md', motion: 'system', speed: 1, sound: true, layout: 'fit' };
   const ADJ = ['brisk', 'quiet', 'lucky', 'neon', 'sunny', 'swift', 'cosmic', 'mellow', 'bold', 'tiny', 'jolly', 'pixel', 'rapid', 'calm', 'wild', 'zesty'];
   const NOUN = ['lynx', 'otter', 'comet', 'falcon', 'gecko', 'panda', 'koi', 'badger', 'heron', 'moth', 'yak', 'wombat', 'raven', 'ibis', 'tapir', 'newt'];
   const autoName = (pk) => { let h = 0; for (const c of String(pk)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return ADJ[h % 16] + '-' + NOUN[(h >>> 4) % 16]; };
@@ -153,13 +154,16 @@
     if (p.theme && p.theme !== 'system') r.setAttribute('data-gp-theme', p.theme); else r.removeAttribute('data-gp-theme');
     if (p.text && p.text !== 'md') r.setAttribute('data-gp-text', p.text); else r.removeAttribute('data-gp-text');
     if (p.motion === 'reduce') r.setAttribute('data-gp-motion', 'reduce'); else r.removeAttribute('data-gp-motion');
+    if (p.layout === 'scroll') r.removeAttribute('data-fit'); else r.setAttribute('data-fit', '');
+    if (typeof fitSoon === 'function') fitSoon();
     const b = $('#a11y-btn');
-    if (b) b.classList.toggle('on', Number(p.speed) < 1 || p.theme === 'contrast' || p.text !== 'md' || p.motion === 'reduce' || !p.sound);
+    if (b) b.classList.toggle('on', Number(p.speed) < 1 || p.theme === 'contrast' || p.text !== 'md' || p.motion === 'reduce' || !p.sound || p.layout === 'scroll');
   }
   const PREF_GROUPS = [
     { key: 'theme', label: 'Theme', opts: [['system', 'Match my device'], ['light', 'Light'], ['dark', 'Dark'], ['contrast', 'High contrast']] },
     { key: 'text', label: 'Text size', opts: [['md', 'Default'], ['lg', 'Large'], ['xl', 'Larger']] },
     { key: 'motion', label: 'Motion', opts: [['system', 'Match my device'], ['reduce', 'Reduce motion']], hint: 'Reduce motion turns off page animations and screen shake in kit games.' },
+    { key: 'layout', label: 'Page layout', opts: [['fit', 'One screen'], ['scroll', 'Scrolling pages']], hint: 'One screen keeps every page inside the window and flips between its parts instead of scrolling.' },
     { key: 'speed', label: 'Game speed (assist mode)', opts: [['1', '100%'], ['0.75', '75%'], ['0.5', '50%']], hint: 'Slows every game. Assisted runs are kept as personal results and stay off ranked leaderboards.' },
     { key: 'sound', label: 'Game sound', opts: [['on', 'On'], ['off', 'Off']] },
   ];
@@ -966,7 +970,119 @@
         if (!full && typing) { S.ui.deferred = true; return; }
         v.innerHTML = S.route === 'wallet' ? viewWallet() : S.route === 'ledger' ? viewLedger() : S.route === 'economy' ? viewEconomy() : viewExplore();
     }
+    fitSoon();
   }
+
+  /* ---------- one screen ---------- */
+  // Pages never scroll. The page's blocks are grouped into panes that fit the window, and a pager flips between them
+  // (also by wheel, swipe and Page Up/Down). A block taller than the window keeps its own scroll box. The Page layout
+  // setting turns this off for people who prefer long pages.
+  let fitQueued = false, fitKey = '', flipAt = 0, fitSeen = [];
+  const fitRO = window.ResizeObserver ? new ResizeObserver(() => fitSoon()) : null;
+  function fitSoon() { if (fitQueued) return; fitQueued = true; requestAnimationFrame(() => { fitQueued = false; fitPanes(); }); }
+  function paneBlocks(v) {
+    const out = [];
+    for (const el of v.children) {
+      if (el.classList.contains('pager')) continue;
+      // One-column layouts on narrow screens split into their columns, so each column can get a pane of its own.
+      if (el.matches('.pack, .gp-grid, .studio, .grid2, .hero') && matchMedia('(max-width: 960px)').matches) out.push(...el.children); else out.push(el);
+    }
+    return out;
+  }
+  function fitPanes() {
+    const v = $('#view'); if (!v) return;
+    const on = document.documentElement.hasAttribute('data-fit');
+    let pager = v.querySelector(':scope > .pager');
+    const blocks = paneBlocks(v);
+    blocks.forEach((b) => { b.classList.remove('fit-off', 'fit-lead', 'fit-tall', 'enter-up', 'enter-down'); b.style.removeProperty('--fit-h'); });
+    for (const el of v.children) el.classList.remove('fit-off', 'fit-lead');
+    // Re-observe only when the blocks change: observe() always reports once, which would refit every frame.
+    if (fitRO && (blocks.length !== fitSeen.length || blocks.some((b, i) => b !== fitSeen[i]))) { fitRO.disconnect(); blocks.forEach((b) => fitRO.observe(b)); fitSeen = blocks; }
+    if (!on || !blocks.length) { if (pager) pager.remove(); S.ui.panes = null; return; }
+    const cs = getComputedStyle(v);
+    const room = v.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const sizes = blocks.map((b, i) => {
+      const gap = i && blocks[i - 1].parentElement === b.parentElement && b.parentElement !== v ? parseFloat(getComputedStyle(b.parentElement).rowGap) || 0 : 0;
+      // The first column of a split layout also carries the layout's own top margin.
+      const outer = b.parentElement !== v && b === b.parentElement.firstElementChild ? parseFloat(getComputedStyle(b.parentElement).marginTop) || 0 : 0;
+      const st = getComputedStyle(b);
+      return { h: b.getBoundingClientRect().height + (parseFloat(st.marginBottom) || 0), m: (parseFloat(st.marginTop) || 0) + gap + outer };
+    });
+    const total = sizes.reduce((a, x, i) => a + x.h + (i ? x.m : 0), 0);
+    const avail = total <= room + 1 ? room : room - (pager ? pager.getBoundingClientRect().height : 48) - 12;
+    // Greedy: fill a pane until the next block does not fit. A block taller than a pane takes what is left of the
+    // current pane when that is at least half of it (so a page title stays with its studio), else a pane of its own.
+    const groups = []; let cur = [], used = 0;
+    blocks.forEach((b, i) => {
+      const { h, m } = sizes[i];
+      const left = avail - used - (cur.length ? m : 0);
+      // The game page and the studio shrink into what is left under the title rather than leave it alone on a pane.
+      const squeeze = h > left + 1 && cur.length && left >= avail / 2 && b.matches('.gp-grid, .studio');
+      if (h > avail + 1 || squeeze) {
+        if (cur.length && left < avail / 2) { groups.push(cur); cur = []; used = 0; }
+        const box = cur.length ? avail - used - m : avail;
+        b.classList.add('fit-tall'); b.style.setProperty('--fit-h', Math.floor(box) + 'px');
+        cur.push(i); groups.push(cur); cur = []; used = 0; return;
+      }
+      if (cur.length && h > left + 1) { groups.push(cur); cur = []; used = 0; }
+      used += (cur.length ? m : 0) + h; cur.push(i);
+    });
+    if (cur.length) groups.push(cur);
+    const key = S.route + ':' + (S.arg || '');
+    if (key !== fitKey) { fitKey = key; S.ui.pane = 0; }
+    S.ui.pane = Math.max(0, Math.min(groups.length - 1, S.ui.pane || 0));
+    S.ui.panes = groups;
+    groups.forEach((g, gi) => g.forEach((bi, k) => { if (gi !== S.ui.pane) blocks[bi].classList.add('fit-off'); else if (!k) blocks[bi].classList.add('fit-lead'); }));
+    // A split layout whose columns are all on other panes is hidden too, so its margin takes no room.
+    for (const el of v.children) if (!blocks.includes(el)) el.classList.toggle('fit-off', [...el.children].every((c) => c.classList.contains('fit-off')));
+    if (groups.length < 2) { if (pager) pager.remove(); return; }
+    const names = groups.map((g, gi) => paneName(g.map((i) => blocks[i]), gi));
+    const html = '<button class="pg-step" type="button" data-act="pane" data-pane="' + (S.ui.pane - 1) + '"' + (S.ui.pane ? '' : ' disabled') + ' aria-label="Previous part">' + I.chev + '</button>'
+      + '<span class="pg-dots">' + names.map((n, i) => '<button class="pg-dot" type="button" data-act="pane" data-pane="' + i + '" aria-label="' + esc(n) + '"' + (i === S.ui.pane ? ' aria-current="step"' : '') + '><i></i></button>').join('') + '</span>'
+      + '<span class="pg-name" aria-hidden="true">' + esc(names[S.ui.pane]) + ' <span class="pg-count">' + (S.ui.pane + 1) + ' / ' + groups.length + '</span></span>'
+      + '<button class="pg-step next" type="button" data-act="pane" data-pane="' + (S.ui.pane + 1) + '"' + (S.ui.pane < groups.length - 1 ? '' : ' disabled') + ' aria-label="Next part">' + I.chev + '</button>';
+    if (!pager) { pager = document.createElement('nav'); pager.className = 'pager'; pager.setAttribute('aria-label', 'Parts of this page'); v.appendChild(pager); }
+    if (pager.dataset.sig !== html) { pager.innerHTML = html; pager.dataset.sig = html; }
+  }
+  function paneName(els, i) {
+    for (const el of els) if (el.dataset.part) return el.dataset.part;
+    for (const el of els) { const h = el.matches('h1, h2, h3') ? el : el.querySelector('h1, h2, h3, figcaption b'); if (h && h.textContent.trim()) return h.textContent.trim().replace(/\s+/g, ' ').slice(0, 40); }
+    return els.some((el) => el.matches('footer')) ? 'About ClaudePlay' : 'Part ' + (i + 1);
+  }
+  function flip(to) {
+    const g = S.ui.panes; if (!g || to < 0 || to >= g.length || to === S.ui.pane) return false;
+    const dir = to > S.ui.pane ? 'enter-up' : 'enter-down';
+    S.ui.pane = to; fitPanes();
+    const v = $('#view');
+    paneBlocks(v).forEach((b) => { if (!b.classList.contains('fit-off')) b.classList.add(dir); });
+    const dot = v.querySelector('.pg-dot[aria-current]');
+    announce((dot && dot.getAttribute('aria-label')) || '');
+    flipAt = performance.now();
+    return true;
+  }
+  function canScroll(el, dy) {
+    for (let n = el; n && n.id !== 'view'; n = n.parentElement) {
+      if (n.scrollHeight > n.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(n).overflowY)) {
+        if (dy > 0 ? n.scrollTop + n.clientHeight < n.scrollHeight - 1 : n.scrollTop > 0) return true;
+      }
+    }
+    return false;
+  }
+  addEventListener('resize', fitSoon);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSoon);
+  document.addEventListener('wheel', (e) => {
+    if (!S.ui.panes || S.ui.panes.length < 2 || Math.abs(e.deltaY) < 24 || $('.modal-back')) return;
+    if (!e.target.closest || !e.target.closest('#view') || canScroll(e.target, e.deltaY)) return;
+    if (performance.now() - flipAt < 700) return;
+    flip(S.ui.pane + (e.deltaY > 0 ? 1 : -1));
+  }, { passive: true });
+  let touchY = null;
+  document.addEventListener('touchstart', (e) => { touchY = e.touches.length === 1 && e.target.closest && e.target.closest('#view') && !canScroll(e.target, 1) && !canScroll(e.target, -1) ? e.touches[0].clientY : null; }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (touchY == null || !S.ui.panes) return;
+    const dy = touchY - e.changedTouches[0].clientY; touchY = null;
+    if (Math.abs(dy) > 70) flip(S.ui.pane + (dy > 0 ? 1 : -1));
+  }, { passive: true });
 
   /* ---------- explore ---------- */
   function cartHTML(g) {
@@ -1645,7 +1761,7 @@
       return;
     }
     v.innerHTML = '<div class="gp-head"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(g.title) + '</h1><div class="row" id="gp-chips">' + gameChips(g) + '</div></div>'
-      + '<div class="gp-grid"><div class="gp-main"><div class="screen" id="gp-screen" data-gid="' + esc(g.gid) + '" style="background:#05070a url(' + K.cover(g) + ') center/cover"></div>'
+      + '<div class="gp-grid"><div class="gp-main" data-part="Play"><div class="screen" id="gp-screen" data-gid="' + esc(g.gid) + '" style="background:#05070a url(' + K.cover(g) + ') center/cover"></div>'
       + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-room"></div><div id="gp-about">' + gameAbout(g) + '</div></div>'
       + '<aside class="gp-side"><div class="tabs" role="tablist" id="gp-tabs">' + TABS.map(([k, l]) => '<button role="tab" type="button" data-act="tab" data-tab="' + k + '" aria-selected="' + (S.ui.tab === k) + '">' + l + '</button>').join('') + '</div><div class="panel" id="gp-panel">' + gamePanel(g) + '</div></aside></div>' + footHTML();
     const code = await getBlob(g.hash);
@@ -1804,7 +1920,7 @@
     if (!S.studio) loadStudio();
     $('#view').innerHTML = '<div class="gp-head"><h1>Make a cartridge</h1></div>'
       + '<div class="studio"><section class="st-left stack" id="st-left">' + studioLeft() + '</section>'
-      + '<section class="st-right" id="st-right"><div class="screen" id="st-screen"></div><div class="toolbar" id="st-tools">' + studioTools() + '</div><div id="st-status">' + studioStatus() + '</div></section></div>' + footHTML();
+      + '<section class="st-right" id="st-right" data-part="Preview"><div class="screen" id="st-screen"></div><div class="toolbar" id="st-tools">' + studioTools() + '</div><div id="st-status">' + studioStatus() + '</div></section></div>' + footHTML();
     loadPreview();
     renderStream();
     loadPlan();
@@ -2186,6 +2302,7 @@
     'sort': (el) => { S.ui.sort = el.dataset.sort; renderView(true); },
     'tab': (el) => { S.ui.tab = el.dataset.tab; const g = S.world.games.get(S.arg); if (g) updateGame(g); },
     'modal-close': () => closeModal(),
+    pane: (el) => { flip(Number(el.dataset.pane)); const d = $('#view .pg-dot[aria-current]'); if (d && el.classList.contains('pg-dot')) d.focus(); },
     'modal-backdrop': (el, e) => { if (e.target === el) closeModal(); },
     'create-wallet': async () => { await createWallet(false); renderView(true); },
     'connect-injected': async () => { await connectInjected(); },
@@ -2456,6 +2573,7 @@
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr[data-act]')) { e.preventDefault(); e.target.click(); }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target.id === 'home-prompt') { e.preventDefault(); e.target.form.requestSubmit(); }
+    if ((e.key === 'PageDown' || e.key === 'PageUp') && S.ui.panes && !$('.modal-back') && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) && flip(S.ui.pane + (e.key === 'PageDown' ? 1 : -1))) e.preventDefault();
   });
   document.addEventListener('submit', (e) => {
     const f = e.target.closest('[data-form]');

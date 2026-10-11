@@ -56,6 +56,7 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 - **The product is named ClaudePlay (formerly GamePlay), an unofficial fan project.** Keep the "not affiliated with or endorsed by Anthropic" notice in the footer, FAQ and READMEs. Protocol names stay `gameplay`: the `GAMEPLAY/v1` signing domain, the `gameplay:<id>` payment memo, the `gameplay-genre` / `gameplay-controls` meta tags, and the `GamePlay kit` generator tag inside `kitDoc()` (it is hashed).
 - **Storage keys keep the old `pp.` prefix** (from the working name PlayPark) so existing browsers keep their wallets and games. Display preferences live in `gp.prefs.v1`.
 - **Accessibility is tested.** Type sizes are in `rem`, colors come only from tokens, every theme (light, dark, contrast) must pass the e2e contrast audit, headings must not skip levels, and nothing may scroll sideways at 390px even with the largest text size.
+- **Pages fit one screen.** The window never scrolls by default: `fitPanes()` in app.js splits a page into panes with a pager, and the Page layout setting brings back long pages. The e2e feature scenarios run with long pages; `scenario_fit` checks every page at laptop, desktop and phone sizes.
 - **Assist mode** slows the game clock in the SDK. Assisted runs must never be signed to ranked leaderboards.
 
 ## Guardrails

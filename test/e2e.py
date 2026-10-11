@@ -24,8 +24,11 @@ def check(cond, msg):
     print(('ok   ' if cond else 'FAIL ') + msg)
     if not cond: fails.append(msg)
 
-async def new_page(browser, mock=False, **kw):
+async def new_page(browser, mock=False, fit=False, **kw):
     ctx = await browser.new_context(**kw)
+    # Feature scenarios use the long-page layout so every part of a page is on screen; scenario_fit covers the
+    # default one-screen layout.
+    if not fit: await ctx.add_init_script("if (window === top) try { if (!localStorage.getItem('gp.prefs.v1')) localStorage.setItem('gp.prefs.v1', JSON.stringify({layout: 'scroll'})) } catch (e) {}")
     await ctx.route('**/fonts.googleapis.com/**', lambda r: r.abort())
     await ctx.route('**/fonts.gstatic.com/**', lambda r: r.abort())
     if mock: await ctx.add_init_script(MOCK)
@@ -770,7 +773,7 @@ async def scenario_engines(browser):
 
 async def scenario_a11y(browser):
     for scheme, theme in (('light', None), ('dark', None), ('light', 'contrast')):
-        ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900}, color_scheme=scheme)
+        ctx, page, errs = await new_page(browser, fit=True, viewport={'width': 1280, 'height': 900}, color_scheme=scheme)
         if theme: await ctx.add_init_script("localStorage.setItem('gp.prefs.v1', JSON.stringify({theme: '%s'}))" % theme)
         await page.goto(SITE)
         await page.wait_for_selector('#home-screen iframe', timeout=15000)
@@ -783,12 +786,45 @@ async def scenario_a11y(browser):
         audit_ok(f'{label} settings dialog', await page.evaluate(AUDIT))
         await ctx.close()
 
+async def scenario_fit(browser):
+    routes = ['home', 'explore', 'game-kit-neon-dash', 'create', 'wallet', 'ledger', 'economy', 'business']
+    for w, h in ((1440, 900), (1366, 768), (1280, 720), (390, 844), (360, 640)):
+        mobile = w < 500
+        ctx, page, errs = await new_page(browser, fit=True, viewport={'width': w, 'height': h}, is_mobile=mobile, has_touch=mobile)
+        await page.goto(SITE)
+        await page.wait_for_selector('#home-screen iframe', state='attached', timeout=15000)
+        for r in routes:
+            await page.evaluate(f'location.hash = "{r}"'); await page.wait_for_timeout(600)
+            sy, sx = await page.evaluate('[document.documentElement.scrollHeight - innerHeight, document.documentElement.scrollWidth - innerWidth]')
+            check(sy <= 0 and sx <= 0, f'one screen at {w}x{h} ({r}: {sy}px down, {sx}px across)')
+            vis = await page.evaluate('''() => [...document.querySelectorAll('#view .pager, #view > :not(.fit-off)')].every((e) => { const b = e.getBoundingClientRect(); return b.height === 0 || b.bottom <= innerHeight + 1; })''')
+            check(vis, f'every shown part fits the window at {w}x{h} ({r})')
+        real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+        check(not real, f'no console/page errors in one-screen layout at {w}x{h} {real[:3]}')
+        await ctx.close()
+    ctx, page, errs = await new_page(browser, fit=True, viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
+    await page.goto(SITE + '#business')
+    await page.wait_for_selector('.pager', timeout=15000)
+    first = await page.inner_text('.pg-name')
+    await page.click('.pg-step.next'); await page.wait_for_timeout(400)
+    second = await page.inner_text('.pg-name')
+    check(first != second and '2 /' in second, f'the pager flips to the next part ({first!r} then {second!r})')
+    await page.keyboard.press('PageUp'); await page.wait_for_timeout(800)
+    check('1 /' in await page.inner_text('.pg-name'), 'Page Up flips back')
+    await page.click('#a11y-btn'); await page.wait_for_timeout(200)
+    await page.click('label.opt:has(input[name="pref-layout"][value="scroll"])'); await page.click('[data-act="modal-close"]'); await page.wait_for_timeout(500)
+    tall = await page.evaluate('document.documentElement.scrollHeight - innerHeight')
+    check(tall > 0 and await page.locator('.pager').count() == 0, f'the Scrolling pages setting brings back long pages ({tall}px)')
+    real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+    check(not real, f'no console/page errors while flipping parts {real[:3]}')
+    await ctx.close()
+
 async def main():
     async with async_playwright() as p:
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader'])
         only = os.environ.get('E2E_ONLY', '').split(',')
-        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_mainnet, scenario_engines, scenario_a11y):
+        for sc in (scenario_local, scenario_mock, scenario_dark, scenario_site, scenario_server, scenario_chain, scenario_mainnet, scenario_engines, scenario_fit, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
             try:
                 await sc(browser)

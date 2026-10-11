@@ -27,7 +27,8 @@ ClaudePlay is calm and professional: soft silver-grey surfaces, one muted slate-
 ## Motion
 
 - Easing is `cubic-bezier(.32, .72, 0, 1)` or `(.16, 1, .3, 1)`; nothing bounces.
-- **One screen**: on screens wider than 960px the front page is the header, the copy card and console over the game, the game rail and a one-line footer, sized from the window height (`:root[data-route="home"]`). Phones scroll.
+- **One screen, every page**: the window never scrolls (`:root[data-fit]`, the default Page layout). `fitPanes()` in app.js groups a page's blocks into panes that fit the window and adds a pager (dots, the part's name, up and down buttons); the wheel, a vertical swipe and Page Up/Down flip parts with a short slide. On phones, single-column layouts split into their columns, and game shelves become a sideways swipe row. The game page and the studio stay with their title and let each column hold its own overflow; any other block taller than the window keeps its own scroll box. The Page layout setting ("Scrolling pages") brings back long pages.
+- The front page on wide screens is the header, the copy card and console over the game, the game rail and a one-line footer, sized from the window height (`:root[data-route="home"]`).
 - **The background is a game**: a kart cruises down a track through a city of cartridges, grabbing coins and jumping blocks (`homeWorld()` in app.js, raw WebGL). It is tuned slow (speed 14 to 20), with small bursts and little camera shake. It drives itself; moving the mouse steers it and clicking an empty spot jumps. It holds still while the console game has focus, draws one still frame in calm motion, and is skipped in the contrast theme and on software rendering. Text never sits on it directly.
 - **Depth**: the copy card, the console (a slight 3D tilt) and Cart shift gently with the pointer (`packDepth()`, `--px`/`--py`).
 - **Entrances**: panels and tiles rise and fade in (`@keyframes pop`, `rise`); the console fades in.
