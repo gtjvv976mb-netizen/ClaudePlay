@@ -14,7 +14,8 @@ const SITE = { contact: process.env.GP_CONTACT || '', mascot: 'mascot-wave.webp'
 // The mascot: a small still is inlined into the page (so the claude.ai artifact shows it too);
 // its animated loop ships next to the website as its own file and loads after the page.
 const MASCOT_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/mascot.webp')).toString('base64');
-const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'qr.js', 'app.js'].map((f) => {
+const PLAY_WORLD_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/play-world-v1.webp')).toString('base64');
+const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'qr.js', 'workshop-scene.js', 'app.js'].map((f) => {
   const s = read(f).replace("'MASCOT_STILL'", () => JSON.stringify(MASCOT_STILL));
   for (const bad of ['</script', '<!--', '<script']) if (s.toLowerCase().includes(bad)) throw new Error(f + ' contains ' + bad);
   return s;
@@ -24,7 +25,7 @@ const scripts = (config) => (config ? '<script>window.GP_SITE = ' + JSON.stringi
 
 const template = read('index.html');
 // A replacer function keeps `$` sequences in the scripts from being read as replacement patterns.
-const page = template.replace('<!--INLINE-SCRIPTS-->', () => scripts(null));
+const page = template.replaceAll('PLAY_WORLD_STILL', PLAY_WORLD_STILL).replace('<!--INLINE-SCRIPTS-->', () => scripts(null));
 mkdirSync(here('./dist/site/'), { recursive: true });
 writeFileSync(here('./dist/playpark.html'), page);
 
@@ -32,24 +33,26 @@ const skeleton = '<!doctype html><html><head><meta charset=utf8><meta name=viewp
 writeFileSync(here('./dist/local.html'), skeleton + page + '</body></html>');
 
 // The static website: the same page with a real <head> (description, social card, icon).
-const sitePage = template.replace('<!--INLINE-SCRIPTS-->', () => scripts(SITE));
+const sitePage = template.replaceAll('PLAY_WORLD_STILL', 'play-world-v1.webp').replace('<!--INLINE-SCRIPTS-->', () => scripts(SITE));
 const cut = sitePage.indexOf('<a class="skip"');
 if (cut < 0) throw new Error('skip link marker not found');
-const desc = 'ClaudePlay is a free game maker. Make a browser game in minutes, share it with a link, and earn when people play, collect or remix it. No sign-up, works on any phone.';
-const icon = "data:image/svg+xml," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M3 8l5-5h16l5 5v21H3z' fill='#2a3ff5'/><rect x='8' y='8' width='16' height='11' rx='1.5' fill='#fff'/><path d='M9 24.5h14' stroke='#fff' stroke-width='2.4' stroke-dasharray='2 2.2'/></svg>");
+const desc = 'ClaudePlay is a free game maker. Make, play and share your own browser games: describe an idea or start with a game kit. Free creation has daily limits and a shared funding cap.';
+const icon = "data:image/svg+xml," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M5 9h22l4 15-4 3-7-6h-8l-7 6-4-3z' fill='#163f9a'/><path d='M7 14h8m-4-4v8' stroke='#fff' stroke-width='2.5'/><path d='M21 13h3v3h-3zm4 4h3v3h-3z' fill='#ffcf67'/></svg>");
 const site = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
   + '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n'
   + '<meta name="description" content="' + desc + '">\n'
-  + '<meta name="theme-color" content="#e2e7e4" media="(prefers-color-scheme: light)">\n'
-  + '<meta name="theme-color" content="#0d1211" media="(prefers-color-scheme: dark)">\n'
+  + '<meta name="theme-color" content="#f4f8ff" media="(prefers-color-scheme: light)">\n'
+  + '<meta name="theme-color" content="#101d35" media="(prefers-color-scheme: dark)">\n'
   + '<meta property="og:type" content="website">\n<meta property="og:title" content="ClaudePlay">\n'
   + '<meta property="og:description" content="' + desc + '">\n'
   + '<meta name="twitter:card" content="summary">\n'
   + '<link rel="icon" href="' + icon + '">\n'
+  + '<link rel="preload" as="image" href="play-world-v1.webp">\n'
   + '<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>\n'
   + sitePage.slice(0, cut).trim() + '\n</head>\n<body>\n' + sitePage.slice(cut) + '\n</body>\n</html>\n';
 writeFileSync(here('./dist/site/index.html'), site);
 writeFileSync(here('./dist/site/README.md'), readFileSync(here('./site-README.md'), 'utf8'));
 writeFileSync(here('./dist/site/mascot-wave.webp'), readFileSync(here('./src/assets/mascot-wave.webp')));
+writeFileSync(here('./dist/site/play-world-v1.webp'), readFileSync(here('./src/assets/play-world-v1.webp')));
 
 console.log('built', (page.length / 1024).toFixed(1) + ' KB page,', (site.length / 1024).toFixed(1) + ' KB website');

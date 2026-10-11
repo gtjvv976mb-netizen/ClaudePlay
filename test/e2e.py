@@ -53,6 +53,7 @@ async def toast_text(page):
     return ' | '.join(await page.locator('.toast').all_inner_texts())
 
 async def play_until_over(page, frame_sel, timeout=12000):
+    await page.locator(frame_sel).scroll_into_view_if_needed()
     box = await page.locator(frame_sel).bounding_box()
     await page.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
 
@@ -576,8 +577,8 @@ async def scenario_site(browser):
     gain = await fr.evaluate('() => { const c = new AudioContext(); const g = c.destination.gain; return g ? g.value : -1; }')
     check(gain == 0, 'sound off routes game audio through a silent gain')
     check(await page.evaluate('document.documentElement.dataset.gpMotion') == 'reduce', 'reduce motion applies to the page')
-    box = await page.locator('#home-screen iframe').bounding_box()
-    await page.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
+    # Target the actual canvas so actionability waits for the below-fold player's scrolling to settle.
+    await fr.locator('canvas').click()
     await page.wait_for_selector('.toast:has-text("Assist mode is on")', timeout=20000)
     check(True, 'assisted run is reported and kept off the leaderboard')
     check(await page.evaluate('!window.__pp.wallet'), 'assisted run does not sign a score or create a wallet')
@@ -633,7 +634,7 @@ async def scenario_site(browser):
     await ctx.close()
 
 async def scenario_server(browser):
-    # The plain website served by server/server.mjs (with a fake Claude): anyone can describe a crypto game.
+    # The plain website served by server/server.mjs (with a fake Claude): a home idea carries into creation.
     proc = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), '8766'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         for _ in range(50):
@@ -643,11 +644,11 @@ async def scenario_server(browser):
         await page.goto(AI_SITE)
         await page.wait_for_selector('#h-crypto', timeout=15000)
         n = await page.locator('button[data-act="home-idea"]').count()
-        check(n == 6, f'front page offers crypto game ideas ({n})')
-        await page.locator('button[data-act="home-idea"]', has_text='Block Miner').click()
+        check(n == 4, f'front page offers four game genre ideas ({n})')
+        await page.locator('button[data-act="home-idea"]', has_text='Sky Runner').click()
         await page.wait_for_selector('#st-prompt', timeout=8000)
         prompt = await page.input_value('#st-prompt')
-        check(prompt.startswith('Block Miner:'), 'idea fills the AI studio prompt: ' + prompt[:40])
+        check(prompt == 'Sky Runner: A fox jumps between floating islands and collects stars.', 'idea fills the AI studio prompt: ' + prompt[:40])
         seg = await page.locator('button[data-act="studio-mode"][aria-pressed="true"]').inner_text()
         check(seg.startswith('Describe'), 'AI studio is on for a website with a ClaudePlay server')
         check(await page.locator('button[data-act="idea"][data-idea^="Rug Pull"]').count() == 1, 'studio lists crypto ideas')
@@ -660,7 +661,7 @@ async def scenario_server(browser):
         check(len(tests) == 1 and tests[0]['images'] == 3 and tests[0]['model'] == 'claude-haiku-5-5' and 'errors: none' in tests[0]['log'], 'Claude reviews three play-test screenshots and the run log: ' + json.dumps(tests)[:200])
         check('Claude played it and found nothing to fix' in await page.locator('#st-chat').inner_text(), 'the play-test result shows in the chat')
         calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
-        check(len(calls) == 1 and calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nBlock Miner'), 'free plan sent the new game idea to Sonnet 5.5: ' + json.dumps(calls)[:160])
+        check(len(calls) == 1 and calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nSky Runner'), 'free plan sent the selected game idea to Sonnet 5.5: ' + json.dumps(calls)[:160])
         plan = await page.locator('#st-plan').inner_text()
         check('Free plan' in plan and 'Claude Sonnet 5.5' in plan and 'Get Pro' not in plan, 'studio shows the free plan, with no Pro offer without Solana payments: ' + plan)
         await page.screenshot(path=f'{OUT}/30-server-ai.png', full_page=True)
@@ -1333,7 +1334,8 @@ async def scenario_a11y(browser):
         ctx, page, errs = await new_page(browser, fit=True, viewport={'width': 1280, 'height': 900}, color_scheme=scheme)
         if theme: await ctx.add_init_script("localStorage.setItem('gp.prefs.v1', JSON.stringify({theme: '%s'}))" % theme)
         await page.goto(SITE)
-        await page.wait_for_selector('#home-screen iframe', timeout=15000)
+        await page.wait_for_selector('#home-screen iframe', state='attached', timeout=15000)
+        await page.wait_for_selector('#hero-title', timeout=15000)
         label = scheme + ('/' + theme if theme else '')
         for r in ['home', 'explore', 'game-kit-neon-dash', 'create', 'business', 'wallet', 'ledger', 'economy']:
             await page.evaluate(f'location.hash = "{r}"'); await page.wait_for_timeout(500)

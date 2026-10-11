@@ -1,0 +1,9 @@
+# Original ClaudePlay game-world artwork
+
+Created for the owner's Google Playground-inspired redesign on October 11, 2026 using the built-in imagegen tool. This is original ClaudePlay art, not a Google asset or a recovered Claude patch. The generated PNG is preserved in the tool's original output directory. The selected artwork is saved in the project as `src/assets/play-world-v1.webp`; it is a 1672 × 941 image, encoded at WebP quality 82 (213,500 bytes) using the bundled Sharp runtime.
+
+The static website loads the local WebP asset with an image preload. The standalone artifact and local test page inline the same WebP, so they remain self-contained. No third-party image host or runtime library is required.
+
+## Final generation prompt
+
+Use case: stylized-concept. Asset type: original wide website hero background for ClaudePlay, a free browser game creation/play platform. Create a beautiful detailed 16:9 panorama of a joyful miniature pixel-art game universe floating in a bright blue sky: a grassy platformer island with stepping platforms and blocky trees, a little racing island with a looping track and tiny orange car, a cozy castle/puzzle island, and a night-blue arcade city island, connected by small cloud bridges. Crisp carefully drawn pixel-art edges with dimensional isometric terrain, readable silhouettes, rich turquoise, sky blue, leafy greens, warm coral highlights, soft cream clouds and warm sunlight. Main world is toward the RIGHT two-thirds with visual breathing space on the LEFT for website headline and creation prompt. Charming game-console-era adventure art with contemporary polish. These are small invented game worlds, not real brands or borrowed characters. Composition should feel immediately inviting to people who want to create and play games. No text, no letters, no logo, no watermark, no UI panels, no screenshots, no cartridges, no factory parts. Wide landscape, seamless sky framing, gorgeous original illustration.

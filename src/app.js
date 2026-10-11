@@ -169,7 +169,7 @@
   ];
   function prefValue(key) { const v = S.prefs[key]; return key === 'sound' ? (v ? 'on' : 'off') : String(v); }
   function openSettings() {
-    modal('<h2>Accessibility &amp; display</h2><p class="muted">Changes apply right away, across the site and inside every game. They are saved in this browser.</p>'
+    modal('<p class="page-kicker">Make it comfortable</p><h2>Accessibility &amp; display</h2><p class="muted">Changes apply right away, across the site and inside every game. They are saved in this browser.</p>'
       + PREF_GROUPS.map((g) => '<fieldset class="prefs"><legend>' + esc(g.label) + '</legend><div class="opts">'
         + g.opts.map(([v, l]) => '<label class="opt"><input type="radio" name="pref-' + g.key + '" value="' + esc(v) + '"' + (prefValue(g.key) === v ? ' checked' : '') + '><span>' + esc(l) + '</span></label>').join('')
         + '</div>' + (g.hint ? '<p class="hint">' + esc(g.hint) + '</p>' : '') + '</fieldset>').join('')
@@ -181,7 +181,7 @@
     LS.set(KEY.prefs, S.prefs);
     applyPrefs();
     const after = gameOpts();
-    if (key === 'theme') { const cv = $('#home-world'); if (cv) { const fresh = cv.cloneNode(); cv.replaceWith(fresh); homeWorld(fresh); } }
+    if (key === 'theme' && bgGame) bgGame.retheme();
     if (before.speed !== after.speed || before.calm !== after.calm || before.mute !== after.mute) renderView(true);
     const g = PREF_GROUPS.find((x) => x.key === key), o = g && g.opts.find(([v]) => v === raw);
     if (g && o) announce(g.label + ': ' + o[1] + '.');
@@ -1075,6 +1075,7 @@
   }
   function renderView(full) {
     const v = $('#view');
+    if (full) stopHomeScene();
     const active = document.activeElement;
     const typing = active && v.contains(active) && /INPUT|TEXTAREA|SELECT/.test(active.tagName);
     switch (S.route) {
@@ -1107,13 +1108,16 @@
   let fitQueued = false, fitKey = '', flipAt = 0, fitSeen = [];
   const fitRO = window.ResizeObserver ? new ResizeObserver(() => fitSoon()) : null;
   function fitSoon() { if (fitQueued) return; fitQueued = true; requestAnimationFrame(() => { fitQueued = false; fitPanes(); }); }
+  // Late optional fonts and wallet labels can resize the header without changing a capped pane.
+  const fitHeaderRO = window.ResizeObserver ? new ResizeObserver(fitSoon) : null;
+  if (fitHeaderRO && $('.top')) fitHeaderRO.observe($('.top'));
   function paneBlocks(v) {
     const out = [];
     for (const el of v.children) {
       // The pager and anything out of the flow (the fixed background game on the front page) never take a pane.
       if (el.classList.contains('pager') || /fixed|absolute/.test(getComputedStyle(el).position)) continue;
       // One-column layouts on narrow screens split into their columns, so each column can get a pane of its own.
-      if (el.matches('.pack, .gp-grid, .studio, .grid2, .hero') && matchMedia('(max-width: 960px)').matches) out.push(...el.children); else out.push(el);
+      if (el.matches('.pack') || (el.matches('.gp-grid, .studio, .grid2, .hero') && matchMedia('(max-width: 960px)').matches)) out.push(...el.children); else out.push(el);
     }
     return out;
   }
@@ -1122,6 +1126,9 @@
     const on = document.documentElement.hasAttribute('data-fit');
     let pager = v.querySelector(':scope > .pager');
     const blocks = paneBlocks(v);
+    // Only tall pane blocks receive this extra keyboard stop. Clear our own attributes before
+    // remeasuring, including blocks that cease to be panes after a breakpoint/layout change.
+    v.querySelectorAll('[data-fit-tab]').forEach((b) => { b.removeAttribute('tabindex'); b.removeAttribute('data-fit-tab'); });
     blocks.forEach((b) => { b.classList.remove('fit-off', 'fit-lead', 'fit-tall', 'enter-up', 'enter-down'); b.style.removeProperty('--fit-h'); });
     for (const el of v.children) el.classList.remove('fit-off', 'fit-lead');
     // Re-observe only when the blocks change: observe() always reports once, which would refit every frame.
@@ -1150,6 +1157,9 @@
         if (cur.length && left < avail / 2) { groups.push(cur); cur = []; used = 0; }
         const box = cur.length ? avail - used - m : avail;
         b.classList.add('fit-tall'); b.style.setProperty('--fit-h', Math.floor(box) + 'px');
+        if (!b.hasAttribute('tabindex') && !b.matches('a[href], button, input, select, textarea, iframe')) {
+          b.tabIndex = 0; b.setAttribute('data-fit-tab', '');
+        }
         cur.push(i); groups.push(cur); cur = []; used = 0; return;
       }
       if (cur.length && h > left + 1) { groups.push(cur); cur = []; used = 0; }
@@ -1198,6 +1208,7 @@
   }
   addEventListener('resize', fitSoon);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSoon);
+  if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', fitSoon);
   document.addEventListener('wheel', (e) => {
     if (!S.ui.panes || S.ui.panes.length < 2 || Math.abs(e.deltaY) < 24 || $('.modal-back')) return;
     if (!e.target.closest || !e.target.closest('#view') || canScroll(e.target, e.deltaY)) return;
@@ -1222,13 +1233,12 @@
     if (g.local) tags.push('<span class="chip">This device</span>');
     if (g.ratingCount) tags.push('<span class="chip" title="Rated ' + g.rating.toFixed(1) + ' out of 5 by ' + plural(g.ratingCount, 'player') + '"><span aria-hidden="true">★</span> ' + g.rating.toFixed(1) + '<span class="sr"> out of 5 stars</span> (' + fmtInt(g.ratingCount) + ')</span>');
     const price = g.starter ? 'Free' : g.price ? fmtSOL(g.price) + ' SOL' : 'Free collect';
-    // Each sticker sits a few degrees off straight, the same way every time for the same game.
-    const tilt = ((parseInt(String(g.hash || g.gid).slice(-2), 16) || 0) % 7 - 3) * 0.6;
-    return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '" style="--r:' + tilt.toFixed(1) + 'deg">'
+    return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '">'
       + '<span class="sticker"><img src="' + K.cover(g) + '" alt="" width="480" height="300"></span>'
-      + '<span class="cart-title">' + esc(g.title) + '</span>'
-      + '<span class="cart-by"><span>by <b>' + esc(nameOf(g.creator)) + '</b></span><span>' + esc(price) + '</span></span>'
-      + '<span class="cart-tags">' + tags.join('') + '</span></a>';
+      + '<span class="cart-body">'
+      + '<span class="cart-label"><span class="cart-title">' + esc(g.title) + '</span>'
+      + '<span class="cart-by"><span>by <b>' + esc(nameOf(g.creator)) + '</b></span><span>' + esc(price) + '</span></span></span>'
+      + '<span class="cart-tags">' + tags.join('') + '</span></span></a>';
   }
   const SORTS = [['popular', 'Popular'], ['following', 'Following'], ['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['rated', 'Top rated'], ['boosted', 'Boosted']];
   /* Ranks by rating, pulled toward 3 stars until a game has a few ratings, so one 5-star vote does not top the list. */
@@ -1254,19 +1264,19 @@
     community = community.sort(by);
     const totalPlayers = w ? new Set([].concat(...[...w.games.values()].map((g) => [...g.players]))).size : 0;
     const sigs = w ? w.log.filter((r) => r.ok).length : 0;
-    return '<section class="page-head"><div class="stack">'
+    return '<section class="page-head gallery-head"><div class="stack">'
       + '<h1>Play any game free</h1>'
-      + '<p class="lede">Open a cartridge and play in your browser. Your best runs are signed to the leaderboard. Slower game speed, sound and contrast are in <button class="linkish" type="button" data-act="settings">Accessibility settings</button>.</p></div>'
-      + '<div class="facts"><div class="fact"><b>' + fmtInt(w ? [...w.games.values()].filter(listed).length : 0) + '</b><span>community cartridges</span></div><div class="fact"><b>' + fmtInt(totalPlayers) + '</b><span>' + (totalPlayers === 1 ? 'unique player' : 'unique players') + '</span></div><div class="fact"><b>' + fmtInt(sigs) + '</b><span>signed transactions</span></div></div>'
+      + '<p class="lede">Pick a game and play in your browser. Your best runs are signed to the leaderboard. Slower game speed, sound and contrast are in <button class="linkish" type="button" data-act="settings">Accessibility settings</button>.</p></div>'
+      + '<div class="facts"><div class="fact"><b>' + fmtInt(w ? [...w.games.values()].filter(listed).length : 0) + '</b><span>community games</span></div><div class="fact"><b>' + fmtInt(totalPlayers) + '</b><span>' + (totalPlayers === 1 ? 'unique player' : 'unique players') + '</span></div><div class="fact"><b>' + fmtInt(sigs) + '</b><span>signed transactions</span></div></div>'
       + '</section>'
-      + '<section class="section"><div class="section-head"><h2>Starter cartridges</h2><p class="muted">Free to play. Open one and press Remix to tune it.</p></div>'
+      + '<section class="section"><div class="section-head"><h2>Start playing</h2><p class="muted">Free games, ready to play. Remix one to make it your own.</p></div>'
       + '<div class="shelf">' + starters.map(cartHTML).join('') + '</div></section>'
-      + '<section class="section"><div class="section-head"><h2>Community cartridges</h2><div class="row" role="group" aria-label="Sort community cartridges">'
+      + '<section class="section"><div class="section-head"><h2>Made by the community</h2><div class="row" role="group" aria-label="Sort community games">'
       + SORTS.map(([k, l]) => '<button class="chip" type="button" data-act="sort" data-sort="' + k + '" aria-pressed="' + (S.ui.sort === k) + '">' + l + '</button>').join('')
       + '</div></div>'
       + (community.length ? '<div class="shelf">' + community.map(cartHTML).join('') + '</div>'
         : S.ui.sort === 'following' ? '<div class="empty"><h3>Nothing from makers you follow yet</h3><p>Open a game you like and press Follow maker. Their new games show up here.</p></div>'
-        : '<div class="empty"><h3>No community cartridges yet</h3><p>Publish the first one: describe a game or tune a starter kit, then sign it with your wallet.</p><a class="btn primary" href="#create" data-nav="create">Open Create</a></div>')
+        : '<div class="empty"><h3>Your game could be the first</h3><p>Describe an idea or remix a starter, then publish it for everyone to play.</p><a class="btn primary" href="#create" data-nav="create">Open Create</a></div>')
       + '</section>' + footHTML();
   }
 
@@ -1277,7 +1287,7 @@
     const me = S.wallet && S.wallet.from === pk;
     const games = S.world ? [...S.world.games.values()].filter((g) => g.creator === pk && !g.delisted && (me || g.vis !== 'unlisted')).sort((a, b) => b.ts - a.ts) : [];
     const plays = games.reduce((a, g) => a + (g.plays || 0), 0);
-    return '<section class="page-head"><div class="stack"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(nameOf(pk)) + '</h1>'
+    return '<section class="page-head maker-profile"><div class="stack"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(nameOf(pk)) + '</h1>'
       + '<p class="mono muted">' + esc(short(pk)) + '</p>' + (me || !S.world ? '' : '<div class="row">' + followBtn(pk) + '</div>') + '</div>'
       + '<div class="facts"><div class="fact"><b>' + fmtInt(games.length) + '</b><span>games</span></div><div class="fact"><b>' + fmtInt(w ? w.followers.size : 0) + '</b><span>followers</span></div><div class="fact"><b>' + fmtInt(plays) + '</b><span>runs played</span></div></div></section>'
       + '<section class="section"><div class="section-head"><h2>' + (me ? 'Your games' : 'Games by ' + esc(nameOf(pk))) + '</h2></div>'
@@ -1290,7 +1300,7 @@
     const link = location.href.split('#')[0] + '#group-' + gr.id;
     // The group's best run on every game any member has played, best first.
     const boards = [...S.world.games.values()].map((g) => ({ g, rows: [...g.scores.values()].filter((x) => gr.members.has(x.pk)).sort((a, b) => b.score - a.score) })).filter((b) => b.rows.length).sort((a, b) => b.rows.length - a.rows.length).slice(0, 12);
-    return '<section class="page-head"><div class="stack"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(gr.name) + '</h1>'
+    return '<section class="page-head group-profile"><div class="stack"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(gr.name) + '</h1>'
       + '<p class="lede">A friends leaderboard: ' + plural(gr.members.size, 'member') + ' of ' + R.GROUP_MAX + '. Anyone with the invite link can join.</p>'
       + '<div class="row">' + (inIt ? '<button class="btn" type="button" data-act="group-leave" data-id="' + esc(gr.id) + '">Leave group</button>' : '<button class="btn primary" type="button" data-act="group-join" data-id="' + esc(gr.id) + '"' + (gr.members.size >= R.GROUP_MAX ? ' disabled' : '') + '>Join ' + esc(gr.name) + '</button>') + '</div>'
       + (inIt ? '<label class="field">Invite link<input type="text" readonly id="group-link" value="' + esc(link) + '"></label><div class="row"><button class="btn small" type="button" data-act="copy-group">Copy invite link</button></div>' : '') + '</div>'
@@ -1299,7 +1309,7 @@
       + (boards.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Game</th><th>Leader</th><th class="r">Best</th><th class="r">Players</th></tr></thead><tbody>'
         + boards.map((b) => '<tr><td><a href="#game-' + esc(b.g.gid) + '" data-act="open-game" data-gid="' + esc(b.g.gid) + '">' + esc(b.g.title) + '</a></td><td>' + esc(nameOf(b.rows[0].pk)) + '</td><td class="n">' + fmtInt(b.rows[0].score) + '</td><td class="n">' + fmtInt(b.rows.length) + '</td></tr>').join('')
         + '</tbody></table></div>' : '<div class="empty"><h3>No runs yet</h3><p>Open any game and play. Members’ best runs show up here.</p></div>')
-      + '<h2 style="margin-top:20px">Members</h2><p>' + [...gr.members].map((pk) => '<a class="chip" href="#maker-' + esc(pk) + '" data-act="open-maker" data-pk="' + esc(pk) + '">' + esc(nameOf(pk)) + '</a>').join(' ') + '</p></section>' + footHTML();
+      + '<h2 style="margin-top:20px">Members</h2><p class="group-members">' + [...gr.members].map((pk) => '<a class="chip" href="#maker-' + esc(pk) + '" data-act="open-maker" data-pk="' + esc(pk) + '">' + esc(nameOf(pk)) + '</a>').join(' ') + '</p></section>' + footHTML();
   }
 
   /* ---------- home: the public front door ---------- */
@@ -1312,34 +1322,43 @@
     const community = w ? [...w.games.values()].filter(listed).sort((a, b) => (popScore(b) - popScore(a)) || (b.ts - a.ts)).slice(0, 3) : [];
     return community.concat(startersList()).slice(0, 8).map(cartHTML).join('');
   }
-  // The front page is one screen over the background game: the copy card with the prompt, the playable console and a rail of games.
+  const HOME_IDEAS = [
+    'Sky Runner: A fox jumps between floating islands and collects stars.',
+    'Tower Defense: Protect a tiny castle from waves of playful robots.',
+    'Pocket Racer: Race a red car around an island track and beat your best time.',
+    'Cozy Puzzle: Slide colorful garden tiles to make a path for a sleepy cat.',
+  ];
+  // A visual game world invites creation; the next pane contains a real playable game.
   function homeHTML() {
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
     const st = S.studio || {};
     const dim = st.dim || '2d';
-    return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy">'
-      + '<h1 class="hero-title" id="hero-title"><span>Make it.</span> <span>Play it.</span> <span class="hl">Own it.</span></h1>'
-      + '<p class="lede">Describe a game and Claude builds it. Share the link and earn when people collect it.</p>'
+    return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy" data-part="Make a game">'
+      + '<div class="play-world-art" aria-hidden="true"></div><div class="workshop-scene" id="home-world" aria-hidden="true"></div>'
+      + '<p class="page-kicker">Create · Play · Remix</p>'
+      + '<h1 class="hero-title" id="hero-title"><span>Make a</span><span class="hl">game.</span></h1>'
+      + '<p class="lede">' + (aiReady() ? 'Your idea is the start button. Describe it, build it with Claude, then jump in and play.' : 'Your next favorite game starts here. Play a free game, remix a starter, or make something new.') + '</p>'
       + '<form class="maker" data-form="home-build"><label class="sr" for="home-prompt">Describe your game</label>'
-      + '<div class="maker-box"><textarea id="home-prompt" rows="2" maxlength="600" placeholder="A cat on a skateboard dodging gas fees across neon rooftops">' + esc(st.versions && st.versions.length ? '' : (st.prompt || '')) + '</textarea>'
+      + '<div class="maker-box"><textarea id="home-prompt" rows="2" maxlength="600" placeholder="A fox hopping between sky islands, collecting stars...">' + esc(st.versions && st.versions.length ? '' : (st.prompt || '')) + '</textarea>'
       + '<div class="maker-bar"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + (dim === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
-      + '<button class="btn primary" type="submit">' + I.spark + (aiReady() ? ' Build it' : ' Open the studio') + '</button></div></div>'
-      + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or try</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form></div>'
-      + '<div class="stage3d">'
+      + '<button class="btn primary" type="submit">' + I.spark + ' Make a game</button></div></div>'
+      + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Try an idea</span>' + HOME_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form>'
+      + '<a class="btn" href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">' + I.play + ' Play Neon Dash</a></div>'
+      + '<div class="stage3d play-stage" data-part="Play Neon Dash"><p class="stage-note">Press play. Neon Dash is ready when you are.</p>'
       + '<figure class="console" id="home-console">'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
       + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure>'
       + '<img class="mascot" id="home-mascot" src="' + MASCOT + '" alt="" width="370" height="403" decoding="async"></div>'
-      + '<div class="pack-shelf"><div class="pack-shelf-head"><h2 id="h-carts">Pick a game</h2><a href="#explore" data-nav="explore">See every game</a></div>'
+      + '<div class="pack-shelf" data-part="Pick a game"><div class="pack-shelf-head"><h2 id="h-carts">Jump into a game</h2><a href="#explore" data-nav="explore">Explore all games</a></div>'
       + '<div class="shelf" id="home-shelf">' + homeShelf() + '</div></div></section>';
   }
   function mountHome() {
     unmountPlayer('home-screen');
-    $('#view').innerHTML = '<canvas class="world" id="home-world" aria-hidden="true"></canvas>' + homeHTML() + footHTML(true);
+    $('#view').innerHTML = homeHTML() + footHTML(true);
     homeWorld($('#home-world'));
     wakeMascot($('#home-mascot'));
-    packDepth($('#home-pack'));
-    revealShelf($('#home-shelf'));
+    homeDepthStop = packDepth($('#home-pack'));
+    homeShelfStop = revealShelf($('#home-shelf'));
     const host = $('#home-screen');
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
     if (!host || !hero) return;
@@ -1363,415 +1382,58 @@
     if (!pack || !window.matchMedia || !window.matchMedia('(pointer: fine)').matches) return;
     let raf = 0, x = 0, y = 0;
     const put = () => { raf = 0; pack.style.setProperty('--px', x.toFixed(3)); pack.style.setProperty('--py', y.toFixed(3)); };
-    pack.addEventListener('pointermove', (e) => {
+    const move = (e) => {
       if (calmNow()) return;
       const r = pack.getBoundingClientRect();
       x = (e.clientX - r.left) / r.width - 0.5; y = (e.clientY - r.top) / r.height - 0.5;
       if (!raf) raf = requestAnimationFrame(put);
-    });
-    pack.addEventListener('pointerleave', () => { x = y = 0; if (!raf) raf = requestAnimationFrame(put); });
+    };
+    const leave = () => { x = y = 0; if (!raf) raf = requestAnimationFrame(put); };
+    pack.addEventListener('pointermove', move);
+    pack.addEventListener('pointerleave', leave);
+    return () => {
+      pack.removeEventListener('pointermove', move);
+      pack.removeEventListener('pointerleave', leave);
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+    };
   }
   // Game tiles rise in turn the first time they scroll into view.
   function revealShelf(root) {
     if (!root || calmNow() || !('IntersectionObserver' in window)) return;
+    const pending = new Set(root.children);
     const io = new IntersectionObserver((list) => list.forEach((e) => {
       if (!e.isIntersecting) return;
       io.unobserve(e.target);
+      pending.delete(e.target);
+      if (!pending.size) io.disconnect();
       const row = e.target.parentElement;
       if (!row) return;
       e.target.style.setProperty('--i', String([...row.children].indexOf(e.target) % 8));
       e.target.classList.add('in');
     }), { rootMargin: '0px 0px -8% 0px' });
-    [...root.children].forEach((c) => io.observe(c));
+    pending.forEach((c) => io.observe(c));
+    return () => { io.disconnect(); pending.clear(); };
   }
-  /* ---------- the background: a 3D game that plays itself behind the front page ---------- */
-  // Cart's hover-kart races down a quiet track through a city of game cartridges, grabbing coins and dodging blocks.
-  // It drives itself; move the mouse to steer it and click an empty spot to jump. It holds still while the console game has focus. Raw WebGL, no libraries; colors come
-  // from the --w-* tokens. Calm motion draws one still frame. The contrast theme and browsers without WebGL keep the
-  // plain page. It is decoration: aria-hidden, no pointer events, and it stops when the page leaves the front page.
-  let bgGame = null;
-  function homeWorld(cv) {
+  /* The decorative assembly scene has an independent lifecycle from the playable game. */
+  let bgGame = null, homeDepthStop = null, homeShelfStop = null;
+  function stopHomeScene() {
+    if (homeDepthStop) { homeDepthStop(); homeDepthStop = null; }
+    if (homeShelfStop) { homeShelfStop(); homeShelfStop = null; }
     if (bgGame) { bgGame.stop(); bgGame = null; }
-    if (!cv) return;
-    if (document.documentElement.getAttribute('data-gp-theme') === 'contrast') { cv.hidden = true; return; }
-    let gl = null;
-    // Only with a real graphics chip: on software rendering the scene would slow the playable console down.
-    try { gl = cv.getContext('webgl', { antialias: true, alpha: false, powerPreference: 'low-power', failIfMajorPerformanceCaveat: true }); } catch (e) { gl = null; }
-    if (gl) {
-      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-      const who = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
-      if (/swiftshader|llvmpipe|softpipe|software/i.test(who)) gl = null;
-    }
-    if (!gl) { cv.hidden = true; return; }
-    cv.hidden = false;
-    const rnd = Math.random, TAU = Math.PI * 2;
-    const pick = (a) => a[Math.floor(rnd() * a.length)];
-
-    // Colors: the --w-* tokens of the current theme.
-    let P = null;
-    function palette() {
-      const css = getComputedStyle(document.documentElement);
-      const c = (n) => { const m = css.getPropertyValue(n).trim().match(/^#([0-9a-f]{6})$/i); const v = m ? parseInt(m[1], 16) : 0x808080; return [(v >> 16 & 255) / 255, (v >> 8 & 255) / 255, (v & 255) / 255]; };
-      P = { sky: c('--w-sky'), haze: c('--w-haze'), floor: c('--w-floor'), grid: c('--w-grid'), sunA: c('--w-sun'), sunB: c('--w-sun-2'),
-        coin: c('--w-coin'), hot: c('--w-hot'), cool: c('--w-cool'), pop: c('--w-pop'), ship: c('--w-ship'), die: c('--w-glow') };
-      const l = 0.2126 * P.sky[0] + 0.7152 * P.sky[1] + 0.0722 * P.sky[2];
-      P.dark = l < 0.3;
-      P.blocks = [P.hot, P.pop, P.cool];
-    }
-    palette();
-
-    // Shaders.
-    const prog = (vs, fs) => {
-      const p = gl.createProgram();
-      [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]].forEach(([t, s]) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh); gl.attachShader(p, sh); });
-      gl.linkProgram(p);
-      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('shader');
-      const u = {}, a = {};
-      for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i++) { const n = gl.getActiveUniform(p, i).name; u[n] = gl.getUniformLocation(p, n); }
-      for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES); i++) { const n = gl.getActiveAttrib(p, i).name; a[n] = gl.getAttribLocation(p, n); }
-      return { p, u, a };
-    };
-    const FOG = 'uniform vec3 uFog, uCam; uniform float uFN, uFF; vec3 fog(vec3 c, vec3 w) { float f = clamp((length(w - uCam) - uFN) / (uFF - uFN), 0., 1.); return mix(c, uFog, f * f); }';
-    let SKY, FLOOR, MESH, PTS;
-    try {
-      SKY = prog('attribute vec2 aP; varying vec2 vQ; void main() { vQ = aP; gl_Position = vec4(aP, 0.999, 1.); }',
-        'precision mediump float; varying vec2 vQ; uniform vec3 uTop, uHaze, uSunA, uSunB; uniform float uH, uAsp, uTime, uDark;'
-        + 'float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }'
-        + 'void main() { float y = vQ.y; float t = clamp((y - uH) / (1.2 - uH), 0., 1.); vec3 c = mix(uHaze, uTop, pow(t, .55));'
-        + 'vec2 s = vec2(vQ.x * uAsp, y - uH - .2); float r = length(s), R = .3;'
-        + 'float cut = s.y < .02 ? step(.3 - s.y / R * .5, fract(s.y * 16. + uTime * .35)) : 1.;'
-        + 'vec3 sun = mix(uSunB, uSunA, clamp((s.y + R) / (2. * R), 0., 1.));'
-        + 'c += uSunB * .22 * exp(-max(r - R, 0.) * 4.) * step(uH, y);'
-        + 'c = mix(c, sun, smoothstep(R, R - .006, r) * cut * step(uH, y));'
-        + 'vec2 g = floor(vQ * vec2(uAsp, 1.) * 150.); float st = step(.996, hash(g)) * uDark * t * (.6 + .4 * sin(uTime * 2. + hash(g + 3.) * 30.));'
-        + 'gl_FragColor = vec4(c + st, 1.); }');
-      FLOOR = prog('attribute vec3 aP; uniform mat4 uVP; varying vec3 vW; void main() { vW = aP; gl_Position = uVP * vec4(aP, 1.); }',
-        'precision mediump float; varying vec3 vW; uniform vec3 uFloor, uGrid; uniform float uScroll, uPulse; ' + FOG
-        + 'void main() { vec2 g = vec2(vW.x / 2.2 + .5, (vW.z - uScroll) / 3.); float d = length(vW - uCam); float w = .03 + d * .0022;'
-        + 'vec2 e = .5 - abs(fract(g) - .5); float line = 1. - smoothstep(0., w, min(e.x, e.y));'
-        + 'float track = 1. - smoothstep(5.4, 6.4, abs(vW.x)); vec3 c = mix(uFloor, uFloor * .78 + uGrid * .1, track);'
-        + 'c = mix(c, uGrid, line * mix(.4, 1., track)); c += uGrid * track * .06 * (1. + uPulse) * exp(-abs(vW.x) * .3);'
-        + 'gl_FragColor = vec4(fog(c, vW), 1.); }');
-      MESH = prog('attribute vec3 aP, aN; attribute vec2 aU; uniform mat4 uVP, uM; varying vec3 vN, vW; varying vec2 vU;'
-        + 'void main() { vec4 w = uM * vec4(aP, 1.); vW = w.xyz; vN = (uM * vec4(aN, 0.)).xyz; vU = aU; gl_Position = uVP * w; }',
-        'precision mediump float; varying vec3 vN, vW; varying vec2 vU; uniform vec3 uC, uL; uniform float uE, uEdge, uT; uniform sampler2D uTex; ' + FOG
-        + 'void main() { vec3 n = normalize(vN); float d = max(dot(n, uL), 0.); float rim = pow(1. - max(dot(n, normalize(uCam - vW)), 0.), 3.);'
-        + 'vec3 b = uT > .5 ? texture2D(uTex, vU).rgb : uC; float edge = step(.9, max(abs(vU.x - .5), abs(vU.y - .5)) * 2.);'
-        + 'vec3 c = b * (.45 + .6 * d) + uC * rim * .4 + b * uE + uC * edge * uEdge;'
-        + 'gl_FragColor = vec4(fog(c, vW), 1.); }');
-      PTS = prog('attribute vec3 aP; attribute vec4 aC; attribute float aS; uniform mat4 uVP; uniform float uPx; varying vec4 vC;'
-        + 'void main() { vec4 p = uVP * vec4(aP, 1.); gl_Position = p; gl_PointSize = clamp(aS * uPx / p.w, 1., 90.); vC = aC; }',
-        'precision mediump float; varying vec4 vC; void main() { float a = smoothstep(.5, .1, length(gl_PointCoord - .5)); gl_FragColor = vec4(vC.rgb, vC.a * a); }');
-    } catch (e) { cv.hidden = true; return; }
-
-    // Meshes: position, normal, uv per vertex, drawn as plain triangles.
-    const mesh = (data) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW); return { b, n: data.length / 8 }; };
-    const CUBE = mesh((() => {
-      const v = [], F = [[0, 0, 1, 1, 0, 0, 0, 1, 0], [0, 0, -1, -1, 0, 0, 0, 1, 0], [1, 0, 0, 0, 0, -1, 0, 1, 0], [-1, 0, 0, 0, 0, 1, 0, 1, 0], [0, 1, 0, 1, 0, 0, 0, 0, -1], [0, -1, 0, 1, 0, 0, 0, 0, 1]];
-      for (const [nx, ny, nz, ux, uy, uz, vx, vy, vz] of F) {
-        const q = [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]];
-        for (const [a, b] of q) v.push((nx + ux * a + vx * b) / 2, (ny + uy * a + vy * b) / 2, (nz + uz * a + vz * b) / 2, nx, ny, nz, (a + 1) / 2, (b + 1) / 2);
-      }
-      return v;
-    })());
-    const COIN = mesh((() => {
-      const v = [], N = 18;
-      for (let i = 0; i < N; i++) {
-        const a0 = i / N * TAU, a1 = (i + 1) / N * TAU, c0 = Math.cos(a0) / 2, s0 = Math.sin(a0) / 2, c1 = Math.cos(a1) / 2, s1 = Math.sin(a1) / 2;
-        for (const z of [0.5, -0.5]) { const o = z > 0 ? [[0, 0], [c0, s0], [c1, s1]] : [[0, 0], [c1, s1], [c0, s0]]; for (const [x, y] of o) v.push(x, y, z, 0, 0, z * 2, x + 0.5, y + 0.5); }
-        const nm = [Math.cos((a0 + a1) / 2), Math.sin((a0 + a1) / 2)];
-        for (const [x, y, z] of [[c0, s0, .5], [c0, s0, -.5], [c1, s1, -.5], [c0, s0, .5], [c1, s1, -.5], [c1, s1, .5]]) v.push(x, y, z, nm[0], nm[1], 0, 0, 0);
-      }
-      return v;
-    })());
-    const GEM = mesh((() => {
-      const v = [], T = [0, .5, 0], B = [0, -.5, 0], R = [[.5, 0, 0], [0, 0, .5], [-.5, 0, 0], [0, 0, -.5]];
-      for (let i = 0; i < 4; i++) {
-        const a = R[i], b = R[(i + 1) % 4];
-        for (const tri of [[T, b, a], [B, a, b]]) {
-          const u = tri[1].map((x, k) => x - tri[0][k]), w = tri[2].map((x, k) => x - tri[0][k]);
-          const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(...n);
-          tri.forEach((p) => v.push(p[0], p[1], p[2], n[0] / l, n[1] / l, n[2] / l, 0.5, 0.5));
-        }
-      }
-      return v;
-    })());
-    const FLOORB = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, FLOORB);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-90, 0, 30, 90, 0, 30, 90, 0, -300, -90, 0, 30, 90, 0, -300, -90, 0, -300]), gl.STATIC_DRAW);
-    const SKYB = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, SKYB); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-
-    // Game covers become cartridge labels and billboards.
-    const covers = [];
-    const covGames = S.starters.slice(0, 6);
-    covGames.forEach((g) => {
-      const img = new Image();
-      img.onload = () => {
-        if (stopped) return;
-        const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img); } catch (e) { return; }
-        [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T].forEach((k) => gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE));
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        covers.push(t);
-        if (still) draw();
-      };
-      img.src = K.cover(Object.assign({ creator: C.STARTER }, g), 320, 200);
-    });
-
-    // Matrices (column-major).
-    const mul = (a, b) => { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; return o; };
-    function trs(x, y, z, rx, ry, rz, sx, sy, sz) {
-      const cx = Math.cos(rx), snx = Math.sin(rx), cy = Math.cos(ry), sny = Math.sin(ry), cz = Math.cos(rz), snz = Math.sin(rz);
-      return new Float32Array([
-        (cy * cz + sny * snx * snz) * sx, cx * snz * sx, (-sny * cz + cy * snx * snz) * sx, 0,
-        (-cy * snz + sny * snx * cz) * sy, cx * cz * sy, (sny * snz + cy * snx * cz) * sy, 0,
-        sny * cx * sz, -snx * sz, cy * cx * sz, 0,
-        x, y, z, 1]);
-    }
-    function viewProj(eye, at, asp) {
-      const f = 1 / Math.tan(29 * Math.PI / 180), n = 0.1, far = 320;
-      const pr = new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + n) / (n - far), -1, 0, 0, 2 * far * n / (n - far), 0]);
-      let z = [eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]; let l = Math.hypot(...z); z = z.map((v) => v / l);
-      let x = [z[2], 0, -z[0]]; l = Math.hypot(...x); x = x.map((v) => v / l);
-      const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
-      const dot = (a) => a[0] * eye[0] + a[1] * eye[1] + a[2] * eye[2];
-      const vw = new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot(x), -dot(y), -dot(z), 1]);
-      return mul(pr, vw);
-    }
-
-    // Particles: a pool of glowing points that ride with the world.
-    const PN = 1400, pd = new Float32Array(PN * 13), palpha = new Float32Array(PN), pbuf = new Float32Array(PN * 8), PB = gl.createBuffer();
-    let pi = 0;
-    function spark(x, y, z, vx, vy, vz, life, col, size, grav, a) {
-      const o = (pi++ % PN) * 13;
-      pd.set([x, y, z, vx, vy, vz, life, life, col[0], col[1], col[2], size, grav], o);
-      palpha[o / 13] = a == null ? 1 : a;
-    }
-    function burst(x, y, z, col, n, sp, size, grav) {
-      for (let i = 0; i < n; i++) {
-        const t = rnd() * TAU, u = rnd() * 2 - 1, s = sp * (0.4 + rnd() * 0.6), q = Math.sqrt(1 - u * u);
-        spark(x, y, z, Math.cos(t) * q * s, Math.abs(u) * s * 0.9 + sp * 0.2, Math.sin(t) * q * s, 0.5 + rnd() * 0.7, col, size * (0.6 + rnd() * 0.8), grav);
-      }
-    }
-
-    // The game state.
-    const LANES = [-4.4, -2.2, 0, 2.2, 4.4];
-    const ship = { x: 0, vx: 0, y: 0, vy: 0, lane: 2, spin: 0 };
-    let objs = [], speed = 14, boost = 0, dist = 0, nextRow = 0, nextSide = 0, nextBoard = 0, coins = 0, shake = 0, pulse = 0, think = 0, clock = 0;
-    let userX = null, userUntil = 0;
-    const add = (o) => { o.alive = true; o.t = rnd() * 10; objs.push(o); return o; };
-    function row(z) {
-      const r = rnd();
-      if (r < 0.42) {
-        const l = Math.floor(rnd() * 5), arc = rnd() < 0.3;
-        for (let i = 0; i < 6; i++) add({ k: 'coin', x: LANES[l], y: 0.95 + (arc ? Math.sin(i / 5 * Math.PI) * 2.2 : 0), z: z - i * 2.3 });
-      } else if (r < 0.84) {
-        const n = 1 + Math.floor(rnd() * 2.4), used = new Set();
-        while (used.size < n) used.add(Math.floor(rnd() * 5));
-        used.forEach((l) => add({ k: 'block', x: LANES[l], y: 0, z, w: 1.8, h: 1.45, d: 0.55, col: pick(P.blocks), cov: Math.floor(rnd() * 6) }));
-        if (rnd() < 0.5) { const l = [...used][0]; for (let i = 0; i < 5; i++) add({ k: 'coin', x: LANES[l], y: 1.2 + Math.sin(i / 4 * Math.PI) * 2.4, z: z + 4.6 - i * 2.3 }); }
-      } else {
-        add({ k: 'gate', x: 0, y: 0, z });
-        for (let i = 0; i < 4; i++) add({ k: 'coin', x: 0, y: 0.95, z: z + 3 - i * 2.3 });
-      }
-    }
-    function side(z) {
-      for (const s of [-1, 1]) {
-        if (rnd() < 0.15) continue;
-        const w = 2 + rnd() * 3.5, h = 2.5 + rnd() * rnd() * 22;
-        add({ k: 'tower', x: s * (9 + rnd() * 34), y: 0, z: z - rnd() * 3, w, h, d: 2 + rnd() * 3, col: pick([P.cool, P.pop, P.hot, P.grid]) });
-      }
-      if (rnd() < 0.25) add({ k: 'gem', x: (rnd() < 0.5 ? -1 : 1) * (6 + rnd() * 20), y: 7 + rnd() * 9, z, s: 0.8 + rnd() * 1.4, col: pick([P.pop, P.cool, P.coin]) });
-    }
-    function board(z) { const s = rnd() < 0.5 ? -1 : 1; add({ k: 'board', x: s * (9.5 + rnd() * 3), y: 0, z, side: s, cov: Math.floor(rnd() * 6) }); }
-    // Fill the road ahead so the first frame is already a full scene.
-    for (let z = -16; z > -170; z -= 9 + rnd() * 4) row(z);
-    for (let z = 12; z > -190; z -= 4) side(z);
-    for (let z = -20; z > -190; z -= 26) board(z);
-
-    function crash(o) {
-      o.alive = false; shake = 0.2; ship.spin = 1; speed = Math.max(10, speed * 0.7); boost = 0;
-      burst(o.x, 0.8, o.z, o.col, 30, 8, 0.22, 18); burst(o.x, 0.8, o.z, P.die, 12, 5, 0.16, 10);
-    }
-    function grab(o) {
-      o.alive = false; coins++; pulse = 1;
-      burst(o.x, o.y, o.z, P.coin, 16, 5, 0.32, 4);
-      if (coins % 10 === 0) { boost = 2.2; for (let i = 0; i < 3; i++) burst(ship.x + (i - 1) * 3, 6 + rnd() * 3, -14 - rnd() * 8, pick([P.pop, P.cool, P.coin, P.hot]), 24, 7, 0.45, 3); }
-    }
-    function jump() { if (ship.y < 0.05) { ship.vy = 9.6; burst(ship.x, 0.1, 0.4, P.ship, 14, 4, 0.3, 6); } }
-    function pilot() {
-      let best = ship.lane, bs = -1e9;
-      for (let l = 0; l < 5; l++) {
-        let s = -Math.abs(l - ship.lane) * 0.5 - Math.abs(l - 2) * 0.15;
-        for (const o of objs) {
-          if (!o.alive || o.z > -1.5 || o.z < -44 || Math.abs(o.x - LANES[l]) > 1) continue;
-          const near = 1 + (44 + o.z) / 14;
-          if (o.k === 'coin') s += (o.y > 2 ? 0.5 : 1.3) * near; else if (o.k === 'block') s -= (o.z > -10 ? 40 : 6) * near;
-        }
-        if (s > bs) { bs = s; best = l; }
-      }
-      ship.lane = best;
-    }
-
-    function step(dt) {
-      clock += dt; dt = Math.min(dt, 0.05);
-      const user = userX != null && performance.now() < userUntil;
-      speed = Math.min(20, speed + dt * 0.4);
-      const v = speed + (boost > 0 ? 6 : 0); boost = Math.max(0, boost - dt);
-      dist += v * dt;
-      for (const o of objs) { o.z += v * dt; o.t += dt; }
-      for (let i = 0; i < PN; i++) { const o = i * 13; if (pd[o + 6] <= 0) continue; pd[o + 2] += v * dt; }
-      while (dist > nextRow) { row(-150); nextRow += 9 + rnd() * 5; }
-      while (dist > nextSide) { side(-180); nextSide += 4; }
-      while (dist > nextBoard) { board(-185); nextBoard += 22 + rnd() * 10; }
-      think -= dt; if (think <= 0) { pilot(); think = 0.12; }
-      const tx = user ? Math.max(-5.6, Math.min(5.6, userX)) : LANES[ship.lane];
-      ship.vx += ((tx - ship.x) * 42 - ship.vx * 11) * dt; ship.x += ship.vx * dt;
-      ship.vy -= 24 * dt; ship.y = Math.max(0, ship.y + ship.vy * dt); if (ship.y === 0) ship.vy = 0;
-      ship.spin = Math.max(0, ship.spin - dt * 1.7);
-      for (const o of objs) {
-        if (!o.alive) continue;
-        if (o.k === 'block' && Math.abs(o.z) < 1.1 && Math.abs(o.x - ship.x) < 1.45 && ship.y < o.h - 0.15) crash(o);
-        else if (o.k === 'block' && !user && ship.y < 0.05 && o.z > -7.4 && o.z < -5.6 && Math.abs(o.x - ship.x) < 1.5) jump();
-        else if (o.k === 'coin' && Math.abs(o.z) < 1 && Math.abs(o.x - ship.x) < 1.1 && Math.abs(o.y - (ship.y + 0.6)) < 1.2) grab(o);
-      }
-      objs = objs.filter((o) => o.alive && o.z < (o.k === 'coin' ? 1.5 : o.k === 'block' ? 3 : 26));
-      // Engine trail and the dust that streams past.
-      for (const s of [-0.36, 0.36]) spark(ship.x + s, ship.y + 0.42, 1.0, (rnd() - 0.5) * 0.8, (rnd() - 0.2) * 0.8, 2, 0.35 + rnd() * 0.25, boost > 0 ? P.coin : P.cool, 0.24, 0, 0.9);
-      for (let i = 0; i < (boost > 0 ? 6 : 2); i++) spark((rnd() - 0.5) * 40, 0.4 + rnd() * 9, -90 - rnd() * 40, 0, 0, 0, 3, P.die, 0.12 + rnd() * 0.12, 0, 0.55);
-      for (let i = 0; i < PN; i++) {
-        const o = i * 13; if (pd[o + 6] <= 0) continue;
-        pd[o + 6] -= dt; pd[o + 4] -= pd[o + 12] * dt;
-        pd[o] += pd[o + 3] * dt; pd[o + 1] += pd[o + 4] * dt; pd[o + 2] += pd[o + 5] * dt;
-        if (pd[o + 1] < 0.02) { pd[o + 1] = 0.02; pd[o + 4] *= -0.4; }
-      }
-      shake = Math.max(0, shake - dt * 1.4); pulse = Math.max(0, pulse - dt * 2.5);
-    }
-
-    // Drawing.
-    let W = 0, H = 0, scale = 1;
-    const dpr = Math.min(window.devicePixelRatio || 1, window.innerWidth < 700 ? 1 : 1.5);
-    function size() {
-      const w = Math.max(1, Math.round(cv.clientWidth * dpr * scale)), h = Math.max(1, Math.round(cv.clientHeight * dpr * scale));
-      if (w !== W || h !== H) { W = cv.width = w; H = cv.height = h; }
-    }
-    function bindMesh(m) {
-      gl.bindBuffer(gl.ARRAY_BUFFER, m.b);
-      gl.vertexAttribPointer(MESH.a.aP, 3, gl.FLOAT, false, 32, 0); gl.vertexAttribPointer(MESH.a.aN, 3, gl.FLOAT, false, 32, 12); gl.vertexAttribPointer(MESH.a.aU, 2, gl.FLOAT, false, 32, 24);
-    }
-    function put(m, M, col, emit, edge, tex) {
-      gl.uniformMatrix4fv(MESH.u.uM, false, M); gl.uniform3fv(MESH.u.uC, col); gl.uniform1f(MESH.u.uE, emit || 0); gl.uniform1f(MESH.u.uEdge, edge || 0);
-      if (tex) { gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1f(MESH.u.uT, 1); } else gl.uniform1f(MESH.u.uT, 0);
-      gl.drawArrays(gl.TRIANGLES, 0, m.n);
-    }
-    function draw() {
-      size();
-      gl.viewport(0, 0, W, H);
-      const asp = W / H, wide = asp > 1.2;
-      const sx = shake * (rnd() - 0.5) * 0.9, sy = shake * (rnd() - 0.5) * 0.6;
-      const eye = [ship.x * 0.45 + sx, (wide ? 3.6 : 4.6) + ship.y * 0.3 + sy, wide ? 7.6 : 10], at = [ship.x * 0.7, -0.5, -12];
-      const VP = viewProj(eye, at, asp);
-      const far = [VP[0] * eye[0] + VP[4] * eye[1] + VP[8] * (eye[2] - 1000) + VP[12], VP[1] * eye[0] + VP[5] * eye[1] + VP[9] * (eye[2] - 1000) + VP[13], 0, VP[3] * eye[0] + VP[7] * eye[1] + VP[11] * (eye[2] - 1000) + VP[15]];
-      const horizon = far[1] / far[3];
-      gl.clearColor(P.haze[0], P.haze[1], P.haze[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      // sky
-      gl.disable(gl.DEPTH_TEST); gl.useProgram(SKY.p);
-      gl.bindBuffer(gl.ARRAY_BUFFER, SKYB); gl.enableVertexAttribArray(SKY.a.aP); gl.vertexAttribPointer(SKY.a.aP, 2, gl.FLOAT, false, 0, 0);
-      gl.uniform3fv(SKY.u.uTop, P.sky); gl.uniform3fv(SKY.u.uHaze, P.haze); gl.uniform3fv(SKY.u.uSunA, P.sunA); gl.uniform3fv(SKY.u.uSunB, P.sunB);
-      gl.uniform1f(SKY.u.uH, horizon); gl.uniform1f(SKY.u.uAsp, asp); gl.uniform1f(SKY.u.uTime, clock); gl.uniform1f(SKY.u.uDark, P.dark ? 1 : 0);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      gl.enable(gl.DEPTH_TEST);
-      const fogU = (pr) => { gl.uniform3fv(pr.u.uFog, P.haze); gl.uniform3fv(pr.u.uCam, eye); gl.uniform1f(pr.u.uFN, 24); gl.uniform1f(pr.u.uFF, 175); };
-      // floor
-      gl.useProgram(FLOOR.p); gl.bindBuffer(gl.ARRAY_BUFFER, FLOORB); gl.enableVertexAttribArray(FLOOR.a.aP); gl.vertexAttribPointer(FLOOR.a.aP, 3, gl.FLOAT, false, 0, 0);
-      gl.uniformMatrix4fv(FLOOR.u.uVP, false, VP); gl.uniform3fv(FLOOR.u.uFloor, P.floor); gl.uniform3fv(FLOOR.u.uGrid, P.grid);
-      gl.uniform1f(FLOOR.u.uScroll, -dist % 3); gl.uniform1f(FLOOR.u.uPulse, pulse); fogU(FLOOR);
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
-      gl.disableVertexAttribArray(FLOOR.a.aP);
-      // meshes
-      gl.useProgram(MESH.p); [MESH.a.aP, MESH.a.aN, MESH.a.aU].forEach((a) => gl.enableVertexAttribArray(a));
-      gl.uniformMatrix4fv(MESH.u.uVP, false, VP); gl.uniform3fv(MESH.u.uL, [0.35, 0.85, 0.4]); fogU(MESH); gl.uniform1i(MESH.u.uTex, 0); gl.activeTexture(gl.TEXTURE0);
-      const tex = (i) => covers.length ? covers[i % covers.length] : null;
-      bindMesh(CUBE);
-      for (const o of objs) {
-        if (o.k === 'tower') {
-          const g = Math.min(1, Math.max(0, (o.z + 175) / 30)), h = o.h * (1 - Math.pow(1 - g, 3));
-          if (h < 0.05) continue;
-          put(CUBE, trs(o.x, h / 2, o.z, 0, 0, 0, o.w, h, o.d), o.col, P.dark ? 0.12 : 0, 0.75);
-          put(CUBE, trs(o.x, h + 0.18, o.z, 0, 0, 0, o.w * 0.92, 0.36, o.d * 0.92), P.die, P.dark ? 0.25 : 0.1, 0);
-        } else if (o.k === 'block') {
-          const bob = Math.sin(o.t * 3) * 0.05;
-          put(CUBE, trs(o.x, o.h / 2 + bob, o.z, 0, 0, 0, o.w, o.h, o.d), o.col, P.dark ? 0.18 : 0.04, 0.9);
-          put(CUBE, trs(o.x, o.h * 0.56 + bob, o.z + 0.03, 0, 0, 0, o.w * 0.74, o.h * 0.6, o.d), P.die, 0.15, 0, tex(o.cov));
-        } else if (o.k === 'gate') {
-          for (const s of [-1, 1]) put(CUBE, trs(s * 6.1, 2.6, o.z, 0, 0, 0, 0.6, 5.2, 0.6), P.ship, P.dark ? 0.3 : 0.05, 0.8);
-          put(CUBE, trs(0, 5.4, o.z, 0, 0, 0, 12.8, 0.6, 0.6), P.ship, P.dark ? 0.3 : 0.05, 0.8);
-        } else if (o.k === 'board') {
-          put(CUBE, trs(o.x, 2.2, o.z, 0, 0, 0, 0.25, 4.4, 0.25), P.floor, 0, 0.5);
-          put(CUBE, trs(o.x, 5.6, o.z, 0, -o.side * 0.45, 0, 5.4, 3.4, 0.3), P.die, 0.1, 0.4);
-          put(CUBE, trs(o.x, 5.6, o.z, 0, -o.side * 0.45, 0, 5, 3.05, 0.34), P.die, P.dark ? 0.35 : 0.08, 0, tex(o.cov));
-        }
-      }
-      // the kart
-      const S0 = trs(ship.x, ship.y + 0.55 + Math.sin(clock * 5) * 0.06, 0, -ship.vy * 0.025, ship.spin * TAU, -ship.vx * 0.06, 1, 1, 1);
-      const part = (x, y, z, sx, sy, sz, col, e) => put(CUBE, mul(S0, trs(x, y, z, 0, 0, 0, sx, sy, sz)), col, e, 0.5);
-      part(0, 0, 0, 1.25, 0.34, 1.7, P.ship, 0.1);
-      part(0, -0.03, -1.0, 0.8, 0.26, 0.5, P.ship, 0.1);
-      part(0, 0.27, 0.12, 0.56, 0.26, 0.7, P.die, 0.3);
-      for (const s of [-1, 1]) { part(s * 0.85, -0.06, 0.35, 0.7, 0.1, 0.95, P.pop, 0.15); part(s * 0.45, 0.32, 0.72, 0.08, 0.36, 0.4, P.hot, 0.2); }
-      bindMesh(COIN);
-      for (const o of objs) if (o.k === 'coin') put(COIN, trs(o.x, o.y + Math.sin(o.t * 4) * 0.12, o.z, 0, o.t * 4, 0, 0.75, 0.75, 0.14), P.coin, P.dark ? 0.45 : 0.2, 0);
-      bindMesh(GEM);
-      for (const o of objs) if (o.k === 'gem') put(GEM, trs(o.x, o.y + Math.sin(o.t) * 0.6, o.z, 0.3, o.t * 0.8, 0.2, o.s, o.s * 1.5, o.s), o.col, P.dark ? 0.45 : 0.15, 0);
-      [MESH.a.aP, MESH.a.aN, MESH.a.aU].forEach((a) => gl.disableVertexAttribArray(a));
-      // points: particles, coin halos and engine glow
-      let n = 0;
-      const pt = (x, y, z, col, a, s) => { const o = n * 8; pbuf[o] = x; pbuf[o + 1] = y; pbuf[o + 2] = z; pbuf[o + 3] = col[0]; pbuf[o + 4] = col[1]; pbuf[o + 5] = col[2]; pbuf[o + 6] = a; pbuf[o + 7] = s; n++; };
-      for (let i = 0; i < PN && n < PN; i++) { const o = i * 13; const L = pd[o + 6]; if (L <= 0 || pd[o + 2] > 4) continue; const k = L / pd[o + 7]; pt(pd[o], pd[o + 1], pd[o + 2], [pd[o + 8], pd[o + 9], pd[o + 10]], Math.min(1, k * 1.6) * palpha[i], pd[o + 11]); }
-      if (P.dark) for (const o of objs) if (o.k === 'coin' && n < PN) pt(o.x, o.y, o.z, P.coin, 0.35, 1.6);
-      for (const s of [-0.36, 0.36]) if (n < PN) pt(ship.x + s, ship.y + 0.5, 0.95, boost > 0 ? P.coin : P.cool, 0.7, 0.6);
-      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, P.dark ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
-      gl.useProgram(PTS.p); gl.bindBuffer(gl.ARRAY_BUFFER, PB); gl.bufferData(gl.ARRAY_BUFFER, pbuf.subarray(0, n * 8), gl.DYNAMIC_DRAW);
-      gl.enableVertexAttribArray(PTS.a.aP); gl.enableVertexAttribArray(PTS.a.aC); gl.enableVertexAttribArray(PTS.a.aS);
-      gl.vertexAttribPointer(PTS.a.aP, 3, gl.FLOAT, false, 32, 0); gl.vertexAttribPointer(PTS.a.aC, 4, gl.FLOAT, false, 32, 12); gl.vertexAttribPointer(PTS.a.aS, 1, gl.FLOAT, false, 32, 28);
-      gl.uniformMatrix4fv(PTS.u.uVP, false, VP); gl.uniform1f(PTS.u.uPx, H * 0.9);
-      gl.drawArrays(gl.POINTS, 0, n);
-      [PTS.a.aP, PTS.a.aC, PTS.a.aS].forEach((a) => gl.disableVertexAttribArray(a));
-      gl.depthMask(true); gl.disable(gl.BLEND);
-    }
-
-    // Steering: the mouse takes over for a few seconds after it moves; a click on an empty spot jumps.
-    const onMove = (e) => { if (e.pointerType === 'touch') return; userX = (e.clientX / window.innerWidth * 2 - 1) * 6.2; userUntil = performance.now() + 2600; };
-    const onDown = (e) => { const t = e.target; if (t === document.body || t === document.documentElement || (t.matches && t.matches('#view, .pack, .stage3d, .pack-shelf, .shelf'))) jump(); };
-    window.addEventListener('pointermove', onMove, { passive: true });
-    window.addEventListener('pointerdown', onDown, { passive: true });
-
-    let raf = 0, last = 0, stopped = false, ema = 16, slow = 0;
-    const still = calmNow();
-    function frame(now) {
-      raf = 0;
-      if (stopped) return;
-      if (!cv.isConnected) { stop(); return; }
-      const dt = last ? (now - last) / 1000 : 0.016; last = now;
-      // While someone plays the console game, the background holds still.
-      if (document.activeElement && document.activeElement.tagName === 'IFRAME') { raf = requestAnimationFrame(frame); return; }
-      ema += (Math.min(dt * 1000, 100) - ema) * 0.05;
-      if (ema > 26 && scale > 0.5 && ++slow > 40) { scale = Math.max(0.5, scale * 0.8); slow = 0; } else if (ema <= 26) slow = 0;
-      step(dt); draw();
-      raf = requestAnimationFrame(frame);
-    }
-    function stop() {
-      stopped = true; if (raf) cancelAnimationFrame(raf); raf = 0;
-      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerdown', onDown);
-      if (bgGame && bgGame.cv === cv) bgGame = null;
-    }
-    const onVis = () => { if (stopped) { document.removeEventListener('visibilitychange', onVis); return; } if (!document.hidden && !raf && !still) { last = 0; raf = requestAnimationFrame(frame); } };
-    document.addEventListener('visibilitychange', onVis);
-    if (still) { step(0.016); draw(); } else raf = requestAnimationFrame(frame);
-    bgGame = { cv, stop, retheme() { palette(); if (still) draw(); } };
+  }
+  function homeWorld(host) {
+    stopHomeScene();
+    if (host && window.PPWorkshop) bgGame = window.PPWorkshop.mount(host, { reducedMotion: calmNow() });
   }
 
-  function updateHome() { const s = $('#home-shelf'); if (s) s.innerHTML = homeShelf(); }
+  function updateHome() {
+    const s = $('#home-shelf');
+    if (!s) return;
+    if (homeShelfStop) homeShelfStop();
+    s.innerHTML = homeShelf();
+    homeShelfStop = revealShelf(s);
+  }
 
   /* ---------- business: services for brands, communities and schools ---------- */
   const BIZ_DEMO = { title: 'Kape Dash', palette: 'custom', colors: { bg: '#2b1a12', main: '#f2c48d', alt: '#d9480f' }, shape: 'orb' };
@@ -1933,7 +1595,7 @@
         + (v ? (v.ok ? '<span class="chip ok">' + I.ok + ' ' + esc(v.msg) + '</span>' : '<span class="chip bad">' + I.no + ' ' + esc(v.msg) + '</span>') : '') + '</div></div>';
     }
     if (tab === 'splits') {
-      if (g.starter) return '<p class="muted">Starter kits are free and have no owner, so nothing is split. Remix one and the cartridge is yours.</p>';
+      if (g.starter) return '<p class="muted">Starter kits are free and have no owner, so nothing is split. Remix one and the game is yours.</p>';
       const price = g.price || C.LAMPORTS / 10;
       const splits = C.collectSplits(price, g, S.world.games);
       const label = { creator: 'Creator', parent: 'Parent creator', grandparent: 'Grandparent', protocol: 'Protocol fee' };
@@ -1946,7 +1608,7 @@
     while (cur && cur.parent) { const p = S.world.games.get(cur.parent); if (!p) break; chain.unshift(p); cur = p; }
     const kids = g.remixes.map((id) => S.world.games.get(id)).filter(Boolean);
     const link = (x) => '<a href="#game-' + esc(x.gid) + '" data-act="open-game" data-gid="' + esc(x.gid) + '">' + esc(x.title) + ' <span class="mono muted">' + esc(nameOf(x.creator)) + '</span></a>';
-    return '<div class="stack"><p class="eyebrow">Lineage</p><div class="lineage">' + (chain.length ? chain.map((x) => link(x) + '<span class="pipe"></span>').join('') : '<span class="muted">Original cartridge</span><span class="pipe"></span>') + '<strong>' + esc(g.title) + '</strong></div>'
+    return '<div class="stack"><p class="eyebrow">Lineage</p><div class="lineage">' + (chain.length ? chain.map((x) => link(x) + '<span class="pipe"></span>').join('') : '<span class="muted">Original game</span><span class="pipe"></span>') + '<strong>' + esc(g.title) + '</strong></div>'
       + '<p class="eyebrow" style="margin-top:8px">Remixed into</p>' + (kids.length ? '<div class="lineage">' + kids.map(link).join('') + '</div>' : '<p class="muted">No remixes yet. Remix it and the original creator earns ' + pct(R.PARENT_BPS) + ' of your collects.</p>') + '</div>';
   }
   async function mountGame() {
@@ -1957,7 +1619,7 @@
       v.innerHTML = '<div class="empty"><h1>' + (S.world ? 'Cartridge not found' : 'Loading ClaudePlay…') + '</h1><p>' + (S.world ? 'It may have been published on another device, or it is still syncing.' : '') + '</p><a class="btn" href="#explore" data-nav="explore">Back to Explore</a></div>';
       return;
     }
-    v.innerHTML = '<div class="gp-head"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(g.title) + '</h1><div class="row" id="gp-chips">' + gameChips(g) + '</div></div>'
+    v.innerHTML = '<div class="gp-head player-heading"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(g.title) + '</h1><div class="row" id="gp-chips">' + gameChips(g) + '</div></div>'
       + '<div class="gp-grid"><div class="gp-main" data-part="Play"><div class="screen" id="gp-screen" data-gid="' + esc(g.gid) + '" style="background:#05070a url(' + K.cover(g) + ') center/cover"></div>'
       + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-room"></div>' + remixBox(g) + '<div id="gp-about">' + gameAbout(g) + '</div></div>'
       + '<aside class="gp-side"><div class="tabs" role="tablist" id="gp-tabs">' + TABS.map(([k, l]) => '<button role="tab" type="button" data-act="tab" data-tab="' + k + '" aria-selected="' + (S.ui.tab === k) + '">' + l + '</button>').join('') + '</div><div class="panel" id="gp-panel">' + gamePanel(g) + '</div></aside></div>' + footHTML();
@@ -2131,7 +1793,7 @@
     return '<div class="panel stack" id="st-publish"><p class="eyebrow">' + (live ? 'Republish ' + esc(live.title) : 'Publish') + '</p>'
       + (live ? '<p class="muted" style="font-size:0.875rem">The live version stays up until you republish. Price, editions and remix credit stay the same; leaderboard scores from now on count for the new version.</p>' : '')
       + (ai ? '<label class="field">Title<input id="pub-title" type="text" maxlength="40" data-in="pub-title" value="' + esc(st.title || meta.title || '') + '" placeholder="Game title"></label>' : '')
-      + '<label class="field">Description<input id="pub-desc" type="text" maxlength="200" data-in="pub-desc" value="' + esc(st.desc || meta.desc || '') + '" placeholder="One line players see on the cartridge"></label>'
+      + '<label class="field">Description<input id="pub-desc" type="text" maxlength="200" data-in="pub-desc" value="' + esc(st.desc || meta.desc || '') + '" placeholder="Tell players what makes your game fun"></label>'
       + (live ? '' : '<div class="grid2"><label class="field">Collect price <small>' + UNIT + ', 0 for a free collect</small><input id="pub-price" type="number" min="0" max="100" step="0.01" data-in="pub-price" value="' + esc(st.price) + '"></label>'
       + '<label class="field">Editions <small>0 for an open edition</small><input id="pub-cap" type="number" min="0" max="100000" step="1" data-in="pub-cap" value="' + esc(st.cap) + '"></label></div>') + vis
       + (st.blocked ? '<div class="banner bad" role="alert"><b>The safety check stopped this game</b><span>' + esc(st.blocked.join(' ')) + '</span><span class="muted">Ask for a change that fixes it, then publish again.</span></div>' : '')
@@ -2162,7 +1824,7 @@
   }
   function mountStudio() {
     if (!S.studio) loadStudio();
-    $('#view').innerHTML = '<div class="gp-head"><h1>Make a cartridge</h1></div>'
+    $('#view').innerHTML = '<div class="gp-head studio-heading"><p class="page-kicker">Your game studio</p><h1>Make a game</h1></div>'
       + '<div class="studio"><section class="st-left stack" id="st-left">' + studioLeft() + '</section>'
       + '<section class="st-right" id="st-right" data-part="Preview"><div class="screen" id="st-screen"></div><div class="toolbar" id="st-tools">' + studioTools() + '</div><div id="st-status">' + studioStatus() + '</div></section></div>' + footHTML();
     loadPreview();
@@ -2559,7 +2221,7 @@
       + '<dt>Handle</dt><dd><form class="row" data-form="handle" style="flex-wrap:nowrap"><input type="text" id="handle-in" maxlength="20" placeholder="' + esc(nameOf(S.wallet.from)) + '" aria-label="Handle"><button class="btn small" type="submit">Save</button></form></dd>'
       + '<dt>Stored</dt><dd>' + (S.wallet.kind === 'embedded' ? (S.storageOk ? 'In this browser only' : 'In memory until you close the page') : 'In your wallet extension') + '</dd>'
       + '</dl><div class="row"><button class="btn small ghost" type="button" data-act="copy-address">Copy address</button>' + (S.wallet.kind === 'embedded' ? '<button class="btn small ghost" type="button" data-act="export-key">Export secret key</button>' : '') + '<button class="btn small ghost" type="button" data-act="import-wallet">Import a key</button>' + (inj && S.wallet.kind === 'embedded' ? '<button class="btn small ghost" type="button" data-act="connect-injected">Use ' + esc(inj.name) + '</button>' : '') + '</div></div>'
-      + '<div class="panel stack"><p class="eyebrow">Your cartridges</p>'
+      + '<div class="panel stack"><p class="eyebrow">Your games</p>'
       + (games.length ? '<div class="lineage">' + games.map((g) => '<a href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '">' + esc(g.title) + ' <span class="mono muted">' + fmtInt(g.players.size) + ' players · ' + fmtSOL(g.revenue) + ' SOL</span></a>').join('') + '</div>' : '<p class="muted">None yet. <a href="#create" data-nav="create">Make one</a>.</p>')
       + '<p class="eyebrow" style="margin-top:6px">Your collection</p>'
       + (owned.length ? '<div class="lineage">' + owned.map((g) => '<a href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '">' + esc(g.title) + ' <span class="mono muted">edition #' + g.collects.find((c) => c.pk === S.wallet.from).edition + '</span></a>').join('') + '</div>' : '<p class="muted">Nothing collected yet.</p>')
@@ -2639,22 +2301,22 @@
     let s = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="GPLY emission per epoch, decaying 10% each epoch">';
     for (const v of [0, 25000, 50000, 75000, 100000]) {
       const y = T + (H - T - B) * (1 - v / max);
-      s += '<line x1="' + L + '" x2="' + (W - RR) + '" y1="' + y + '" y2="' + y + '" style="stroke:var(--line)" stroke-width="1"/><text x="' + (L - 8) + '" y="' + (y + 3.5) + '" text-anchor="end" style="fill:var(--muted);font:500 10px var(--mono)">' + (v / 1000) + 'k</text>';
+      s += '<line x1="' + L + '" x2="' + (W - RR) + '" y1="' + y + '" y2="' + y + '" style="stroke:var(--line)" stroke-width="1"/><text x="' + (L - 8) + '" y="' + (y + 3.5) + '" text-anchor="end" style="fill:var(--muted);font:500 14px var(--mono)">' + (v / 1000) + 'k</text>';
     }
     for (let i = 1; i <= n; i++) {
       const v = C.emissionFor(i), h = (H - T - B) * (v / max), x = L + (i - 1) * bw + 2, y = H - B - h;
       const fill = i === current ? 'var(--accent)' : i < current ? 'var(--muted)' : 'var(--shell-dark)';
-      s += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + (bw - 4).toFixed(1) + '" height="' + h.toFixed(1) + '" style="fill:' + fill + '"><title>Epoch ' + i + ': ' + fmtInt(v) + ' GPLY</title></rect>';
-      if (i === 1 || i % 5 === 0) s += '<text x="' + (x + (bw - 4) / 2).toFixed(1) + '" y="' + (H - B + 16) + '" text-anchor="middle" style="fill:var(--muted);font:500 10px var(--mono)">' + i + '</text>';
+      s += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + (bw - 4).toFixed(1) + '" height="' + h.toFixed(1) + '" style="fill:' + fill + (i > current ? ';stroke:var(--ink-2);stroke-width:1.5' : '') + '"><title>Epoch ' + i + ': ' + fmtInt(v) + ' GPLY</title></rect>';
+      if (i === 1 || i % 5 === 0) s += '<text x="' + (x + (bw - 4) / 2).toFixed(1) + '" y="' + (H - B + 16) + '" text-anchor="middle" style="fill:var(--muted);font:500 14px var(--mono)">' + i + '</text>';
     }
-    s += '<text x="' + (W - RR) + '" y="' + (H - 4) + '" text-anchor="end" style="fill:var(--muted);font:500 10px var(--mono)">epoch</text></svg>';
-    return s;
+    s += '<text x="' + (W - RR) + '" y="' + (H - 4) + '" text-anchor="end" style="fill:var(--muted);font:500 14px var(--mono)">epoch</text></svg>';
+    return '<div class="emission-chart-wrap" tabindex="0" role="region" aria-label="Emission schedule; scroll horizontally to view all 20 epochs">' + s + '</div>';
   }
   function flowDiagram() {
     if (sponsoredAI()) return '<p>Collects and tips pay creators directly; collects also send a 5% protocol fee to the treasury. Site funding sponsors AI creation within daily allowances and a total funding limit. Creators can use standard and best builds, pictures, play-tests and publishing without buying credits.</p>';
     const node = (x, y, t, sub, strong) => '<rect x="' + x + '" y="' + y + '" width="160" height="58" rx="4" style="fill:var(--panel-2);stroke:' + (strong ? 'var(--accent)' : 'var(--line)') + '" stroke-width="' + (strong ? 2 : 1) + '"/><text x="' + (x + 80) + '" y="' + (y + 25) + '" text-anchor="middle" style="fill:var(--ink);font:700 13px var(--body)">' + t + '</text><text x="' + (x + 80) + '" y="' + (y + 43) + '" text-anchor="middle" style="fill:var(--muted);font:400 11px var(--body)">' + sub + '</text>';
     const edge = (d, lx, ly, label, anchor) => '<path d="' + d + '" fill="none" style="stroke:var(--ink-2)" stroke-width="1.6" marker-end="url(#ah)"/><text x="' + lx + '" y="' + ly + '" text-anchor="' + (anchor || 'middle') + '" style="fill:var(--ink-2);font:600 11px var(--body);paint-order:stroke;stroke:var(--panel);stroke-width:4px;stroke-linejoin:round">' + label + '</text>';
-    return '<div class="diagram-wrap"><svg viewBox="0 0 760 236" role="img" aria-label="How value flows through ClaudePlay"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--ink-2)"/></marker></defs>'
+    return '<div class="diagram-wrap" tabindex="0" role="region" aria-label="Value flow diagram"><svg viewBox="0 0 760 236" role="img" aria-label="How value flows through ClaudePlay"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--ink-2)"/></marker></defs>'
       + node(20, 16, 'GPLY emission', '100k per epoch, −10% each') + node(300, 16, 'Creators', 'make and publish games') + node(580, 16, 'Burn', 'boosts and conversions')
       + node(20, 160, 'Players & collectors', 'play, score, collect') + node(300, 160, 'Treasury', '5% fees + Spark packs', true) + node(580, 160, 'Free AI compute', R.WEEKLY_SPARKS + ' Sparks a week each')
       + edge('M180 45 H296', 238, 37, '70% to creators') + edge('M100 74 V156', 108, 118, '30% to players', 'start')
@@ -2701,13 +2363,13 @@
     const changed = route !== S.route || arg !== S.arg;
     if (S.route === 'create' && route !== 'create') { unmountPlayer('st-screen'); unmountPlayer('st-p1'); unmountPlayer('st-p2'); }
     if (S.route === 'game' && (route !== 'game' || arg !== S.arg)) unmountPlayer('gp-screen');
-    if (S.route === 'home' && route !== 'home') unmountPlayer('home-screen');
+    if (S.route === 'home' && route !== 'home') { unmountPlayer('home-screen'); stopHomeScene(); }
     if (S.route === 'business' && route !== 'business') unmountPlayer('biz-screen');
     S.route = route; S.arg = arg || null;
     if (changed && route === 'game') S.ui.tab = 'board';
     renderHeader();
     renderView(true);
-    if (changed) { window.scrollTo(0, 0); const v = $('#view'); if (v) v.focus({ preventScroll: true }); }
+    if (changed) { window.scrollTo(0, 0); const v = $('#view'); if (v) { v.focus({ preventScroll: true }); if (!calmNow()) { v.classList.remove('route-open'); void v.offsetWidth; v.classList.add('route-open'); } } }
   }
   function parseHash() {
     const h = (location.hash || '').slice(1);
