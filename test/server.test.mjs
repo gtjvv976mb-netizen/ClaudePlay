@@ -499,5 +499,69 @@ redis.close();
   server.close();
 }
 
+// Play-test review: Claude sees the screenshots and the run log; problems come back as fix instructions.
+{
+  const seen = [];
+  const answers = { Pass: '{"verdict":"pass","problems":[]}', Fix: '{"verdict":"fix","problems":["The player sprite is drawn off screen.","The score text overlaps the title."]}', Odd: 'looks okay to me' };
+  const client = { beta: { messages: { stream(params) {
+    seen.push(params);
+    const title = (params.messages[0].content.at(-1).text.match(/GAME: (\w+)/) || [])[1];
+    return { async *[Symbol.asyncIterator]() { if (title === 'Down') throw Object.assign(new Error('overloaded'), { status: 529 }); yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: answers[title] } }; }, async finalMessage() { return { stop_reason: 'end_turn', usage: {} }; } };
+  } } } };
+  const { server, base } = await start({ client });
+  const JPG = '/9j/4AAQSkZJRgABAQAAAQABAAD' + 'A'.repeat(200);
+  const pt = async (title, extra) => { const r = await fetch(base + '/api/playtest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.assign({ title, request: 'a cat platformer', shots: [JPG, JPG, JPG], log: { errors: ['boom (line 3)'], started: true, scored: false, moved: true, canvases: 1, text: 'Tap to start' } }, extra)) }); return { status: r.status, body: await r.json() }; };
+  const pass = await pt('Pass');
+  ok(pass.status === 200 && pass.body.ok && !pass.body.problems.length, 'a passing play-test');
+  const p0 = seen[0], c0 = p0.messages[0].content;
+  ok(p0.model === 'claude-haiku-5-5' && p0.system[0].text === H.PLAYTEST_PROMPT && c0.filter((c) => c.type === 'image').length === 3 && c0.at(-1).text.includes('boom (line 3)') && c0.at(-1).text.includes('a cat platformer'), 'the review uses Haiku with three screenshots, the request and the run log');
+  const fix = await pt('Fix');
+  ok(!fix.body.ok && fix.body.problems.length === 2 && fix.body.problems[0].includes('off screen'), 'problems come back as fix instructions');
+  ok((await pt('Odd')).body.ok, 'an unclear review never blocks a build');
+  ok((await pt('Down')).status === 503, 'a review that cannot run says so');
+  ok((await pt('Pass', { shots: [] })).status === 400, 'a play-test needs screenshots');
+  ok((await pt('Pass', { shots: ['iVBORw0KGgo' + 'A'.repeat(20)] })).status === 400, 'screenshots must be JPEG');
+  ok((await pt('Pass', { shots: [JPG, JPG, JPG, JPG] })).status === 400, 'at most three screenshots');
+  ok((await pt('Pass', { shots: ['/9j/' + 'A'.repeat(150001)] })).status === 400, 'over-large screenshots are refused');
+  server.close();
+  const off = await start({});
+  ok((await fetch(off.base + '/api/playtest', { method: 'POST', body: '{}' })).status === 503, 'no play-test review without the AI studio');
+  off.server.close();
+  const c = H.checkPlaytest({ shots: [JPG], log: { errors: Array(9).fill('e'.repeat(300)), canvases: 99, text: 't'.repeat(999) }, title: 'x'.repeat(99) });
+  ok(c.ok && c.req.log.errors.length === 5 && c.req.log.errors[0].length === 200 && c.req.log.canvases === 20 && c.req.log.text.length === 300 && c.req.title.length === 60, 'play-test logs are trimmed');
+  ok(!H.parsePlaytest('{"verdict":"fix","problems":[]}').problems.length && H.parsePlaytest('{"verdict":"fix","problems":["a","b","c","d","e"]}').problems.length === 4, 'a fix verdict needs problems, at most four');
+}
+
+// Patch edits: SEARCH/REPLACE blocks applied exactly, then line by line; any miss fails the whole patch.
+{
+  const code = '<!doctype html>\n<html><head><title>X</title></head>\n<body>\n<scr' + 'ipt>\n  let speed = 3;\n  function jump() {\n    vy = -8;\n  }\n  function land() {\n  }\n</scr' + 'ipt>\n</body></html>';
+  const blk = (a, b) => '<<<<<<< SEARCH\n' + a + '\n=======\n' + b + '\n>>>>>>> REPLACE';
+  const r1 = H.applyEdits(code, 'Sure!\n' + blk('  let speed = 3;', '  let speed = 5;') + '\n' + blk('function jump() {\n  vy = -8;', '  function jump() {\n    vy = -11;'));
+  ok(r1.ok && r1.code.includes('let speed = 5;') && r1.code.includes('vy = -11;') && !r1.code.includes('vy = -8') && r1.edits.length === 2, 'edits apply exactly, or line by line when indentation differs');
+  const r2 = H.applyEdits(code, blk('  let speed = 3;', ''));
+  ok(r2.ok && !r2.code.includes('speed'), 'an empty replacement deletes');
+  ok(!H.applyEdits(code, blk('  }', '  };')).ok, 'a search that matches twice fails');
+  ok(!H.applyEdits(code, blk('let speed = 3;', 'x') + '\n' + blk('nothing like this', 'y')).ok, 'one missing block fails the whole patch');
+  ok(!H.applyEdits(code, '<<<<<<< SEARCH\n  let speed = 3;\n=======\n  let').ok, 'a cut-off block fails');
+  ok(!H.applyEdits(code, 'no blocks here').ok && H.isPatch(blk('a', 'b')) && !H.isPatch(code), 'replies without blocks are not patches');
+  ok(H.checkRequest({ kind: 'edit', prompt: 'x', code, format: 'patch' }).req.format === 'patch' && H.checkRequest({ kind: 'new', prompt: 'x', format: 'patch' }).req.format === 'full', 'only edits and fixes come back as patches');
+  ok(H.harnessTask('edit', { prompt: 'x', code, format: 'patch' }).includes('>>>>>>> REPLACE') && !H.harnessTask('edit', { prompt: 'x', code }).includes('>>>>>>> REPLACE'), 'the patch rules go only into patch requests');
+  const cl = H.readChecklist('PLAN\n- [ ] coins\n- [ ] boss\n- [ ] music\nEND PLAN\n<!doctype html><html></html>\nDONE\n- [x] coins\n- [x] boss\n- [ ] music: no room left\nEND DONE');
+  ok(cl.plan.length === 3 && !cl.plan[0].done && cl.done.length === 3 && cl.done[1].done && !cl.done[2].done && cl.rest.trim() === '<!doctype html><html></html>', 'checklists are read and removed from the reply');
+  ok(!H.readChecklist('<!doctype html>').plan.length, 'small requests have no checklist');
+}
+
+// Room size: 16 players by default, configurable.
+{
+  const { openRooms } = await import('../server/rooms.mjs');
+  const { server, base } = await start({ gallery: await openGallery({}), rooms: openRooms({ maxPlayers: 2 }) });
+  const made = await (await fetch(base + '/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ gid: 'g9' }) })).json();
+  const ctls = [], statuses = [];
+  for (let i = 0; i < 3; i++) { const ctl = new AbortController(); ctls.push(ctl); const r = await fetch(base + '/api/rooms/' + made.code + '/events?gid=g9&name=P' + i, { signal: ctl.signal }); statuses.push(r.status); if (r.status !== 200) await r.text(); }
+  ok(statuses.join() === '200,200,409', 'a full room turns the next player away');
+  ctls.forEach((c) => c.abort());
+  server.close();
+}
+
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');
 process.exit(fails ? 1 : 0);

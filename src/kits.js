@@ -548,6 +548,29 @@
       if (!pics[name]) { var im = new Image(), src = window.SP_PICTURES && Object.prototype.hasOwnProperty.call(window.SP_PICTURES, name) ? window.SP_PICTURES[name] : ''; if (/^data:image\/png;base64,/.test(src)) im.src = src; pics[name] = im; }
       return pics[name];
     };
+    /* Pixel art drawn in code: SP.sprite(rows, legend, scale) turns strings (one character per pixel,
+       '.' or a space is clear) into a canvas; an array of frames gives an array of canvases.
+       SP.paint(w, h, fn) paints a canvas once, for backgrounds. Both canvases pass the usual
+       "img.complete && img.naturalWidth" check and stay crisp when scaled up. */
+    function canvasOf(w, h) {
+      var c = document.createElement('canvas');
+      c.width = Math.max(1, Math.min(4096, Math.round(+w || 1))); c.height = Math.max(1, Math.min(4096, Math.round(+h || 1)));
+      c.complete = true; c.naturalWidth = c.width; c.naturalHeight = c.height;
+      return c;
+    }
+    window.SP.sprite = function sprite(rows, legend, scale) {
+      if (Array.isArray(rows) && Array.isArray(rows[0])) return rows.map(function (f) { return sprite(f, legend, scale); });
+      rows = [].concat(rows || []).map(String); legend = legend || {}; scale = Math.max(1, Math.min(16, Math.floor(+scale || 1)));
+      var w = 0; for (var i = 0; i < rows.length; i++) w = Math.max(w, rows[i].length);
+      var c = canvasOf(w * scale, rows.length * scale), x = c.getContext('2d');
+      for (var r = 0; r < rows.length; r++) for (var k = 0; k < rows[r].length; k++) {
+        var ch = rows[r][k], col = ch === '.' || ch === ' ' ? null : legend[ch];
+        if (col) { x.fillStyle = col; x.fillRect(k * scale, r * scale, scale, scale); }
+      }
+      c.pixel = true;
+      return c;
+    };
+    window.SP.paint = function (w, h, fn) { var c = canvasOf(w, h); if (fn) fn(c.getContext('2d'), c.width, c.height); return c; };
     /* Multiplayer: when the page opened this game in a room (o.room), SP.room relays messages between
        the players through the page. Offline it is a room of one that sends nothing. */
     var room = o.room || null, handlers = {};
@@ -574,6 +597,64 @@
         else if (m.t === 'closed') { R.online = false; emit('closed'); }
       });
       post({ t: 'net-ready' });
+    }
+    /* Play-test mode (o.test): ClaudePlay plays the game for a few seconds before the creator sees it,
+       pressing keys and tapping like a restless player, and posts screenshots of the title screen and of
+       play, plus whether the screen was blank or never moved. The page sends them to Claude to review. */
+    if (o.test) {
+      var KEYS = [['Space', ' ', 32], ['ArrowLeft', 'ArrowLeft', 37], ['ArrowRight', 'ArrowRight', 39], ['ArrowUp', 'ArrowUp', 38], ['ArrowDown', 'ArrowDown', 40], ['KeyZ', 'z', 90], ['KeyX', 'x', 88], ['KeyA', 'a', 65], ['KeyD', 'd', 68], ['KeyW', 'w', 87], ['Enter', 'Enter', 13]];
+      var keyEv = function (type, k) {
+        var ev; try { ev = new KeyboardEvent(type, { code: k[0], key: k[1], bubbles: true, cancelable: true }); } catch (e) { return; }
+        try { Object.defineProperty(ev, 'keyCode', { get: function () { return k[2]; } }); Object.defineProperty(ev, 'which', { get: function () { return k[2]; } }); } catch (e) {}
+        (document.activeElement || document.body || document).dispatchEvent(ev);
+      };
+      var ptr = function (type, x, y) {
+        var el = document.elementFromPoint(x, y) || document.body, init = { clientX: x, clientY: y, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch', isPrimary: true, buttons: /down|move/.test(type) ? 1 : 0, button: 0 };
+        try { el.dispatchEvent(new PointerEvent('pointer' + type, init)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent(type === 'down' ? 'mousedown' : type === 'up' ? 'mouseup' : 'mousemove', init)); } catch (e) {}
+        try { if (type !== 'move' || init.buttons) { var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y }); el.dispatchEvent(new TouchEvent(type === 'down' ? 'touchstart' : type === 'up' ? 'touchend' : 'touchmove', { touches: type === 'up' ? [] : [t], targetTouches: type === 'up' ? [] : [t], changedTouches: [t], bubbles: true, cancelable: true })); } } catch (e) {}
+        if (type === 'up') try { el.dispatchEvent(new MouseEvent('click', init)); } catch (e) {}
+      };
+      var tap = function (x, y) { ptr('down', x, y); setTimeout(function () { ptr('up', x, y); }, 60); };
+      var press = function (k, ms) { keyEv('keydown', k); setTimeout(function () { keyEv('keyup', k); }, ms || 90); };
+      // A screenshot: every visible canvas drawn into one small picture, plus a tiny thumbnail to compare frames.
+      var shot = function () {
+        var W = innerWidth || 1, H = innerHeight || 1, k = Math.min(1, 400 / Math.max(W, H));
+        var out = document.createElement('canvas'); out.width = Math.max(1, Math.round(W * k)); out.height = Math.max(1, Math.round(H * k));
+        var x = out.getContext('2d'), bg = getComputedStyle(document.body).backgroundColor;
+        x.fillStyle = !bg || bg === 'rgba(0, 0, 0, 0)' ? '#000' : bg; x.fillRect(0, 0, out.width, out.height);
+        var cs = [].slice.call(document.querySelectorAll('canvas')).filter(function (c) { return c !== out && c.width && c.height && c.getClientRects().length; });
+        cs.forEach(function (c) { var r = c.getBoundingClientRect(); try { x.drawImage(c, r.left * k, r.top * k, r.width * k, r.height * k); } catch (e) {} });
+        var th = document.createElement('canvas'); th.width = 32; th.height = 18;
+        var tx = th.getContext('2d'); tx.drawImage(out, 0, 0, 32, 18);
+        var px = tx.getImageData(0, 0, 32, 18).data, seen = {}, colors = 0, thumb = [];
+        for (var i = 0; i < px.length; i += 4) { var q = (px[i] >> 4) + '.' + (px[i + 1] >> 4) + '.' + (px[i + 2] >> 4); if (!seen[q]) { seen[q] = 1; colors++; } thumb.push(px[i], px[i + 1], px[i + 2]); }
+        return { img: out.toDataURL('image/jpeg', 0.7), colors: colors, thumb: thumb, canvases: cs.length };
+      };
+      // Read the canvases right after the game draws a frame, so WebGL buffers are still filled in.
+      var snap = function (fn) { requestAnimationFrame(function () { requestAnimationFrame(function () { var s; try { s = shot(); } catch (e) { s = null; } fn(s); }); }); };
+      var shots = [];
+      window.addEventListener('load', function () {
+        var W = function () { return innerWidth || 1; }, H = function () { return innerHeight || 1; };
+        setTimeout(function () { snap(function (s) { shots[0] = s; }); }, 900);
+        setTimeout(function () { press(KEYS[0]); press(KEYS[10]); tap(W() / 2, H() / 2); }, 1150);
+        var t0 = Date.now(), busy = setInterval(function () {
+          if (Date.now() - t0 > 3300) { clearInterval(busy); return; }
+          var r = Math.random();
+          if (r < 0.55) press(KEYS[Math.floor(Math.random() * KEYS.length)], 80 + Math.random() * 320);
+          else if (r < 0.85) tap(W() * (0.1 + Math.random() * 0.8), H() * (0.15 + Math.random() * 0.75));
+          else { var y = H() * (0.3 + Math.random() * 0.5); ptr('down', W() * 0.3, y); ptr('move', W() * 0.7, y); setTimeout(function () { ptr('up', W() * 0.7, y); }, 120); }
+        }, 140);
+        setTimeout(function () { snap(function (s) { shots[1] = s; }); }, 2700);
+        setTimeout(function () {
+          snap(function (s) {
+            shots[2] = s;
+            var ok = shots.filter(Boolean), diff = 0;
+            if (shots[1] && shots[2]) { for (var i = 0; i < shots[1].thumb.length; i++) diff += Math.abs(shots[1].thumb[i] - shots[2].thumb[i]); diff /= shots[1].thumb.length; }
+            post({ t: 'test', shots: ok.map(function (x) { return x.img; }), colors: ok.map(function (x) { return x.colors; }), canvases: ok.length ? ok[ok.length - 1].canvases : 0, moved: diff > 1.5, text: String(document.body && document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 300) });
+          });
+        }, 4500);
+      });
     }
     window.addEventListener('error', function (e) { post({ t: 'error', v: String(e.message || 'Script error') + (e.lineno ? ' (line ' + e.lineno + ')' : '') }); });
     window.addEventListener('unhandledrejection', function (e) { post({ t: 'error', v: 'Unhandled promise rejection: ' + String((e.reason && e.reason.message) || e.reason) }); });
@@ -702,7 +783,7 @@
         if (t) return t;
         t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, opts.pixelArt ? gl.NEAREST : gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, opts.pixelArt || img.pixel ? gl.NEAREST : gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         texCache.set(img, t); return t;
       }
@@ -854,13 +935,15 @@
     };
     var KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', Space: 'jump', KeyZ: 'action', KeyX: 'action2', Enter: 'start', KeyJ: 'action', KeyK: 'action2', ShiftLeft: 'action2' };
     function overlap(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+    /* A picture is ready once it has pixels: a loaded Image, or any canvas (SP.sprite, SP.paint or your own). */
+    function ready(im) { return !!im && im.complete !== false && !!(im.naturalWidth || im.width); }
     function create(opts) {
       opts = opts || {};
       var canvas = document.createElement('canvas'), x = canvas.getContext('2d');
       canvas.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;display:block;touch-action:none;';
       document.body.appendChild(canvas);
       document.documentElement.style.cssText += ';margin:0;height:100%;overflow:hidden;'; document.body.style.cssText += ';margin:0;height:100%;overflow:hidden;';
-      var list = [], tiles = null, tweens = [], timers = [], parts = [], pairs = [], scenes = {}, btns = [], frameFn = null, shakeT = 0, shakeA = 0;
+      var list = [], tiles = null, tweens = [], timers = [], parts = [], pairs = [], scenes = {}, btns = [], layers = [], frameFn = null, shakeT = 0, shakeA = 0;
       var dpr = 1, sw = 1, sh = 1, scale = 1, ox = 0, oy = 0, lastT = 0, acc = 0, STEP = 1 / 120;
       var held = {}, pressed = {}, pointer = { x: 0, y: 0, sx: 0, sy: 0, down: false, pressed: false };
       var G = {
@@ -868,7 +951,7 @@
         width: opts.width || 0, height: opts.height || 0,
         background: opts.background || '#101828',
         gravity: opts.gravity == null ? 0 : opts.gravity,
-        pixelArt: !!opts.pixelArt,
+        pixelArt: opts.pixelArt !== false, // crisp pixels unless a game turns it off
         camera: { x: 0, y: 0, zoom: 1, target: null, lerp: 0.12, bounds: null,
           follow: function (o, lerp) { this.target = o; if (lerp != null) this.lerp = lerp; },
           shake: function (amount, secs) { shakeA = Math.max(shakeA, amount || 6); shakeT = Math.max(shakeT, secs || 0.25); } },
@@ -913,6 +996,13 @@
           tiles = t; return t;
         },
         get tiles() { return tiles; },
+        /* A background layer that scrolls at factor x the camera (0 stays put, 1 moves with the world) and
+           repeats sideways: image is a canvas (SP.paint, SP.sprite) or a picture; y is its top in screen pixels. */
+        parallax: function (image, factor, y, o) {
+          var l = { image: typeof image === 'string' ? SP.image(image) : image, factor: factor == null ? 0.5 : +factor, y: y || 0, scale: (o && o.scale) || 1, factorY: (o && o.factorY) || 0, alive: true };
+          l.remove = function () { l.alive = false; var i = layers.indexOf(l); if (i >= 0) layers.splice(i, 1); };
+          layers.push(l); return l;
+        },
         /* Calls fn(a, b) every frame that an object tagged a overlaps one tagged b. */
         overlap: function (a, b, fn) { pairs.push({ a: a, b: b, fn: fn }); },
         tween: function (o, to, ms, ease, done) {
@@ -934,7 +1024,7 @@
         buttons: function (names) { btns = (names || ['left', 'right', 'jump']).map(function (n) { return { name: n, x: 0, y: 0, r: 0, ids: {} }; }); layoutButtons(); },
         scene: function (name, fn) { scenes[name] = fn; },
         go: function (name, data) { G.clear(); if (scenes[name]) scenes[name](data); },
-        clear: function () { list.length = 0; tiles = null; tweens.length = 0; timers.length = 0; parts.length = 0; pairs.length = 0; G.camera.target = null; G.camera.bounds = null; G.camera.x = 0; G.camera.y = 0; },
+        clear: function () { list.length = 0; layers.length = 0; tiles = null; tweens.length = 0; timers.length = 0; parts.length = 0; pairs.length = 0; G.camera.target = null; G.camera.bounds = null; G.camera.x = 0; G.camera.y = 0; },
         toWorld: function (px, py) { return { x: (px - G.width / 2) / G.camera.zoom + G.camera.x + G.width / 2, y: (py - G.height / 2) / G.camera.zoom + G.camera.y + G.height / 2 }; },
         start: function (fn) { frameFn = fn; lastT = 0; if (!G.running) { G.running = true; requestAnimationFrame(loop); } },
       };
@@ -1050,7 +1140,11 @@
         if (m.scale !== 1) x.scale(m.scale, m.scale);
         if (m.flipX) x.scale(-1, 1);
         if (m.draw) m.draw(x, m);
-        else if (m.image) { if (m.image.complete && m.image.naturalWidth) x.drawImage(m.image, -m.w / 2, -m.h / 2, m.w, m.h); else { x.fillStyle = m.color; x.fillRect(-m.w / 2, -m.h / 2, m.w, m.h); } }
+        else if (m.anim || m.image) {
+          // anim: [frames] plays at fps (default 8); image is one picture or canvas.
+          var im = m.anim && m.anim.length ? m.anim[Math.floor(G.time * (m.fps || 8)) % m.anim.length] : m.image;
+          if (ready(im)) x.drawImage(im, -m.w / 2, -m.h / 2, m.w, m.h); else { x.fillStyle = m.color; x.fillRect(-m.w / 2, -m.h / 2, m.w, m.h); }
+        }
         else if (m.shape === 'circle') { x.fillStyle = m.color; x.beginPath(); x.arc(0, 0, Math.min(m.w, m.h) / 2, 0, Math.PI * 2); x.fill(); }
         else if (m.shape === 'text') { x.fillStyle = m.color; x.font = m.font; x.textAlign = m.align; x.textBaseline = 'middle'; x.fillText(String(m.text == null ? '' : m.text), 0, 0); }
         else if (m.shape === 'triangle') { x.fillStyle = m.color; x.beginPath(); x.moveTo(0, -m.h / 2); x.lineTo(m.w / 2, m.h / 2); x.lineTo(-m.w / 2, m.h / 2); x.closePath(); x.fill(); }
@@ -1064,6 +1158,13 @@
         x.translate(ox, oy); x.scale(scale, scale);
         x.save(); x.beginPath(); x.rect(0, 0, G.width, G.height); x.clip();
         x.fillStyle = G.background; x.fillRect(0, 0, G.width, G.height);
+        for (var li = 0; li < layers.length; li++) {
+          var ly = layers[li], lim = ly.image;
+          if (!ready(lim)) continue;
+          var lw = (lim.naturalWidth || lim.width) * ly.scale, lh = (lim.naturalHeight || lim.height) * ly.scale;
+          var lx = -((G.camera.x * ly.factor) % lw); if (lx > 0) lx -= lw;
+          for (var px = lx; px < G.width; px += lw) x.drawImage(lim, Math.floor(px), Math.floor(ly.y - G.camera.y * ly.factorY), Math.ceil(lw), lh);
+        }
         var c = G.camera, kx = shakeA ? (SP.rand() - 0.5) * shakeA * 2 : 0, ky = shakeA ? (SP.rand() - 0.5) * shakeA * 2 : 0;
         x.save();
         x.translate(G.width / 2 + kx, G.height / 2 + ky); x.scale(c.zoom, c.zoom); x.translate(-G.width / 2 - c.x, -G.height / 2 - c.y);
@@ -1072,7 +1173,7 @@
           var t = tiles.list[i];
           if (t.x + t.w < vx0 || t.x > vx1 || t.y + t.h < vy0 || t.y > vy1) continue;
           if (t.draw) t.draw(x, t);
-          else if (t.image && t.image.complete && t.image.naturalWidth) x.drawImage(t.image, t.x, t.y, t.w, t.h);
+          else if (ready(t.image)) x.drawImage(t.image, t.x, t.y, t.w, t.h);
           else { x.fillStyle = t.color; x.fillRect(t.x, t.y, t.w + 0.5, t.h + 0.5); }
         }
         var world = list.filter(function (m) { return !m.hud; }).sort(function (a, b) { return a.z - b.z; });
@@ -1228,7 +1329,7 @@
   function withSDK(code, seed, opts) {
     const o = opts || {};
     const room = o.room ? { me: String(o.room.me), host: String(o.room.host), players: (o.room.players || []).map((p) => ({ id: String(p.id), name: String(p.name) })) } : null;
-    const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute, room }).replace(/</g, '\\u003c');
+    const conf = JSON.stringify({ speed: +o.speed > 0 && +o.speed < 1 ? +o.speed : 1, calm: !!o.calm, mute: !!o.mute, room, test: !!o.test }).replace(/</g, '\\u003c');
     const tag = '<meta http-equiv="Content-Security-Policy" content="' + GAME_CSP + '">'
       + SCRIPT_OPEN + '(' + SDK.toString() + ')(' + (seed >>> 0) + ',' + conf + ');' + (/SP3D/.test(code) ? '(' + SP3D_LIB.toString() + ')();' : '') + (/SP2D/.test(code) ? '(' + SP2D_LIB.toString() + ')();' : '') + (/SPSound/.test(code) ? '(' + SPSOUND_LIB.toString() + ')();' : '') + SCRIPT_CLOSE;
     const head = code.match(/<head[^>]*>/i);

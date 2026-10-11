@@ -15,7 +15,7 @@ export function cleanName(s) { return String(s || '').replace(/[^A-Za-z0-9 _-]/g
 
 /* opts: { maxRooms, maxPlayers, maxMsg (bytes per message), perSecond (messages per player), idleMs, now } */
 export function openRooms(opts = {}) {
-  const maxRooms = opts.maxRooms || 500, maxPlayers = opts.maxPlayers || 8, maxMsg = opts.maxMsg || 2048, perSecond = opts.perSecond || 40;
+  const maxRooms = opts.maxRooms || 500, maxPlayers = Math.max(2, Math.min(32, Math.floor(opts.maxPlayers) || 16)), maxMsg = opts.maxMsg || 2048, perSecond = opts.perSecond || 40;
   const idleMs = opts.idleMs || 10 * 60000, now = opts.now || Date.now;
   const rooms = new Map();
   const err = (status, code, message) => ({ status, body: { code, message } });

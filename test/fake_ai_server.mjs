@@ -74,6 +74,8 @@ function loop(){x.fillStyle='#201030';x.fillRect(0,0,c.width,c.height);x.fillSty
 const text = (content) => (typeof content === 'string' ? content : content.map((p) => p.text || '').join('\n'));
 const calls = [];
 const screens = [];
+const playtests = [];
+const reply = (params, out) => ({ async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: out } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { output_tokens: 1 } }; } });
 const client = { beta: { messages: { stream(params, options = {}) {
   if (params.system[0].text.startsWith('You review browser games')) {
     const content = params.messages[0].content;
@@ -82,7 +84,20 @@ const client = { beta: { messages: { stream(params, options = {}) {
     const verdict = /BLOCKME/.test(all) ? '{"verdict":"block","reasons":["It shows something not allowed (test)."]}' : '{"verdict":"allow","reasons":[]}';
     return { async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: verdict } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { output_tokens: 1 } }; } };
   }
+  if (params.system[0].text.startsWith('You play-test browser games')) {
+    // Play-test review: passes, unless the creator's request says PLAYTESTFIX.
+    const content = params.messages[0].content, all = text(content);
+    playtests.push({ model: params.model, images: content.filter((p) => p.type === 'image').length, log: all.slice(all.indexOf('RUN LOG')) });
+    return reply(params, /PLAYTESTFIX/.test(all) ? '{"verdict":"fix","problems":["The title text is cut off on the right."]}' : '{"verdict":"pass","problems":[]}');
+  }
   const content = params.messages[0].content, task = text(content);
+  // Changes come back as edit blocks: "glow" recolors the text, and a request with "three things" carries a checklist.
+  if (task.includes('Instead of the whole document') && /glow/.test(task)) {
+    calls.push({ model: params.model, task: task.slice(0, 200), tail: task.slice(-200), patch: true, pics: [], picBlock: false, images: 0, system: params.system[0].text.slice(0, 60) });
+    const three = /three things/.test(task);
+    const out = (three ? 'PLAN\n- [ ] glowing text\n- [ ] faster blocks\n- [ ] a boss\nEND PLAN\n' : '') + '<<<<<<< SEARCH\nx.fillStyle=\'#ffd84d\';x.font=\'24px sans-serif\';\n=======\nx.fillStyle=\'#7df9ff\';x.font=\'24px sans-serif\';\n>>>>>>> REPLACE' + (three ? '\nDONE\n- [x] glowing text\n- [x] faster blocks\n- [ ] a boss: no room left\nEND DONE' : '');
+    return reply(params, out);
+  }
   calls.push({ model: params.model, task: task.slice(0, 200), tail: task.slice(-200), pics: task.match(/- '[a-z0-9_]+': \d+x\d+ px/g) || [], picBlock: task.includes('sp-pictures'), images: Array.isArray(content) ? content.filter((p) => p.type === 'image').length : 0, system: params.system[0].text.slice(0, 60) });
   return {
     async *[Symbol.asyncIterator]() {
@@ -105,6 +120,7 @@ const handle = server.listeners('request')[0];
 server.removeAllListeners('request');
 server.on('request', (req, res) => {
   if (req.url === '/__calls') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(calls)); }
+  if (req.url === '/__playtests') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(playtests)); }
   if (req.url === '/__screens') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(screens)); }
   if (req.url === '/__chain' && fake) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ treasury: chain.site.treasury, balances: Object.fromEntries(fake.balances), sent: [...fake.txs.values()].filter((t) => t.p).length })); }
   return handle(req, res);

@@ -52,6 +52,22 @@ const rB2 = await sign(B, 'rate', { gid: 'g' + 'a'.repeat(12), stars: 4 }, b); /
 const rC = await sign(Cc, 'rate', { gid: 'g' + 'a'.repeat(12), stars: 5 }, c);
 const rOwn = await sign(A, 'rate', { gid: 'g' + 'a'.repeat(12), stars: 5 }, a);
 const rBad = await sign(Cc, 'rate', { gid: 'g' + 'b'.repeat(12), stars: 9 }, c);
+// republishing, visibility, follows and friend groups
+const h1b = await C.sha256hex('game one, version two');
+const upA = await sign(A, 'update', { gid: 'g' + 'a'.repeat(12), hash: h1b, size: 22, title: 'One Again', vis: 'unlisted' }, a);
+const upB = await sign(B, 'update', { gid: 'g' + 'a'.repeat(12), title: 'Stolen' }, b);
+const scOld = await sign(B, 'score', { gid: 'g' + 'a'.repeat(12), hash: h1, score: 50 }, b);
+const scNew = await sign(B, 'score', { gid: 'g' + 'a'.repeat(12), hash: h1b, score: 60 }, b);
+const fB = await sign(B, 'follow', { pk: A.pk }, b);
+const fC = await sign(Cc, 'follow', { pk: A.pk }, c);
+const fC2 = await sign(Cc, 'follow', { pk: A.pk, on: false }, c);
+const fSelf = await sign(A, 'follow', { pk: A.pk }, a);
+const grp = await sign(A, 'group', { id: 'friends01', name: 'Lunch crew' }, a);
+const grpDup = await sign(B, 'group', { id: 'friends01', name: 'Mine' }, b);
+const jB = await sign(B, 'join', { id: 'friends01' }, b);
+const jC = await sign(Cc, 'join', { id: 'friends01' }, c);
+const lC = await sign(Cc, 'leave', { id: 'friends01' }, c);
+const jX = await sign(Cc, 'join', { id: 'nosuchgrp' }, c);
 // forged: B's key signs a tx claiming to be from A
 const forged = { id: C.randHex(8), t: 'airdrop', from: A.pk, pk: B.pk, ts: t += 1000, n: 99, b: {} }; forged.sig = await B.sign(C.txMessage(forged)); b.push(forged);
 // tampered body
@@ -68,6 +84,14 @@ ok(!st(rBad).ok, 'ratings outside 1 to 5 stars rejected');
 const g1 = w.games.get('g' + 'a'.repeat(12));
 ok(g1.ratingCount === 2 && g1.rating === 4.5, 'one rating per account, averaged: ' + g1.rating + ' from ' + g1.ratingCount);
 ok(!st(tam).ok, 'tampered tx rejected: ' + st(tam).why);
+ok(st(upA).ok && g1.hash === h1b && g1.versions.length === 2 && g1.title === 'One Again' && g1.vis === 'unlisted', 'creator republishes a new version and unlists it');
+ok(!st(upB).ok && /creator/.test(st(upB).why), 'only the creator can update a game');
+ok(!st(scOld).ok && st(scNew).ok, 'after a republish, scores count for the live version');
+ok(st(fB).ok && st(fC2).ok && bal(A).followers.size === 1 && bal(B).following.has(A.pk) && !bal(Cc).following.has(A.pk), 'follow and unfollow a maker');
+ok(!st(fSelf).ok, 'cannot follow yourself');
+const gr = w.groups.get('friends01');
+ok(st(grp).ok && !st(grpDup).ok && st(jB).ok && st(jC).ok && st(lC).ok && !st(jX).ok, 'groups: create, join, leave');
+ok(gr && gr.name === 'Lunch crew' && gr.members.size === 2 && gr.members.has(B.pk) && !gr.members.has(Cc.pk), 'group members tracked');
 const sold = st(b[3]); ok(!sold.ok && sold.why === 'Sold out', 'cap enforced');
 ok(!st(a[7]).ok && st(a[6]).ok, 'score for wrong version rejected: ' + st(a[7]).why);
 // splits for collect of game three (1 SOL): creator C 80%, parent B 10%, grand A 5%, fee 5%

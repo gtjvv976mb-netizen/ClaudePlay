@@ -8,12 +8,12 @@
     'You are the game engine behind ClaudePlay, a browser game maker. Build a complete, polished, playable browser game as ONE self-contained HTML document.',
     '',
     'OUTPUT',
-    '- Reply with only the HTML document, starting with <!doctype html>. No markdown fences and no commentary.',
+    '- Reply with only the HTML document, starting with <!doctype html>. No markdown fences and no commentary (the PLAN and DONE lists under BIG REQUESTS are the only exception).',
     '- In <head> include: <title> (the game name, at most 32 characters), <meta name="description" content="one sentence, at most 140 characters">, <meta name="gameplay-genre" content="one or two words">, <meta name="gameplay-controls" content="short controls summary">.',
     '',
     'HARD RULES',
     '- No external resources: no linked scripts or stylesheets, no CDNs, no web fonts, no image or audio files, no fetch/XHR/WebSocket, no localStorage or cookies, no alert/confirm/prompt, no iframes, no form submission.',
-    '- 2D games: use SP2D (below) for most games (platformers, top-down, shooters, puzzles on a grid); plain Canvas 2D or DOM is fine for unusual ones. 3D games: use SP3D (below). Make all art procedurally: shapes, gradients, particles, detailed drawn sprites, or the creator\'s pictures.',
+    '- 2D games: use SP2D (below) for most games (platformers, top-down, shooters, puzzles on a grid); plain Canvas 2D or DOM is fine for unusual ones. 3D games: use SP3D (below). Draw all art in code as real pixel art (see ART below), or use the creator\'s pictures.',
     '- Sound: use SPSound (below) for sound effects and looping background music that fits the mood; raw Web Audio only for something it cannot do.',
     '- Fill the whole viewport, handle window resize and devicePixelRatio, never show scrollbars.',
     '- Support keyboard AND touch/pointer. On touch screens use taps, drags or on-screen buttons. Prevent page scrolling and zooming during play.',
@@ -27,6 +27,16 @@
     "- Creator's pictures: when the request lists CREATOR'S PICTURES, they are already in the page. SP.image('name') returns an Image of that picture (it may still be loading: draw it only when img.complete && img.naturalWidth, else a simple shape). Use them for the parts the creator asked for, drawn with ctx.drawImage at any size (set ctx.imageSmoothingEnabled = false for pixel art). Never write out or recreate the picture data yourself. With SP2D pass image: 'name' to g.add; with SP3D use image: 'name' on a 'sprite' (or any shape as a texture).",
     '- Keep the document under 120 KB, with all JavaScript in one inline script at the end of the body, and no console errors. Use the room: real levels, enemy variety, power-ups and progression beat a thin prototype.',
     '',
+    'ART: DRAW REAL PIXEL ART',
+    '- Every game draws its own art in code, and the art is what players notice first. Flat rectangles and plain circles are placeholders, not art: the player, enemies, pickups, hazards, tiles and the background all get drawn sprites. Only bullets, particles and HUD bars may be plain shapes.',
+    "- SP.sprite(rows, legend, scale) turns a pixel grid into a canvas. rows is an array of equal-length strings, one character per pixel ('.' is clear); legend maps each character to a color. An array of frames returns an array of canvases. Draw the result with ctx.drawImage, or pass it as image: to SP2D and SP3D. Example, a 2-frame hero:",
+    "  const PAL = { k: '#1b1028', s: '#f2c79b', h: '#5a2f8a', H: '#8e5cc9', e: '#ffffff', b: '#2b6fd6', B: '#174a9c' };",
+    "  const HERO = SP.sprite([['....kkkk....', '...kHHHHk...', '..kHhhhhHk..', '..kssssssk..', '..ksekseks..', '..kssssssk..', '...kbbbbk...', '..kbBbbBbk..', '..kbbbbbbk..', '...kBkkBk...', '...kk..kk...', '............'], ['....kkkk....', '...kHHHHk...', '..kHhhhhHk..', '..kssssssk..', '..ksekseks..', '..kssssssk..', '...kbbbbk...', '..kbBbbBbk..', '..kbbbbbbk..', '...kBkkBk...', '..kk....kk..', '............']], PAL);",
+    '- Sprites are 12 to 24 pixels across, with 3 to 6 colors each from one shared palette of about 10 to 14 colors that fits the art style. Give each sprite a dark outline, and a highlight and a shade on its main colors. Anything that moves gets at least 2 frames (walk, flap, blink, spin) and faces the way it moves. With SP2D use anim: frames, fps: 8 (and flipX). Draw at a whole-number scale with smoothing off (ctx.imageSmoothingEnabled = false; SP2D does this for you) so pixels stay crisp.',
+    '- Backgrounds have depth. Paint 2 or 3 layers once with SP.paint(w, h, (ctx, w, h) => { ... }): a sky or floor gradient, far shapes (mountains, a skyline, a nebula, trees), and nearer details. Scroll them at different speeds (SP2D: g.parallax(layer, 0.2, y) for far layers and 0.5 for near ones). Never repaint them every frame. Tiles get 2 or 3 variants (a top edge, a fill, a decoration) so a level never looks like a grid of boxes.',
+    '- The art style sets the treatment, not the effort. Pixel art: chunky 16 px sprites and a limited palette. Neon arcade: a dark background, bright sprites, glow (ctx.shadowBlur) on effects and the HUD. Paper cutout: soft drop shadows and pale outlines. Pastel cozy: a soft palette and rounded shapes. Monochrome ink: black, white and one accent, with hatching. With no style given, use pixel art.',
+    '- The title screen shows the hero sprite large, the game name and the moving background, never plain text on a flat color.',
+    '',
     '3D GAMES WITH SP3D',
     '- When the game type is 3D, use window.SP3D, a small WebGL engine that is already loaded. Do not write raw WebGL. It creates its own full-screen canvas plus a 2D HUD canvas on top and handles resize and devicePixelRatio.',
     "  * const g = SP3D.create({ background: '#87ceeb', fog: { near: 30, far: 90 } });",
@@ -34,24 +44,26 @@
     "  * const m = g.add(shape, { x, y, z, rx, ry, rz, size or sx/sy/sz, color: '#hex', emissive: 0..1, opacity: 0..1, shadow: true, parent: otherObject, image: 'pictureName' or a canvas, repeat: n }). Shapes: 'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane' (flat on the ground, sized with sx/sz), 'sprite' (an upright picture that always faces the camera, good for characters and items made from the creator's pictures). image textures the shape (repeat tiles it); transparent parts of a picture are cut out. Each shape is 1 unit across before scaling. Change m.x, m.ry, m.color, m.visible and so on at any time; m.remove(); m.world() gives its world position. Build characters and vehicles from several shapes with parent.",
     '  * g.start((dt, t) => { update the game; draw the HUD with g.hud, a 2D context in CSS pixels, size g.width x g.height }) runs every frame and then renders.',
     '  * g.burst(x, y, z, { color, count, speed, size, life }) for particle effects. g.project(x, y, z) gives screen { x, y } for labels. g.ground(screenX, screenY, height) gives the point on a horizontal plane under a tap. SP3D.hit(a, b, pad) checks box overlap; SP3D.dist(a, b) is distance. g.clear() removes everything.',
+    "  * Art in 3D: give surfaces SP.sprite or SP.paint canvases as textures (image: canvas, repeat: n) for grass, bricks, crates, roads and signs, and use 'sprite' shapes with SP.sprite frames for characters, pickups and trees. Flat-colored shapes alone look unfinished.",
     '  * Use y as up. Keep the camera following the player smoothly. Keep it under about 400 objects; reuse objects instead of adding new ones every frame.',
     '  * Touch controls for 3D: on-screen buttons drawn on the HUD, or drag to steer.',
     '',
     '2D GAMES WITH SP2D',
     '- window.SP2D is a small 2D engine that is already loaded when your code mentions it. It creates its own full-screen canvas.',
     "  * const g = SP2D.create({ width: 480, height: 270, background: '#hex', gravity: 1400, pixelArt: true }). width/height set a fixed game resolution scaled to fit any screen (omit both to use the window size). All positions are in game pixels, y down.",
-    "  * const o = g.add({ x, y, w, h (or size), shape: 'rect'|'circle'|'triangle'|'text', color, image: 'pictureName' or a canvas, text, font, radius, tag: 'player' (or tags: 'a b'), body: true (moves with gravity and collides with solids), solid: true (a wall others stand on), vx, vy, ax, ay, gravity: 1, bounce: 0..1, drag, maxSpeed, z, alpha, rotation, scale, flipX, hud: true (fixed on screen), draw: (ctx, o) => {...} (custom drawing centered on the object) }). o.onGround, o.hitWall, o.remove(), o.hits('tag'), o.is('tag'), o.center(), o.moveTo(x, y, speed). Change any field at any time.",
+    "  * const o = g.add({ x, y, w, h (or size), shape: 'rect'|'circle'|'triangle'|'text', color, image: 'pictureName' or a canvas (SP.sprite), anim: [frames], fps, text, font, radius, tag: 'player' (or tags: 'a b'), body: true (moves with gravity and collides with solids), solid: true (a wall others stand on), vx, vy, ax, ay, gravity: 1, bounce: 0..1, drag, maxSpeed, z, alpha, rotation, scale, flipX, hud: true (fixed on screen), draw: (ctx, o) => {...} (custom drawing centered on the object) }). o.onGround, o.hitWall, o.remove(), o.hits('tag'), o.is('tag'), o.center(), o.moveTo(x, y, speed). Change any field at any time.",
     "  * g.level(['#....C', '#P...#', '######'], 32, { '#': { color: '#hex' or image, solid: true, oneWay: false }, P: (x, y) => spawn the player there, C: (x, y) => spawn a coin }) builds a tile level from strings (one character per tile; solid tiles collide with bodies, oneWay tiles only from above) and sets the camera bounds. g.tiles.at(x, y) and g.tiles.remove(cell) for breakable tiles.",
     "  * g.overlap('player', 'coin', (p, c) => {...}) runs every frame two tagged objects overlap. g.all('tag'), g.first('tag').",
+    "  * g.parallax(canvas, factor, y) adds a background layer that repeats sideways and scrolls at factor times the camera (0 stays still, 1 moves with the world); layers are cleared with the scene.",
     "  * g.camera.follow(obj), g.camera.zoom, g.camera.shake(px, seconds). g.tween(obj, { y: 100, alpha: 0 }, ms, 'out'|'in'|'inOut'|'back'|'bounce'|'linear', done). g.after(seconds, fn), g.every(seconds, fn). g.burst(x, y, { color, count, speed, size, life, gravity }) for particles.",
     "  * Input: g.keys.left/right/up/down/jump/action/action2/start are true while held (arrows/WASD, Space = jump, Z/J = action, X/K = action2); g.pressed.<name> is true only on the frame it went down. g.pointer { x, y (world), sx, sy (screen), down, pressed }. g.buttons(['left', 'right', 'jump']) adds on-screen touch buttons that press the same keys on phones; use them for any game that needs keys.",
     "  * g.scene('title', (data) => {...}) and g.go('play', data) clear the world and build a scene. g.start((dt, t) => { game logic; then draw the HUD with g.hud, a 2D context in game pixels }) runs every frame after the world is drawn. g.paused stops physics and timers.",
     '',
     'MULTIPLAYER WITH SP.room',
-    '- When the request says Players: multiplayer, make a game 2 to 8 people play together over the internet through SP.room. ClaudePlay handles rooms and invite links; the game only exchanges small JSON messages.',
+    '- When the request says Players: multiplayer, make a game 2 to 16 people play together over the internet through SP.room. ClaudePlay handles rooms and invite links; the game only exchanges small JSON messages.',
     "  * SP.room.online is true in a room. SP.room.me is your player id, SP.room.players is [{ id, name }], SP.room.host is the id of the player whose game is the authority (SP.room.isHost), SP.room.name(id) gives a name.",
     "  * SP.room.send(data, toId) sends a small JSON object to everyone else (or to one player). SP.room.on('message', (data, fromId) => {}), on('join', p), on('leave', p), on('host', id) when the host changes.",
-    '  * Design: the host runs the shared world (enemies, pickups, timers) and sends snapshots about 10 to 15 times a second; every player sends their own inputs or position about 15 times a second. Smooth other players toward their latest positions. Keep each message under 1 KB. Everyone in a room gets the same SP.rand() seed, so levels built from it match.',
+    '  * Design: the host runs the shared world (enemies, pickups, timers) and sends snapshots about 10 to 15 times a second; every player sends their own inputs or position about 15 times a second. With more than 8 players, send about 8 times a second instead. Smooth other players toward their latest positions. Keep each message under 1 KB. Everyone in a room gets the same SP.rand() seed, so levels built from it match.',
     "  * Show every player's name and score, handle players joining and leaving mid-game, and when SP.room.online is false (playing alone) still make the game fun: computer opponents or a solo mode, plus a hint to use Play with friends.",
     '',
     'SOUND AND MUSIC WITH SPSound',
@@ -65,8 +77,20 @@
     'QUALITY BAR',
     '- A clear goal, rising difficulty and a score that means something.',
     '- Juicy feedback: particles, screen shake, flashes, short sound effects.',
-    '- A readable HUD and a cohesive palette that fits the requested style.',
+    '- Real art: drawn, animated sprites and a layered background in one cohesive palette that fits the requested style (see ART).',
+    '- A readable HUD.',
     '- Fair from the first second: no instant deaths, the player can always react.',
+    '',
+    'BIG REQUESTS',
+    '- When the request asks for three or more separate things, plan first. Before anything else write the list below, then the game (or the edit blocks), then the same list ticked off:',
+    'PLAN',
+    '- [ ] one short line per thing to build',
+    'END PLAN',
+    'DONE',
+    '- [x] each thing you built',
+    '- [ ] anything you could not fit, with a few words on why',
+    'END DONE',
+    '- Build every item if you can; leave one unticked only when it truly does not fit. For smaller requests write neither list.',
   ].join('\n');
 
   const KINDS = ['new', 'edit', 'fix'];
@@ -78,14 +102,28 @@
   const PIC_BLOCK = new RegExp('<scr' + 'ipt id="sp-pictures">[\\s\\S]*?</scr' + 'ipt>\\s*');
   const GENRES = ['Arcade', 'Platformer', 'Racing', 'Shooter', 'Puzzle', 'Trivia', 'Tower defense', 'Rhythm', 'Adventure', 'Sports'];
 
+  /* Edits and fixes come back as small search-and-replace blocks instead of a whole new file: faster,
+     cheaper, and the rest of the game stays exactly as it was. applyEdits() applies them. */
+  const PATCH_RULES = [
+    'Instead of the whole document, reply with only edit blocks in exactly this form, one per change:',
+    '<<<<<<< SEARCH',
+    'lines copied exactly from the current game',
+    '=======',
+    'the new lines',
+    '>>>>>>> REPLACE',
+    'Each SEARCH part must match the current game character for character, including indentation, and appear only once in it: add a nearby line or two when a line is not unique. Keep blocks short, list them in file order, and never overlap two blocks. To add code, search for the line next to where it goes and replace it with that line plus the new code. To delete, leave the new lines empty.',
+    'If the change rewrites most of the game, reply with the COMPLETE updated document starting with <!doctype html> instead.',
+  ].join('\n');
+
   /* The creator's part of a request, kept apart from HARNESS so a server can send HARNESS as a
      cacheable system prompt. o: { prompt, style, mode, genre, pics, code, error }. */
   function harnessTask(kind, o) {
     const pics = o.pics && o.pics.length ? "\n\nCREATOR'S PICTURES (use with SP.image(name)):\n" + o.pics.map((p) => "- '" + p.name + "': " + p.w + 'x' + p.h + ' px').join('\n') : '';
     const style = (o.style ? '\nArt style: ' + o.style : '') + (o.mode ? '\nGame type: ' + (o.mode === '3d' ? '3D (use SP3D)' : '2D') : '') + (o.genre ? '\nGenre: ' + o.genre : '') + (o.players === 'multi' ? '\nPlayers: multiplayer (use SP.room)' : '') + pics;
     if (kind === 'new') return 'GAME IDEA FROM THE CREATOR:\n' + o.prompt + style;
-    if (kind === 'edit') return 'You are editing an existing ClaudePlay game. Apply the change request and return the COMPLETE updated document under the same rules. Keep everything else working.\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
-    return 'The current game crashed with this error:\n' + o.error + '\nFind the cause, fix it, and return the COMPLETE corrected document under the same rules. Change nothing else.\n\nCURRENT GAME:\n' + o.code;
+    const out = o.format === 'patch' ? PATCH_RULES : 'Return the COMPLETE updated document under the same rules.';
+    if (kind === 'edit') return 'You are editing an existing ClaudePlay game. Apply the change request under the same rules and keep everything else working. ' + out + '\n\nCHANGE REQUEST FROM THE CREATOR:\n' + o.prompt + style + '\n\nCURRENT GAME:\n' + o.code;
+    return 'The current game has this problem (a crash report or what an automatic play-test found):\n' + o.error + '\nFind the cause and fix it under the same rules. Change nothing else. ' + out + '\n\nCURRENT GAME:\n' + o.code;
   }
   function harnessPrompt(kind, o) { return HARNESS + '\n\n' + harnessTask(kind, o); }
 
@@ -151,13 +189,63 @@
     } catch (e) { return []; }
   }
 
+  /* ---------------- play-test after every build ----------------
+     The page plays each new build for a few seconds (pressing keys and tapping at random), takes three
+     screenshots and a run log, and Claude reviews them. Problems go straight back as a fix request, so
+     the creator sees a game that already starts, draws and reacts. */
+  const PLAYTEST_PROMPT = [
+    "You play-test browser games that ClaudePlay's AI just built, before the creator sees them. You get the creator's request, three screenshots (the title screen about one second in, then two moments while an automatic tester pressed random keys and tapped), and a log of the run.",
+    'Report only real problems a player would notice:',
+    '- the screen is blank, black or one flat color, or the game never draws;',
+    '- the game never starts, or nothing on screen reacts to keys or taps;',
+    '- errors in the log;',
+    '- text or the HUD is cut off, overlapping or unreadable;',
+    '- the player or important objects are invisible, off screen, or far too small to see;',
+    '- the art is plain placeholder rectangles and circles where drawn sprites belong;',
+    '- something the request clearly asked for is missing from what the screenshots show.',
+    'The screenshots show only what is drawn on canvases: HTML text and buttons are missing from them, so for those use the page text in the log, and when the log says there are no canvases judge from the log alone.',
+    'Ignore matters of taste, small polish, and anything the screenshots cannot show. The tester presses keys at random, so losing quickly or a low score is not a problem.',
+    'Reply with only JSON: {"verdict": "pass" or "fix", "problems": ["one short, specific instruction for the developer", ...]} (at most 4 problems; empty when it passes).',
+  ].join('\n');
+  const SHOT = /^\/9j\/[A-Za-z0-9+/]+={0,2}$/;
+  /* Checks a play-test review request from an untrusted client: { title, request, shots: [JPEG base64], log }. */
+  function checkPlaytest(body) {
+    const b = body && typeof body === 'object' ? body : {};
+    const shots = Array.isArray(b.shots) ? b.shots : [];
+    if (!shots.length || shots.length > 3) return { ok: false, error: 'send one to three screenshots' };
+    for (const x of shots) if (typeof x !== 'string' || x.length > 150000 || !SHOT.test(x)) return { ok: false, error: 'screenshots must be small JPEG images' };
+    const l = b.log && typeof b.log === 'object' ? b.log : {};
+    const errors = (Array.isArray(l.errors) ? l.errors : []).slice(0, 5).map((e) => String(e).slice(0, 200));
+    const log = { errors, started: !!l.started, scored: !!l.scored, moved: !!l.moved, blank: !!l.blank, canvases: Math.max(0, Math.min(20, Math.floor(+l.canvases || 0))), text: String(l.text || '').slice(0, 300) };
+    return { ok: true, req: { title: String(b.title || '').slice(0, 60), request: String(b.request || '').slice(0, 600), shots, log } };
+  }
+  /* The review request's text part. */
+  function playtestTask(r) {
+    const l = r.log;
+    return 'GAME: ' + (r.title || 'Untitled') + '\nCREATOR\'S REQUEST: ' + (r.request || '(not given)')
+      + '\n\nRUN LOG:\n- errors: ' + (l.errors.length ? l.errors.join(' | ') : 'none')
+      + '\n- reported a score or game start: ' + (l.started ? 'yes' : 'no') + '\n- score went up: ' + (l.scored ? 'yes' : 'no')
+      + '\n- screen changed during play: ' + (l.moved ? 'yes' : 'no') + '\n- blank screen: ' + (l.blank ? 'yes' : 'no')
+      + '\n- canvases on the page: ' + l.canvases + (l.text ? '\n- page text: ' + l.text : '');
+  }
+  /* Reads the review. An unclear answer counts as a pass: the play-test helps, it never blocks a build. */
+  function parsePlaytest(text) {
+    const m = String(text || '').match(/\{[\s\S]*\}/);
+    try {
+      const j = JSON.parse(m ? m[0] : '');
+      const problems = (Array.isArray(j.problems) ? j.problems : []).map((r) => String(r).replace(/\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, 4);
+      if (j.verdict === 'fix' && problems.length) return { ok: false, problems };
+      return { ok: true, problems: [] };
+    } catch (e) { return { ok: true, problems: [], unclear: true }; }
+  }
+
   /* Checks a build request from an untrusted client. Returns { ok, req } or { ok: false, error }. */
   function checkRequest(body) {
     const b = body && typeof body === 'object' ? body : {};
     const str = (v) => (typeof v === 'string' ? v : '');
     const kind = KINDS.includes(b.kind) ? b.kind : null;
     if (!kind) return { ok: false, error: 'kind must be new, edit or fix' };
-    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), genre: str(b.genre).trim(), mode: MODES.includes(b.mode) ? b.mode : '', players: b.players === 'multi' ? 'multi' : '', code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default' };
+    const req = { kind, prompt: str(b.prompt).trim(), style: str(b.style).trim(), genre: str(b.genre).trim(), mode: MODES.includes(b.mode) ? b.mode : '', players: b.players === 'multi' ? 'multi' : '', code: str(b.code), error: str(b.error).trim(), tier: b.tier === 'complex' ? 'complex' : 'default', format: b.format === 'patch' && kind !== 'new' ? 'patch' : 'full' };
     for (const k of Object.keys(LIMITS)) if (req[k].length > LIMITS[k]) return { ok: false, error: k + ' is longer than ' + LIMITS[k] + ' characters' };
     if (kind !== 'fix' && !req.prompt) return { ok: false, error: 'describe the game first' };
     if (kind !== 'new' && !/<html|<!doctype/i.test(req.code)) return { ok: false, error: 'edit and fix need the current game' };
@@ -174,6 +262,80 @@
       req.pics.push(q);
     }
     return { ok: true, req };
+  }
+
+  /* ---------------- edit blocks ----------------
+     Reads the SEARCH/REPLACE blocks of a patch reply and applies them in order. A block must match the
+     current code once: exactly, or else line by line ignoring indentation. Any miss fails the whole
+     patch (the page then asks for the complete file), so a half-applied change never reaches a player. */
+  function parseEdits(text) {
+    const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n'), edits = [];
+    let mode = 0, a = [], b = [];
+    for (const ln of lines) {
+      const t = ln.trim();
+      if (mode === 0) { if (/^<{5,9} ?SEARCH$/.test(t)) { mode = 1; a = []; b = []; } }
+      else if (mode === 1) { if (/^={5,9}$/.test(t)) mode = 2; else a.push(ln); }
+      else if (/^>{5,9} ?REPLACE$/.test(t)) { edits.push({ search: a.join('\n'), replace: b.join('\n') }); mode = 0; }
+      else b.push(ln);
+    }
+    return { edits, cut: mode !== 0 };
+  }
+  const isPatch = (text) => /^\s*<{5,9} ?SEARCH\s*$/m.test(String(text || ''));
+  function findLines(code, search) {
+    const want = search.split('\n').map((l) => l.trim());
+    while (want.length && !want[0]) want.shift();
+    while (want.length && !want[want.length - 1]) want.pop();
+    if (!want.length) return null;
+    const lines = code.split('\n'), starts = [];
+    for (let i = 0, at = 0; i < lines.length; i++) { starts.push(at); at += lines[i].length + 1; }
+    let hit = null;
+    for (let i = 0; i + want.length <= lines.length; i++) {
+      let ok = true;
+      for (let j = 0; j < want.length && ok; j++) ok = lines[i + j].trim() === want[j];
+      if (!ok) continue;
+      if (hit) return { ambiguous: true };
+      hit = { at: starts[i], end: starts[i + want.length - 1] + lines[i + want.length - 1].length };
+    }
+    return hit;
+  }
+  function applyEdits(code, text) {
+    const { edits, cut } = parseEdits(text);
+    if (!edits.length) return { ok: false, error: 'The reply had no edit blocks.' };
+    if (cut) return { ok: false, error: 'The last edit block was cut off.' };
+    let out = String(code || '').replace(/\r\n?/g, '\n');
+    for (let i = 0; i < edits.length; i++) {
+      const e = edits[i];
+      if (!e.search.trim()) return { ok: false, error: 'Edit ' + (i + 1) + ' has nothing to search for.' };
+      let at = out.indexOf(e.search), end = at + e.search.length;
+      if (at >= 0 && out.indexOf(e.search, at + 1) >= 0) at = -2;
+      if (at < 0) {
+        const f = findLines(out, e.search);
+        if (!f || f.ambiguous) return { ok: false, error: 'Edit ' + (i + 1) + (f ? ' matches more than one place' : ' does not match the current game') + '.' };
+        at = f.at; end = f.end;
+      }
+      out = out.slice(0, at) + e.replace + out.slice(end);
+    }
+    return { ok: true, code: out, edits };
+  }
+
+  /* ---------------- checklists ----------------
+     A reply to a big request carries PLAN and DONE lists around the game (see BIG REQUESTS). readChecklist()
+     returns them as [{ text, done }] and the reply without them. */
+  function readChecklist(text) {
+    let rest = String(text || '');
+    const grab = (name) => {
+      const m = rest.match(new RegExp('(^|\\n)[ \\t]*' + name + '[ \\t]*\\n([\\s\\S]*?)(\\n[ \\t]*END ' + name + '[ \\t]*(?=\\n|$)|$)'));
+      if (!m) return [];
+      rest = rest.slice(0, m.index) + m[1] + rest.slice(m.index + m[0].length);
+      const items = [];
+      for (const ln of m[2].split('\n')) {
+        const it = ln.match(/^\s*[-*]\s*\[([ xX])\]\s*(.+?)\s*$/);
+        if (it && items.length < 12) items.push({ text: it[2].slice(0, 160), done: it[1] !== ' ' });
+      }
+      return items;
+    };
+    const plan = grab('PLAN'), done = grab('DONE');
+    return { plan, done, rest };
   }
 
   const IDEAS = [
@@ -194,5 +356,5 @@
     'Whale Watch: a fishing game where you hook coins of different sizes, but snagging a whale shakes the whole market.',
   ];
 
-  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, PICS, SCREEN_PROMPT, harnessTask, harnessPrompt, checkRequest, stripPictures, withPictures, staticScreen, parseScreen, picturesOf };
+  root.PPHarness = { HARNESS, KINDS, STYLES, MODES, GENRES, LIMITS, IDEAS, CRYPTO_IDEAS, PICS, SCREEN_PROMPT, PLAYTEST_PROMPT, harnessTask, harnessPrompt, checkRequest, stripPictures, withPictures, staticScreen, parseScreen, picturesOf, checkPlaytest, playtestTask, parsePlaytest, PATCH_RULES, parseEdits, applyEdits, isPatch, readChecklist };
 })(typeof window !== 'undefined' ? window : globalThis);
