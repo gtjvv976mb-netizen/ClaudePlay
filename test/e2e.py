@@ -7,6 +7,10 @@ AI_SITE = 'http://127.0.0.1:8766/'
 CHAIN_SITE = 'http://127.0.0.1:8767/'
 MAIN_SITE = 'http://127.0.0.1:8768/'
 SOCIAL_SITE = 'http://127.0.0.1:8769/'
+SPONSORED_SITE = 'http://127.0.0.1:8770/'
+SPONSORED_BUDGET_SITE = 'http://127.0.0.1:8771/'
+SPONSORED_OFF_SITE = 'http://127.0.0.1:8772/'
+SPONSORED_PARTIAL_SITE = 'http://127.0.0.1:8774/'
 OUT = sys.argv[1] if len(sys.argv) > 1 else '/tmp/shots'
 os.makedirs(OUT, exist_ok=True)
 MOCK = open(os.path.join(os.path.dirname(__file__), 'mock_claude.js')).read()
@@ -876,6 +880,183 @@ async def scenario_server(browser):
     finally:
         proc.terminate()
 
+async def scenario_sponsored(browser):
+    # All creator tools are free even with Solana/Pro configured, while server allowances remain real.
+    procs = [subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), str(port), mode], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+             for port, mode in [(8770, 'sponsored'), (8771, 'sponsored-budget'), (8772, 'sponsored-off'), (8774, 'sponsored-partial')]]
+    try:
+        for site in [SPONSORED_SITE, SPONSORED_BUDGET_SITE, SPONSORED_OFF_SITE, SPONSORED_PARTIAL_SITE]:
+            for _ in range(50):
+                try: urllib.request.urlopen(site + 'api/status', timeout=1); break
+                except Exception: time.sleep(0.1)
+        ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page.goto(SPONSORED_SITE + '#create')
+        await skip_guide(page)
+        await page.wait_for_selector('#st-plan:has-text("Free creation")', timeout=10000)
+        check(await page.locator('button[data-act="get-pro"], #st-sparks').count() == 0 and 'Pro' not in await page.locator('#st-quality').inner_text(), 'sponsored creation has no Pro or Sparks gate with payments configured')
+        check('1 of 1 new games' in await page.locator('#st-plan').inner_text() and '5 of 5 changes and fixes' in await page.locator('#st-plan').inner_text(), 'the creator sees both daily allowances before building')
+        picture = os.path.join(OUT, 'cat.png')
+        with open(picture, 'wb') as f: f.write(png_square(40, 30, (255, 255, 255), (200, 40, 40), 10))
+        async with page.expect_file_chooser() as fc:
+            await page.click('button[data-act="pic-add"]')
+        await (await fc.value).set_files(picture)
+        await page.wait_for_selector('#pic-0', timeout=5000)
+        await page.select_option('#st-quality', 'complex')
+        await page.fill('#st-prompt', 'My cat catches tokens. PLAYTESTFIX')
+        await page.click('button[data-act="gen-new"]')
+        await page.wait_for_function('() => __pp.studio.versions.length === 2 && !__pp.studio.busy', timeout=40000)
+        calls = json.loads(urllib.request.urlopen(SPONSORED_SITE + '__calls').read())
+        check(calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['images'] == 1 and len(calls) == 2, 'a free best build uses Sonnet with an uploaded picture and its automatic fix runs')
+        await page.wait_for_function('() => __pp.plan.left === 0 && __pp.plan.edits.left === 4', timeout=10000)
+        check(await page.locator('button[data-act="gen-new"]').is_disabled() and not await page.locator('button[data-act="gen-edit"]').is_disabled(), 'using the new-game allowance leaves the separate edit allowance available')
+        await page.click('button[data-act="gen-fix"]')
+        await page.wait_for_function('() => __pp.studio.versions.length === 4 && !__pp.studio.busy', timeout=40000)
+        check(True, 'Fix with AI and its follow-up play-test run without buying Sparks or Pro')
+        await page.fill('#st-prompt', 'Make the cat faster.')
+        await page.click('button[data-act="gen-edit"]')
+        await page.wait_for_function('() => __pp.studio.versions.length === 5 && !__pp.studio.busy', timeout=25000)
+        calls = json.loads(urllib.request.urlopen(SPONSORED_SITE + '__calls').read())
+        check(calls[-1]['model'] == 'claude-sonnet-5-5', 'best edits are free and use Sonnet too')
+        await page.wait_for_function('() => __pp.plan.left === 0 && __pp.plan.edits.left === 1', timeout=10000)
+        await page.click('button[data-act="publish"]')
+        await page.wait_for_selector('button[data-act="edit-game"]', timeout=10000)
+        original_gid = await page.evaluate('__pp.arg')
+        original_hash = await page.evaluate('__pp.world.games.get(__pp.arg).hash')
+        check(await page.evaluate('__pp.world.log.some(r => r.ok && r.tx.t === "publish" && r.tx.b.hash === __pp.world.games.get(__pp.arg).hash)'), 'the free publication keeps its verified content-hash signature')
+        await page.fill('#remix-in', 'Make the cat friendlier.')
+        await page.locator('.remix-box button[type="submit"]').click()
+        await page.wait_for_function('() => __pp.route === "create" && __pp.studio.versions.length === 2 && !__pp.studio.busy', timeout=25000)
+        await page.wait_for_function('() => __pp.plan.edits.left === 0', timeout=10000)
+        check(await page.evaluate('__pp.studio.parent') == original_gid and await page.locator('button[data-act="gen-edit"]').is_disabled(), 'one-tap remix is free, retains attribution, and consumes the final edit allowance')
+        check('Come back after 00:00 UTC' in await page.locator('#st-plan').inner_text(), 'daily exhaustion explains the reset without offering an upgrade')
+        await page.click('button[data-act="publish"]')
+        await page.wait_for_selector('button[data-act="edit-game"]', timeout=10000)
+        check(await page.evaluate('__pp.world.games.get(__pp.arg).parent') == original_gid, 'a free remix publishes with the original lineage')
+        wallet = await page.evaluate('({sparks:__pp.world.wallets.get(__pp.wallet.from).sparks,types:__pp.world.log.filter(r => r.tx.from === __pp.wallet.from).map(r => r.tx.t)})')
+        payments = json.loads(urllib.request.urlopen(SPONSORED_SITE + '__chain').read())
+        check(wallet['sparks'] == 0 and not any(t in wallet['types'] for t in ['spark_claim', 'spark_buy', 'gen']) and payments['sent'] == 0, 'all creator flows finish with zero Sparks and zero wallet payments, without cosmetic build debits')
+        funding = json.loads(urllib.request.urlopen(SPONSORED_SITE + 'api/status').read())['budget']
+        check(funding['capUsd'] == 400 and 0 < funding['reservedUsd'] < 1, 'validated fake usage releases unused reservations within the permanent $400 funding cap')
+        check(await page.evaluate('g => __pp.world.games.get(g).hash', original_gid) == original_hash, 'remixing preserves the original published file')
+        await page.screenshot(path=f'{OUT}/45-sponsored-remix.png', full_page=True)
+        await page.click('.nav a[data-nav="wallet"]')
+        check(await page.locator('button[data-act="buy-sparks"], button[data-act="convert"], button[data-act="get-pro"]').count() == 0, 'the sponsored wallet offers no purchase or conversion for creation')
+        real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+        check(not real, 'no console/page errors during sponsored creation ' + str(real[:5]))
+        # A different browser account on the same network has its own allowance.
+        ctx2, page2, errs2 = await new_page(browser, viewport={'width': 390, 'height': 844})
+        await page2.goto(SPONSORED_SITE + '#create')
+        await skip_guide(page2)
+        await page2.wait_for_selector('#st-plan:has-text("1 of 1 new games")', timeout=10000)
+        await page2.fill('#st-prompt', 'Block Miner for another creator.')
+        await page2.click('button[data-act="gen-new"]')
+        await page2.wait_for_function('() => __pp.studio.versions.length === 1 && !__pp.studio.busy', timeout=25000)
+        check(True, 'a second creator on the same network can use their own free daily build')
+        await ctx2.close(); await ctx.close()
+        # A site whose funding cannot reserve a build reports exhaustion rather than unlimited free AI.
+        ctx3, page3, errs3 = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page3.goto(SPONSORED_BUDGET_SITE + '#create')
+        await skip_guide(page3)
+        await page3.wait_for_selector('#st-plan:has-text("funding is too low")', timeout=10000)
+        check(await page3.locator('button[data-act="gen-new"]').is_disabled() and 'funding cap does not reset daily' in await page3.locator('#st-plan').inner_text(), 'insufficient shared funding pauses AI without promising a daily funding reset')
+        check(json.loads(urllib.request.urlopen(SPONSORED_BUDGET_SITE + '__calls').read()) == [], 'the exhausted funding fixture makes no Claude calls')
+        await page3.click('button[data-act="studio-mode"][data-mode="kit"]')
+        check(await page3.locator('#kn-title').count() == 1, 'free kit tuning remains available when AI funding is exhausted')
+        await page3.screenshot(path=f'{OUT}/46-sponsored-funding.png', full_page=True)
+        await ctx3.close()
+        ctx4, page4, errs4 = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page4.goto(SPONSORED_OFF_SITE + '#create')
+        await page4.wait_for_selector('button[data-act="studio-mode"][data-mode="ai"]', timeout=10000)
+        await page4.click('button[data-act="studio-mode"][data-mode="ai"]')
+        await page4.wait_for_selector('text=AI creation is unavailable here.', timeout=10000)
+        check(await page4.locator('button[data-act="get-pro"], #st-sparks, #st-quality').count() == 0 and 'No credits or upgrade are needed' in await page4.locator('#st-left').inner_text(), 'sponsored hosting stays free and honestly shows AI off when no API client is configured')
+        await page4.click('button[data-act="studio-mode"][data-mode="kit"]')
+        await page4.fill('#kn-title', 'Free kit without AI')
+        await page4.click('button[data-act="publish"]')
+        await page4.wait_for_selector('.gp-head h1:has-text("Free kit without AI")', timeout=10000)
+        check(True, 'a sponsored site without AI can still sign and publish a kit for free')
+        await page4.click('.nav a[data-nav="wallet"]')
+        check(await page4.locator('button[data-act="buy-sparks"], button[data-act="convert"], button[data-act="claim"], button[data-act="get-pro"]').count() == 0, 'AI-off sponsored hosting offers no legacy credit purchases or claims')
+        await ctx4.close()
+        # A partial funding balance can cover Haiku edits/reviews without covering Sonnet builds.
+        ctx5, page5, errs5 = await new_page(browser, viewport={'width': 1280, 'height': 900})
+        await page5.goto(SPONSORED_PARTIAL_SITE + '#create')
+        await skip_guide(page5)
+        await page5.wait_for_selector('#st-plan:has-text("Funding is too low for: new games, best changes")', timeout=10000)
+        funding = await page5.evaluate('__pp.plan.budget')
+        check(funding['available'] and funding['actions'] == {'new': False, 'edit': True, 'bestEdit': False, 'screen': True, 'playtest': True} and await page5.locator('button[data-act="gen-new"]').is_disabled(), 'the $2 funding balance pauses new builds while admitting standard edits and reviews')
+        await page5.goto(SPONSORED_PARTIAL_SITE + '#game-kit-neon-dash')
+        await page5.wait_for_selector('#remix-in', timeout=10000)
+        await page5.fill('#remix-in', 'Make the runner friendlier.')
+        await page5.locator('.remix-box button[type="submit"]').click()
+        await page5.wait_for_function('() => __pp.studio.versions.length === 2 && !__pp.studio.busy', timeout=25000)
+        await page5.select_option('#st-quality', 'complex')
+        check(await page5.locator('button[data-act="gen-new"]').is_disabled() and await page5.locator('button[data-act="gen-edit"]').is_disabled(), 'choosing best quality disables an unaffordable Sonnet edit')
+        await page5.select_option('#st-quality', 'default')
+        check(not await page5.locator('button[data-act="gen-edit"]').is_disabled() and not await page5.locator('button[data-act="publish"]').is_disabled(), 'returning to standard quality keeps the affordable change and publishing check available')
+        await page5.fill('#st-prompt', 'Make the runner slower.')
+        await page5.click('button[data-act="gen-edit"]')
+        await page5.wait_for_function('() => __pp.studio.versions.length === 3 && !__pp.studio.busy', timeout=25000)
+        await page5.click('button[data-act="publish"]')
+        await page5.wait_for_selector('button[data-act="edit-game"]', timeout=10000)
+        calls = json.loads(urllib.request.urlopen(SPONSORED_PARTIAL_SITE + '__calls').read())
+        reviews = json.loads(urllib.request.urlopen(SPONSORED_PARTIAL_SITE + '__playtests').read())
+        screens = json.loads(urllib.request.urlopen(SPONSORED_PARTIAL_SITE + '__screens').read())
+        check(len(calls) == 2 and all(c['model'] == 'claude-haiku-5-5' for c in calls) and len(reviews) == 2 and len(screens) == 1, 'affordable standard edits, play-test reviews and signed publishing run with only $2 of funding')
+        check(await page5.evaluate('__pp.world.log.some(r => r.ok && r.tx.t === "publish")'), 'partial funding still produces a valid signed publication')
+        real = [e for e in errs5 if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+        check(not real, 'no denied-request console errors in the partial-funding flow ' + str(real[:5]))
+        await page5.screenshot(path=f'{OUT}/48-sponsored-partial-funding.png', full_page=True)
+        await ctx5.close()
+    finally:
+        for proc in procs: proc.terminate()
+
+async def scenario_sponsored_fit(browser):
+    # The default fitted Studio must keep the longer allowance copy and creator controls reachable.
+    site = 'http://127.0.0.1:8773/'
+    proc = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), '8773', 'sponsored'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        for _ in range(50):
+            try: urllib.request.urlopen(site + 'api/status', timeout=1); break
+            except Exception: time.sleep(0.1)
+        for width, height in [(1280, 900), (390, 844)]:
+            ctx, page, errs = await new_page(browser, fit=True, viewport={'width': width, 'height': height}, is_mobile=width == 390, has_touch=width == 390)
+            await page.goto(site + '#create')
+            await page.wait_for_selector('#st-left', state='attached', timeout=10000)
+            # Reach the creator pane through its visible pager if the preview has its own pane.
+            for _ in range(6):
+                if await page.locator('#st-left').is_visible(): break
+                await page.locator('.pg-step.next').click()
+            await skip_guide(page)
+            await page.wait_for_selector('#st-plan:has-text("Free creation")', timeout=10000)
+            await page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+            overflow = await page.evaluate('[document.documentElement.scrollWidth - innerWidth, document.documentElement.scrollHeight - innerHeight]')
+            check(overflow == [0, 0] and await page.evaluate('document.documentElement.hasAttribute("data-fit")'), f'sponsored Studio stays on one screen at {width}x{height} ({overflow})')
+            reached = []
+            for selector in ['button[data-act="pic-add"]', '#st-quality', 'button[data-act="gen-new"]', '#st-plan p:last-of-type', 'button[data-act="publish"]']:
+                control = page.locator(selector)
+                await control.scroll_into_view_if_needed()
+                if await control.is_enabled() and selector != '#st-plan p:last-of-type': await control.click(trial=True)
+                box = await control.bounding_box()
+                reached.append(bool(box and box['x'] >= -1 and box['y'] >= -1 and box['x'] + box['width'] <= width + 1 and box['y'] + box['height'] <= height + 1))
+            check(all(reached), f'pictures, best builds, funding copy and publishing remain reachable in fitted Studio at {width}px ({reached})')
+            if width == 390:
+                await page.screenshot(path=f'{OUT}/47-sponsored-fit-{width}.png')
+                await page.fill('#st-prompt', 'Block Miner in the fitted phone Studio.')
+                await page.locator('button[data-act="gen-new"]').click()
+                await page.wait_for_function('() => __pp.studio.versions.length === 1 && !__pp.studio.busy', timeout=25000)
+                await page.locator('button[data-act="publish"]').click()
+                await page.wait_for_selector('.gp-head h1:has-text("Block Miner")', timeout=10000)
+                check(True, 'a phone creator builds and publishes through the default fitted layout')
+            else:
+                await page.locator('button[data-act="gen-new"]').scroll_into_view_if_needed()
+                await page.screenshot(path=f'{OUT}/47-sponsored-fit-{width}.png')
+            real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
+            check(not real, f'no console/page errors in sponsored fitted Studio at {width}px {real[:5]}')
+            await ctx.close()
+    finally:
+        proc.terminate()
+
 async def scenario_social(browser):
     # Unlisted games, follows, friends boards, the phone QR code, republishing and drafts, with two visitors.
     proc = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), '8769'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -1208,7 +1389,7 @@ async def main():
         exe = os.environ.get('CHROME_PATH')
         browser = await p.chromium.launch(executable_path=exe or None, args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader'])
         only = os.environ.get('E2E_ONLY', '').split(',')
-        for sc in (scenario_local, scenario_mock, scenario_player_resize, scenario_dark, scenario_studio_recovery, scenario_site, scenario_server, scenario_social, scenario_chain, scenario_mainnet, scenario_engines, scenario_fit, scenario_a11y):
+        for sc in (scenario_local, scenario_mock, scenario_player_resize, scenario_dark, scenario_studio_recovery, scenario_site, scenario_server, scenario_sponsored, scenario_sponsored_fit, scenario_social, scenario_chain, scenario_mainnet, scenario_engines, scenario_fit, scenario_a11y):
             if only != [''] and sc.__name__.replace('scenario_', '') not in only: continue
             try:
                 await sc(browser)

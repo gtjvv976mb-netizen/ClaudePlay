@@ -2,7 +2,7 @@
 import { createServer } from 'node:http';
 
 export async function fakeRedis(token = 'test-token') {
-  const kv = new Map(), hashes = new Map(), sets = new Map();
+  const kv = new Map(), hashes = new Map(), sets = new Map(), commands = [];
   let down = false;
   const run = ([cmd, key, ...a]) => {
     switch (cmd) {
@@ -14,6 +14,29 @@ export async function fakeRedis(token = 'test-token') {
       case 'HGETALL': return [...(hashes.get(key) || new Map())].flat();
       case 'SADD': { const s = sets.get(key) || new Set(); sets.set(key, s); s.add(a[0]); return 1; }
       case 'SMEMBERS': return [...(sets.get(key) || [])];
+      case 'EVAL': {
+        // Model each receipt operation as one atomic Redis command, never a GET/SET pipeline.
+        const [count, totalKey, receiptKey, amountArg, capArg] = a;
+        if (count !== '2') return { error: 'Invalid budget keys' };
+        const used = Number(kv.get(totalKey) || 0), amount = Number(amountArg);
+        if (!Number.isSafeInteger(used) || used < 0) return { error: 'Invalid stored budget' };
+        if (key.startsWith('-- budget-reserve-v1')) {
+          if (kv.has(receiptKey) || amount > Number(capArg) - used) return [0, used];
+          kv.set(totalKey, String(used + amount)); kv.set(receiptKey, JSON.stringify({ reserved: amount }));
+          return [1, used + amount];
+        }
+        if (key.startsWith('-- budget-settle-v1')) {
+          if (!kv.has(receiptKey)) return [0, used];
+          const receipt = JSON.parse(kv.get(receiptKey));
+          if (!receipt.reserved || amount > receipt.reserved) return [0, used];
+          if (Object.hasOwn(receipt, 'actual')) return [receipt.actual === amount ? 1 : 0, used];
+          const next = used - receipt.reserved + amount;
+          if (next < 0) return { error: 'Invalid stored budget' };
+          kv.set(totalKey, String(next)); kv.set(receiptKey, JSON.stringify({ ...receipt, actual: amount }));
+          return [1, next];
+        }
+        return { error: 'Unknown script' };
+      }
       default: return { error: 'ERR unknown command ' + cmd };
     }
   };
@@ -23,10 +46,10 @@ export async function fakeRedis(token = 'test-token') {
     req.on('end', () => {
       if (down) { res.writeHead(500); return res.end('down'); }
       if (req.headers.authorization !== 'Bearer ' + token || req.url !== '/pipeline') { res.writeHead(401); return res.end('{"error":"Unauthorized"}'); }
-      const out = JSON.parse(body).map((c) => { const r = run(c); return r && r.error ? r : { result: r }; });
+      const out = JSON.parse(body).map((c) => { commands.push(c); const r = run(c); return r && r.error ? r : { result: r }; });
       res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out));
     });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  return { url: 'http://127.0.0.1:' + server.address().port, token, close: () => server.close(), setDown: (v) => { down = v; } };
+  return { url: 'http://127.0.0.1:' + server.address().port, token, commands, close: () => server.close(), setDown: (v) => { down = v; } };
 }

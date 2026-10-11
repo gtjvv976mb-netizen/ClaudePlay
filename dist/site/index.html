@@ -4265,28 +4265,44 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       throw e;
     }
     if (!done) throw { code: 'failed', message: 'The build stopped early. Try again.' };
-    if (S.plan && typeof done.left === 'number') S.plan.left = done.left;
+    if (S.plan && typeof done.left === 'number') {
+      const bucket = done.bucket || (req.kind === 'new' || (!sponsoredAI() && S.plan.plan === 'pro' && req.tier === 'complex') ? 'new' : 'edit');
+      if (bucket === 'edit' && S.plan.edits) S.plan.edits.left = done.left;
+      else S.plan.left = done.left;
+    }
     return { text, truncated: !!done.truncated };
   }
 
-  /* ---------------- Free and Pro plans ----------------
-     On a website served by server/server.mjs, AI builds come in two plans: free (a few builds a day on a
-     low-cost model) and Pro, a pass paid in SOL from the player's wallet straight to the site owner's
+  function sponsoredAI() { return ENV === 'web' && !!(SITE.sponsored || (S.plan && (S.plan.sponsored || S.plan.plan === 'sponsored'))); }
+  function buildPrice(kind) { return sponsoredAI() ? 'free' : R.GEN_COST[kind] + ' Sparks'; }
+  function allowanceEnded(kind) {
+    if (!sponsoredAI()) return false;
+    if (S.planUnavailable || (S.plan && S.plan.allowancesUnavailable)) return true;
+    if (!S.plan) return false;
+    const p = S.plan;
+    const action = kind === 'new' ? 'new' : kind === 'screen' || kind === 'playtest' ? kind : S.studio.quality === 'complex' ? 'bestEdit' : 'edit';
+    const daily = kind === 'new' ? p.left : kind === 'screen' || kind === 'playtest' ? p.reviews && p.reviews[kind] && p.reviews[kind].left : p.edits && p.edits.left;
+    return !!(p.budget && (p.budget.available === false || (p.budget.actions && p.budget.actions[action] === false))) || daily === 0;
+  }
+  /* ---------------- Hosted creation allowances and legacy Pro plans ----------------
+     Sponsored hosting uses server allowances for every creator, with no credit purchase or build debit.
+     Legacy sites retain free and Pro plans: a pass paid in SOL from the player's wallet to the owner's
      treasury. The memo "gameplay:<pro id>" ties the payment to this browser's gallery account, and the
      server checks it on Solana before turning Pro on. */
-  const apiUrl = (name) => String(SITE.ai || '').replace(/build$/, name);
+  const apiUrl = (name) => String(SITE.ai || (sponsoredAI() && SITE.gallery ? String(SITE.gallery).replace(/db$/, 'build') : '')).replace(/build$/, name);
   const keyHeader = () => { const k = SITE.gallery ? LS.get(KEY.gallery) : null; return k ? { 'x-gp-key': k } : {}; };
   const modelName = (id) => String(id || '').replace(/^claude-/, 'Claude ').replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/-(\d+)$/, ' $1').replace(/ (\w)/, (m, c) => ' ' + c.toUpperCase());
   const shortDate = (ts) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   async function loadPlan() {
-    if (ENV !== 'web' || !SITE.ai) return;
+    if (ENV !== 'web' || (!SITE.ai && !(sponsoredAI() && SITE.gallery))) return;
     try {
       const res = await fetch(apiUrl('status'), { headers: keyHeader() });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('Allowances unavailable');
       S.plan = await res.json();
-    } catch (e) { return; }
+      S.planUnavailable = false;
+    } catch (e) { S.planUnavailable = true; renderPlan(); return; }
     const pend = LS.get(KEY.pro);
-    if (pend && pend.sig && S.plan.pro && S.plan.plan !== 'pro' && Date.now() - pend.at < 2 * 86400000) {
+    if (!sponsoredAI() && pend && pend.sig && S.plan.pro && S.plan.plan !== 'pro' && Date.now() - pend.at < 2 * 86400000) {
       try { await claimPro(pend.sig, 1); return; } catch (e) { /* tried again on the next visit */ }
     }
     renderPlan();
@@ -4303,9 +4319,23 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
   function planHTML() {
     const p = S.plan;
-    if (ENV !== 'web' || !p || !p.ai) return '';
+    if (sponsoredAI() && (S.planUnavailable || (p && p.allowancesUnavailable))) return '<div class="banner warn" role="status"><b>Your free creation allowance cannot be checked right now.</b><span>AI builds are paused until the server can check your allowance. Your drafts and published games remain available.</span><button class="btn small" type="button" data-act="refresh-plan">Check again</button></div>';
+    if (ENV !== 'web' || !p || (!p.ai && !sponsoredAI())) return '';
     const builds = fmtInt(p.left) + ' of ' + fmtInt(p.daily) + ' new games' + (p.edits ? ' and ' + fmtInt(p.edits.left) + ' changes' : '') + ' left today';
     const m = p.models || {};
+    if (sponsoredAI()) {
+      const reviews = p.reviews || {}, budget = p.budget;
+      const remaining = fmtInt(p.left) + ' of ' + fmtInt(p.daily) + ' new games' + (p.edits ? ' and ' + fmtInt(p.edits.left) + ' of ' + fmtInt(p.edits.daily) + ' changes and fixes' : '') + ' left today';
+      const reviewLeft = [['screen', 'publishing checks'], ['playtest', 'play-test reviews']].filter(([key]) => reviews[key]).map(([key, label]) => fmtInt(reviews[key].left) + ' of ' + fmtInt(reviews[key].daily) + ' ' + label).join(' · ');
+      const ended = budget && budget.available === false;
+      const paused = budget && budget.actions ? [['new', 'new games'], ['edit', 'standard changes'], ['bestEdit', 'best changes'], ['screen', 'publishing checks'], ['playtest', 'Claude play-test reviews']].filter(([key]) => budget.actions[key] === false).map(([, label]) => label) : [];
+      return '<div class="stack" style="gap:6px"><p class="muted"><b>Free creation</b> · ' + remaining + '. Standard and best builds, pictures, changes, fixes and publishing are free.</p>'
+        + (reviewLeft ? '<p class="muted">' + reviewLeft + ' left today.</p>' : '')
+        + '<p class="muted">Daily allowances reset at 00:00 UTC.' + (budget && Number.isFinite(budget.remainingUsd) && Number.isFinite(budget.capUsd) ? ' Sponsored AI funding: $' + budget.remainingUsd.toFixed(2) + ' remaining of $' + budget.capUsd.toFixed(2) + '. The funding cap does not reset daily.' : '') + '</p>'
+        + (!ended && paused.length ? '<p class="muted">Funding is too low for: ' + paused.join(', ') + '. Other requests remain available within daily allowances.</p>' : '')
+        + (ended ? '<div class="banner warn" role="status"><b>' + (budget.unavailable ? 'Sponsored AI funding cannot be checked right now.' : budget.remainingUsd > 0 ? 'Sponsored AI funding is too low for another request.' : 'Sponsored AI funding is exhausted.') + '</b><span>' + (budget.unavailable ? 'AI builds and reviews are paused until the funding allowance can be checked. Try again later.' : 'AI requests are paused because the shared funding allowance cannot cover another request.') + ' Your drafts and published games remain available.</span></div>' : p.left === 0 || (p.edits && p.edits.left === 0) ? '<p class="muted">You have used today’s ' + (p.left === 0 && p.edits && p.edits.left === 0 ? 'new games and changes' : p.left === 0 ? 'new games' : 'changes and fixes') + '. Come back after 00:00 UTC; tuning kits is still free.</p>' : '')
+        + '</div>';
+    }
     if (p.plan === 'pro') {
       return '<p class="muted"><b>Pro</b> until ' + esc(shortDate(p.until)) + ' · ' + builds + ' · new games use ' + esc(modelName(m.new)) + '.'
         + (p.pro && p.pro.memo ? ' <button class="btn small ghost" type="button" data-act="get-pro">Add ' + p.pro.days + ' days</button>' : '') + '</p>';
@@ -4314,7 +4344,12 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + (p.pro && p.pro.memo ? '<div class="row"><button class="btn small" type="button" data-act="get-pro">Get Pro · ' + fmtSOL(p.pro.price) + ' ' + UNIT + ' for ' + p.pro.days + ' days</button><span class="muted">' + p.pro.daily + ' new games and ' + (p.pro.dailyEdits || 60) + ' changes a day</span></div>' : '')
       + '</div>';
   }
-  function renderPlan() { const el = $('#st-plan'); if (el) el.innerHTML = planHTML(); const q = $('#st-gen'); if (q && !S.studio.busy) q.innerHTML = genButtons(); }
+  function renderAllowanceControls() {
+    if (!S.studio.busy) $$('[data-act="gen-new"], [data-act="gen-edit"], [data-act="gen-fix"], [data-act="build-rest"]').forEach((b) => { b.disabled = allowanceEnded(b.dataset.act === 'gen-new' ? 'new' : 'edit'); });
+    const pub = $('#st-publish [data-act="publish"]');
+    if (pub) pub.disabled = !studioCode() || S.studio.busy || (!!SITE.ai && allowanceEnded('screen'));
+  }
+  function renderPlan() { const el = $('#st-plan'); if (el) el.innerHTML = planHTML(); const q = $('#st-gen'); if (q && !S.studio.busy) q.innerHTML = genButtons(); const status = $('#st-status'); if (status && !S.studio.busy) status.innerHTML = studioStatus(); renderAllowanceControls(); }
   function extractHTML(text) {
     let t = String(text || '').trim();
     const fence = t.match(/```(?:html)?\s*([\s\S]*?)```/i);
@@ -4549,7 +4584,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const chip = $('#wchip');
     if (!S.wallet) { chip.innerHTML = '<span class="dot off"></span><span>Get a wallet</span>'; return; }
     const w = myWallet();
-    chip.innerHTML = '<span class="dot"></span><span class="addr">' + esc(short(S.wallet.from)) + '</span><span class="bal"><span title="' + UNIT + '">' + I.sol + fmtSOL(solOf(w)) + '</span><span title="Sparks">' + I.spark + fmtInt(w ? w.sparks : 0) + '</span><span title="GPLY">' + I.park + fmtInt(w ? w.park : 0) + '</span></span>';
+    chip.innerHTML = '<span class="dot"></span><span class="addr">' + esc(short(S.wallet.from)) + '</span><span class="bal"><span title="' + UNIT + '">' + I.sol + fmtSOL(solOf(w)) + '</span>' + (sponsoredAI() ? '' : '<span title="Sparks">' + I.spark + fmtInt(w ? w.sparks : 0) + '</span>') + '<span title="GPLY">' + I.park + fmtInt(w ? w.park : 0) + '</span></span>';
   }
   // compact: the front page's one-line footer, with the same facts in fewer words.
   function footHTML(compact) {
@@ -5529,15 +5564,15 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       if (!aiReady()) {
         body = ENV === 'claude'
           ? '<div class="banner warn"><b>Describing games with AI needs a Claude sign-in.</b><span>The AI studio runs on your own Claude account. Sign in to Claude and open ClaudePlay again to use it. Tuning a kit works for everyone, and publishing, scores and collecting work the same either way.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>'
-          : '<div class="banner warn"><b>The AI studio is not switched on for this copy of ClaudePlay yet.</b><span>It needs a ClaudePlay server with an AI key. Tune a kit instead: publishing, scores and collecting work the same.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>';
+          : sponsoredAI() ? '<div class="banner warn"><b>AI creation is unavailable here.</b><span>You can tune kits and publish them for free. No credits or upgrade are needed.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div><div id="st-plan">' + planHTML() + '</div>' : '<div class="banner warn"><b>The AI studio is not switched on for this copy of ClaudePlay yet.</b><span>It needs a ClaudePlay server with an AI key. Tune a kit instead: publishing, scores and collecting work the same.</span><button class="btn small" type="button" data-act="studio-mode" data-mode="kit" style="justify-self:start">Tune a kit instead</button></div>';
       } else if (st.guide >= 0 && !st.versions.length) {
         body = guideHTML(st);
       } else {
         const last = st.chat.length - 1;
-        const chat = st.chat.length ? st.chat.map((m, i) => '<div class="msg ' + (m.role === 'user' ? 'me' : m.role === 'note' ? 'note' : '') + '">' + esc(m.text) + (m.list && m.list.length ? checklistHTML(m.list) + (i >= last - 2 && !st.busy && m.list.some((x) => !x.done) ? '<button class="btn small" type="button" data-act="build-rest" data-i="' + i + '">Build the rest · ' + R.GEN_COST.edit + ' Sparks</button>' : '') : '') + '</div>').join('')
+        const chat = st.chat.length ? st.chat.map((m, i) => '<div class="msg ' + (m.role === 'user' ? 'me' : m.role === 'note' ? 'note' : '') + '">' + esc(m.text) + (m.list && m.list.length ? checklistHTML(m.list) + (i >= last - 2 && !st.busy && m.list.some((x) => !x.done) ? '<button class="btn small" type="button" data-act="build-rest" data-i="' + i + '"' + (allowanceEnded('edit') ? ' disabled' : '') + '>Build the rest · ' + buildPrice('edit') + '</button>' : '') : '') + '</div>').join('')
           : '<div class="msg note">Describe the game you want. Each build is a full game file you can play right away, then refine with follow-up requests.</div>';
         const has = !!st.versions.length;
-        body = '<div class="panel stack"><div class="split"><p class="eyebrow">Describe your game' + (has ? '' : ' · <button class="linkish" type="button" data-act="guide-restart">Use the guided steps</button>') + '</p><span class="chip" title="Your Sparks">' + I.spark + ' <span id="st-sparks">' + fmtInt(studioSparks()) + '</span> Sparks</span></div>'
+        body = '<div class="panel stack"><div class="split"><p class="eyebrow">Describe your game' + (has ? '' : ' · <button class="linkish" type="button" data-act="guide-restart">Use the guided steps</button>') + '</p>' + (sponsoredAI() ? '<span class="chip">Free creation</span>' : '<span class="chip" title="Your Sparks">' + I.spark + ' <span id="st-sparks">' + fmtInt(studioSparks()) + '</span> Sparks</span>') + '</div>'
           + '<div class="chat" id="st-chat">' + chat + '</div><div id="st-stream"></div>'
           + (has ? '' : '<div class="stack" style="gap:8px"><p class="eyebrow" id="crypto-ideas">Make a crypto game</p><div class="row" role="group" aria-labelledby="crypto-ideas">' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></div>')
           + '<label class="field"><span class="sr">Your idea or change</span><textarea id="st-prompt" data-in="prompt" placeholder="' + (has ? 'Ask for a change: “make the jump higher and add a double-jump power-up”' : 'Block Miner: stack falling transaction blocks before the gas meter runs dry…') + '">' + esc(st.prompt) + '</textarea></label>'
@@ -5613,9 +5648,9 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const st = S.studio;
     const has = !!st.versions.length;
     if (st.busy) return '<button class="btn" type="button" data-act="stop">' + (st.testing ? 'Skip the play-test' : 'Stop') + '</button><span class="muted" id="st-phase">' + esc((st.stream && st.stream.phase) || 'Thinking…') + '</span>';
-    return '<button class="btn primary" type="button" data-act="gen-new">Build new game · ' + R.GEN_COST.new + ' Sparks</button>'
-      + (has ? '<button class="btn" type="button" data-act="gen-edit">Apply change · ' + R.GEN_COST.edit + ' Sparks</button>' : '')
-      + '<select id="st-quality" data-in="quality" aria-label="Build quality" style="width:auto"><option value="default"' + (st.quality === 'default' ? ' selected' : '') + '>Standard build</option><option value="complex"' + (st.quality === 'complex' ? ' selected' : '') + '>' + (S.plan && S.plan.pro && S.plan.plan !== 'pro' ? 'Best build (Pro)' : 'Best build (slower)') + '</option></select>';
+    return '<button class="btn primary" type="button" data-act="gen-new"' + (allowanceEnded('new') ? ' disabled' : '') + '>Build new game · ' + buildPrice('new') + '</button>'
+      + (has ? '<button class="btn" type="button" data-act="gen-edit"' + (allowanceEnded('edit') ? ' disabled' : '') + '>Apply change · ' + buildPrice('edit') + '</button>' : '')
+      + '<select id="st-quality" data-in="quality" aria-label="Build quality" style="width:auto"><option value="default"' + (st.quality === 'default' ? ' selected' : '') + '>Standard build</option><option value="complex"' + (st.quality === 'complex' ? ' selected' : '') + '>' + (sponsoredAI() ? 'Best build (free, slower)' : S.plan && S.plan.pro && S.plan.plan !== 'pro' ? 'Best build (Pro)' : 'Best build (slower)') + '</option></select>';
   }
   function publishPanel() {
     const st = S.studio;
@@ -5634,7 +5669,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<label class="field">Editions <small>0 for an open edition</small><input id="pub-cap" type="number" min="0" max="100000" step="1" data-in="pub-cap" value="' + esc(st.cap) + '"></label></div>') + vis
       + (st.blocked ? '<div class="banner bad" role="alert"><b>The safety check stopped this game</b><span>' + esc(st.blocked.join(' ')) + '</span><span class="muted">Ask for a change that fixes it, then publish again.</span></div>' : '')
       + '<p class="muted" style="font-size:0.875rem">Every game gets an automatic safety check before it goes public. Publishing is free: network fees are sponsored. You sign the game’s content hash with your wallet; anyone can verify the file was not changed.</p>'
-      + '<div class="row"><button class="btn primary" type="button" data-act="publish"' + (ready && !st.busy ? '' : ' disabled') + '>' + (live ? 'Sign &amp; republish' : 'Sign &amp; publish') + '</button>' + (ready ? '' : '<span class="muted">Build a game first.</span>') + '</div></div>';
+      + '<div class="row"><button class="btn primary" type="button" data-act="publish"' + (ready && !st.busy && !(SITE.ai && allowanceEnded('screen')) ? '' : ' disabled') + '>' + (live ? 'Sign &amp; republish' : 'Sign &amp; publish') + '</button>' + (ready ? '' : '<span class="muted">Build a game first.</span>') + '</div></div>';
   }
   function studioTools() {
     const st = S.studio;
@@ -5651,10 +5686,10 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
   }
   function studioStatus() {
     const st = S.studio;
-    if (st.error) return '<div class="banner bad"><b>The game hit an error</b><span class="mono">' + esc(st.error) + '</span>' + (st.mode === 'ai' && aiReady() ? '<button class="btn small" type="button" data-act="gen-fix" style="justify-self:start">Fix it with AI · free</button>' : '') + '</div>';
+    if (st.error) return '<div class="banner bad"><b>The game hit an error</b><span class="mono">' + esc(st.error) + '</span>' + (st.mode === 'ai' && aiReady() ? '<button class="btn small" type="button" data-act="gen-fix" style="justify-self:start"' + (allowanceEnded('edit') ? ' disabled' : '') + '>Fix it with AI · free</button>' : '') + '</div>';
     if (st.testing) return '<p class="muted" role="status">Play-testing the new version before you see it…</p>';
     const v = st.mode === 'ai' && !st.busy ? st.versions[st.vi] : null, test = v && v.test;
-    if (test && !test.ok && test.problems && test.problems.length) return '<div class="banner warn"><b>The play-test found ' + (test.problems.length === 1 ? 'a problem' : test.problems.length + ' problems') + '</b><ul class="problems">' + test.problems.map((p) => '<li>' + esc(p) + '</li>').join('') + '</ul>' + (aiReady() ? '<button class="btn small" type="button" data-act="gen-fix" style="justify-self:start">Fix with AI · free</button>' : '') + '</div>';
+    if (test && !test.ok && test.problems && test.problems.length) return '<div class="banner warn"><b>The play-test found ' + (test.problems.length === 1 ? 'a problem' : test.problems.length + ' problems') + '</b><ul class="problems">' + test.problems.map((p) => '<li>' + esc(p) + '</li>').join('') + '</ul>' + (aiReady() ? '<button class="btn small" type="button" data-act="gen-fix" style="justify-self:start"' + (allowanceEnded('edit') ? ' disabled' : '') + '>Fix with AI · free</button>' : '') + '</div>';
     if (st.lastRun != null) return '<p class="muted">Test run scored ' + fmtInt(st.lastRun) + '. Scores count once the game is published.</p>';
     return '<p class="muted">' + (test && test.ok ? '<span class="chip ok">' + I.ok + ' Play-tested</span> ' : '') + (studioCode() ? 'Unpublished preview. Click the game to play.' : 'Your game appears here.') + '</p>';
   }
@@ -5794,7 +5829,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     return out;
   }
   async function reviewPlaytest(t, title, ask, signal) {
-    if (ENV !== 'web' || !SITE.playtest || !t.shots || !t.shots.length) return null;
+    if (ENV !== 'web' || !SITE.playtest || !t.shots || !t.shots.length || allowanceEnded('playtest')) return null;
     const blank = t.canvases > 0 && t.colors.length > 0 && t.colors.every((c) => c <= 1);
     try {
       const res = await fetch(SITE.playtest, {
@@ -5833,6 +5868,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const st = S.studio;
     if (!aiReady() || st.busy) return;
     if (kind === 'edit' && !st.versions.length) kind = 'new';
+    if (allowanceEnded(kind)) { toast('This AI request is paused by your daily allowance or the shared funding limit. Check the allowance below.'); return; }
     const prompt = (st.prompt || '').trim();
     if (kind !== 'fix' && !prompt) { toast('Describe your game first.'); const t = $('#st-prompt'); if (t) t.focus(); return; }
     const base = studioCode();
@@ -5842,7 +5878,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (kind === 'fix' && !errText) return;
     const ask = kind === 'fix' ? lastAsk(st) : prompt;
     st.busy = true;
-    try { await ensureWallet(); await ensureSparks(R.GEN_COST[kind]); }
+    const sponsored = sponsoredAI();
+    try { await ensureWallet(); if (!sponsored) await ensureSparks(R.GEN_COST[kind]); }
     catch (e) { st.busy = false; throw e; }
     st.stream = { phase: 'Thinking…', tail: '' };
     if (!o.auto) st.chat.push({ role: 'user', text: kind === 'fix' ? (found ? 'Fix what the play-test found.' : 'Fix the error: ' + errText) : prompt });
@@ -5877,7 +5914,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       }
       const code = H.withPictures(raw || extractHTML(list.rest), pics);
       const meta = readMeta(code);
-      if (R.GEN_COST[kind]) await signAndAppend('gen', { kind, bytes: code.length });
+      if (!sponsored && R.GEN_COST[kind]) await signAndAppend('gen', { kind, bytes: code.length });
       const v = { code, meta, kind, ts: Date.now(), ask, base: kind !== 'new' && cur ? cur.ts : 0, edits: edits && JSON.stringify(edits).length < 40000 ? edits : null, list: list.done.length ? list.done : null };
       st.versions.push(v);
       st.vi = st.versions.length - 1;
@@ -5892,14 +5929,14 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       else if (test.skipped) st.chat.push({ role: 'note', text: 'The play-test of v' + n + ' could not finish here, so play it yourself to check.' });
       else if (test.ok) st.chat.push({ role: 'note', text: 'Play-tested v' + n + (test.reviewed ? ': Claude played it and found nothing to fix.' : ': it starts and runs without errors.') });
       else {
-        const canFix = (o.depth || 0) < 1 && aiReady();
+        const canFix = (o.depth || 0) < 1 && aiReady() && !allowanceEnded('edit');
         st.chat.push({ role: 'note', text: 'The play-test of v' + n + ' found ' + (test.problems.length === 1 ? 'a problem' : test.problems.length + ' problems') + ': ' + test.problems.join(' ') + (canFix ? ' Fixing ' + (test.problems.length === 1 ? 'it' : 'them') + ' now.' : ' Press “Fix with AI” or ask for a change.') });
         if (canFix) autoFix = test.problems;
       }
       toast(autoFix ? 'Built ' + (meta.title || 'your game') + '. Fixing what the play-test found…' : 'Built ' + (meta.title || 'your game') + '. Click it to play.');
     } catch (e) {
       const code = e && e.code;
-      const msg = code === 'cancelled' ? 'Stopped. Nothing was charged.'
+      const msg = code === 'cancelled' ? sponsored ? 'Stopped. Your allowance will update when the server finishes the request.' : 'Stopped. Nothing was charged.'
         : code === 'not_granted' || code === 'sampling_disabled' ? 'Claude access was declined for this page, so AI building is off. Tune a kit instead.'
         : code === 'rate_limited' ? (ENV === 'web' ? (e && e.message) || 'The AI studio is busy. Try again in a minute.' : 'Too many builds at once or your Claude usage limit was reached. Try again later.')
         : code === 'refused' ? 'Claude declined this request. Rephrase the idea and try again.'
@@ -5911,7 +5948,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     } finally {
       st.busy = false; st.stream = null; st.testing = false; S.ctl = null;
       rerenderStudioLeft(); rerenderStudioRight(); saveStudio();
-      if (S.plan) loadPlan();
+      if (ENV === 'web' && SITE.ai) loadPlan();
     }
     if (autoFix && S.route === 'create' && S.studio === st) {
       try { return await generate('fix', { problems: autoFix, depth: (o.depth || 0) + 1, auto: true }); } finally { if (!$('#st-screen iframe')) loadPreview(); }
@@ -5963,8 +6000,9 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     if (found.length) return { ok: false, reasons: found };
     toast('Running the safety check…');
     if (ENV === 'web' && SITE.screen) {
+      if (SITE.ai && allowanceEnded('screen')) throw new Error('Publishing checks are paused by your daily allowance or the shared funding limit. Check your creation allowance and try again when a review is available.');
       let res, j = {};
-      try { res = await fetch(SITE.screen, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, title, desc }) }); j = await res.json(); }
+      try { res = await fetch(SITE.screen, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, keyHeader()), body: JSON.stringify({ code, title, desc }) }); j = await res.json(); }
       catch (e) { throw new Error('Could not reach the safety check. Check your connection and try again.'); }
       if (!res.ok) throw new Error(j.message || 'The safety check failed. Try again.');
       return j.ok ? { ok: true, token: j.token } : { ok: false, reasons: j.reasons || ['The safety check did not allow this game.'] };
@@ -6045,8 +6083,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     return '<div class="gp-head"><h1>' + esc(nameOf(S.wallet.from)) + '</h1></div>'
       + '<div class="grid3">'
       + '<div class="panel balance"><span class="unit">' + UNIT + '</span><span class="amt">' + fmtSOL(solOf(w)) + '</span><span class="muted" style="font-size:0.875rem">For collects and tips. Earned ' + fmtSOL(w.earnedSol) + ' SOL so far.</span>' + (MAINNET ? '<p class="muted" style="font-size:0.875rem">Real SOL on Solana mainnet, paid straight from your wallet app.</p>' : '<div class="row"><button class="btn small" type="button" data-act="airdrop"' + (now < nextDrop ? ' disabled' : '') + '>' + (now < nextDrop ? 'Faucet in ' + Math.ceil((nextDrop - now) / 3600000) + 'h' : 'Get ' + dropAmt / C.LAMPORTS + ' devSOL') + '</button></div>') + '</div>'
-      + '<div class="panel balance"><span class="unit">Sparks</span><span class="amt">' + fmtInt(w.sparks) + '</span><span class="muted" style="font-size:0.875rem">Pay for AI builds. Not transferable. ' + fmtInt(w.sparksEarned) + ' earned from players.</span><div class="row"><button class="btn small" type="button" data-act="claim"' + (claimed ? ' disabled' : '') + '>' + (claimed ? 'Claimed this week' : 'Claim ' + R.WEEKLY_SPARKS + ' free') + '</button>' + (CHAIN ? '' : '<button class="btn small ghost" type="button" data-act="buy-sparks">Buy ' + R.SPARK_PACK.sparks + ' for ' + R.SPARK_PACK.lamports / C.LAMPORTS + ' SOL</button>') + '</div></div>'
-      + '<div class="panel balance"><span class="unit">GPLY</span><span class="amt">' + fmtInt(w.park) + '</span><span class="muted" style="font-size:0.875rem">Earned in epoch rewards. Burn it to boost games or for Sparks.</span><div class="row"><button class="btn small ghost" type="button" data-act="convert"' + (w.park >= R.CONVERT.park ? '' : ' disabled') + '>Burn ' + R.CONVERT.park + ' for ' + R.CONVERT.sparks + ' Sparks</button></div></div>'
+      + (sponsoredAI() ? '<div class="panel balance"><span class="unit">Legacy Sparks</span><span class="amt">' + fmtInt(w.sparks) + '</span><span class="muted" style="font-size:0.875rem">Previous prototype credits. Creation on this site is free within daily allowances; no Sparks are needed.</span></div>' : '<div class="panel balance"><span class="unit">Sparks</span><span class="amt">' + fmtInt(w.sparks) + '</span><span class="muted" style="font-size:0.875rem">Pay for AI builds. Not transferable. ' + fmtInt(w.sparksEarned) + ' earned from players.</span><div class="row"><button class="btn small" type="button" data-act="claim"' + (claimed ? ' disabled' : '') + '>' + (claimed ? 'Claimed this week' : 'Claim ' + R.WEEKLY_SPARKS + ' free') + '</button>' + (CHAIN ? '' : '<button class="btn small ghost" type="button" data-act="buy-sparks">Buy ' + R.SPARK_PACK.sparks + ' for ' + R.SPARK_PACK.lamports / C.LAMPORTS + ' SOL</button>') + '</div></div>')
+      + '<div class="panel balance"><span class="unit">GPLY</span><span class="amt">' + fmtInt(w.park) + '</span><span class="muted" style="font-size:0.875rem">Earned in epoch rewards. Burn it to boost games' + (sponsoredAI() ? '.' : ' or for Sparks.') + '</span>' + (sponsoredAI() ? '' : '<div class="row"><button class="btn small ghost" type="button" data-act="convert"' + (w.park >= R.CONVERT.park ? '' : ' disabled') + '>Burn ' + R.CONVERT.park + ' for ' + R.CONVERT.sparks + ' Sparks</button></div>') + '</div>'
       + '</div>'
       + '<div class="grid2" style="margin-top:18px"><div class="panel stack"><p class="eyebrow">Identity</p><dl class="kv">'
       + '<dt>Address</dt><dd class="hash">' + esc(S.wallet.from) + '</dd>'
@@ -6146,6 +6184,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     return s;
   }
   function flowDiagram() {
+    if (sponsoredAI()) return '<p>Collects and tips pay creators directly; collects also send a 5% protocol fee to the treasury. Site funding sponsors AI creation within daily allowances and a total funding limit. Creators can use standard and best builds, pictures, play-tests and publishing without buying credits.</p>';
     const node = (x, y, t, sub, strong) => '<rect x="' + x + '" y="' + y + '" width="160" height="58" rx="4" style="fill:var(--panel-2);stroke:' + (strong ? 'var(--accent)' : 'var(--line)') + '" stroke-width="' + (strong ? 2 : 1) + '"/><text x="' + (x + 80) + '" y="' + (y + 25) + '" text-anchor="middle" style="fill:var(--ink);font:700 13px var(--body)">' + t + '</text><text x="' + (x + 80) + '" y="' + (y + 43) + '" text-anchor="middle" style="fill:var(--muted);font:400 11px var(--body)">' + sub + '</text>';
     const edge = (d, lx, ly, label, anchor) => '<path d="' + d + '" fill="none" style="stroke:var(--ink-2)" stroke-width="1.6" marker-end="url(#ah)"/><text x="' + lx + '" y="' + ly + '" text-anchor="' + (anchor || 'middle') + '" style="fill:var(--ink-2);font:600 11px var(--body);paint-order:stroke;stroke:var(--panel);stroke-width:4px;stroke-linejoin:round">' + label + '</text>';
     return '<div class="diagram-wrap"><svg viewBox="0 0 760 236" role="img" aria-label="How value flows through ClaudePlay"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--ink-2)"/></marker></defs>'
@@ -6164,7 +6203,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     const circulating = w.supply.emitted - w.supply.burned;
     const last = w.epochs[w.epochs.length - 1];
     const rows = pending.rewards.slice(0, 12);
-    return '<div class="gp-head"><h1>Rewards paid from real activity</h1><p class="muted" style="max-width:66ch">Players and collectors pay creators directly. A 5% fee and Spark packs fill the treasury, which pays for everyone’s free Sparks and sends 40% of fees back to creators each epoch. GPLY is emitted on a fixed, decaying schedule and burned when people boost games or convert it to Sparks.</p></div>'
+    return '<div class="gp-head"><h1>Rewards paid from real activity</h1><p class="muted" style="max-width:66ch">' + (sponsoredAI() ? 'Players and collectors can pay creators directly. AI creation is sponsored and free within daily allowances and the site’s funding limit. Collects and tips are optional. Historical Sparks transactions remain verifiable, but no credits are needed to create here. GPLY follows the existing epoch reward rules.' : 'Players and collectors pay creators directly. A 5% fee and Spark packs fill the treasury, which pays for everyone’s free Sparks and sends 40% of fees back to creators each epoch. GPLY is emitted on a fixed, decaying schedule and burned when people boost games or convert it to Sparks.') + '</p></div>'
       + '<div class="facts" style="margin-bottom:20px"><div class="fact"><b>' + pending.n + '</b><span>next epoch</span></div><div class="fact"><b>' + fmtInt(pending.emission) + '</b><span>GPLY it emits</span></div><div class="fact"><b>' + fmtSOL(w.treasury.sol) + '</b><span>SOL in treasury</span></div><div class="fact"><b>' + fmtInt(w.supply.emitted) + '</b><span>GPLY emitted</span></div><div class="fact"><b>' + fmtInt(w.supply.burned) + '</b><span>GPLY burned</span></div><div class="fact"><b>' + fmtInt(circulating) + '</b><span>GPLY circulating of ' + fmtInt(R.MAX_SUPPLY) + ' max</span></div></div>'
       + '<div class="grid2"><div class="panel stack"><div class="split"><p class="eyebrow">Epoch ' + pending.n + ' preview</p><span class="muted" style="font-size:0.8125rem">activity since ' + (last ? when(last.to) : 'launch') + '</span></div>'
       + (rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Wallet</th><th>Role</th><th class="r">GPLY</th><th class="r">SOL</th></tr></thead><tbody>' + rows.map((r) => '<tr><td>' + esc(nameOf(r.to)) + (S.wallet && r.to === S.wallet.from ? ' <span class="chip accent">you</span>' : '') + '</td><td>' + esc(r.roles.join(' + ')) + '</td><td class="n">' + fmtInt(r.park) + '</td><td class="n">' + fmtSOL(r.sol) + '</td></tr>').join('') + '</tbody></table></div>'
@@ -6176,6 +6215,8 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
       + '<section class="section"><div class="section-head"><h2>How value moves</h2></div><div class="panel">' + flowDiagram() + '</div></section>'
       + '<section class="section"><div class="section-head"><h2>Rules this ledger enforces</h2></div><div class="table-wrap"><table class="data"><tbody>'
       + [['Faucet', fmtSOL(R.AIRDROP_LAMPORTS) + ' devSOL per wallet every 24 hours'], ['Free Sparks', R.WEEKLY_SPARKS + ' per wallet per week; new game ' + R.GEN_COST.new + ', change ' + R.GEN_COST.edit + ', AI bug fix free'], ['Sparks from players', R.SPARKS_PER_PLAYER + ' per unique player of your games (up to ' + R.SPARKS_PLAYER_CAP + ' players per game)'], ['Collect split', 'creator ' + pct(10000 - R.FEE_BPS - R.PARENT_BPS - R.GRAND_BPS) + '–' + pct(10000 - R.FEE_BPS) + ', parent ' + pct(R.PARENT_BPS) + ', grandparent ' + pct(R.GRAND_BPS) + ', protocol ' + pct(R.FEE_BPS)], ['Tips', '100% to the creator'], ['Spark pack', R.SPARK_PACK.sparks + ' Sparks for ' + R.SPARK_PACK.lamports / C.LAMPORTS + ' SOL, paid to the treasury'], ['Burns', 'boosts burn GPLY; ' + R.CONVERT.park + ' GPLY burns for ' + R.CONVERT.sparks + ' Sparks'], ['Unique players', 'one per signed-in account per game (a stand-in for proof of personhood)']]
+        .filter(([k]) => !sponsoredAI() || !['Free Sparks', 'Sparks from players', 'Spark pack', 'Burns'].includes(k))
+        .concat(sponsoredAI() ? [['Sponsored creation', 'All creator tools are free within server daily allowances and the site funding limit. No Sparks or Pro payment is needed.'], ['Burns', 'boosts burn GPLY; historical credit conversions remain verifiable']] : [])
         .map(([k, v]) => '<tr><th scope="row" style="text-transform:none;font:700 0.875rem var(--body);color:var(--ink);background:transparent;width:30%">' + k + '</th><td>' + esc(v) + '</td></tr>').join('')
       + '</tbody></table></div></section>'
       + (w.epochs.length ? '<section class="section"><div class="section-head"><h2>Settled epochs</h2></div><div class="table-wrap"><table class="data"><thead><tr><th>Epoch</th><th>Settled</th><th class="r">GPLY</th><th class="r">SOL</th><th class="r">Wallets</th></tr></thead><tbody>' + w.epochs.slice().reverse().map((e) => '<tr><td class="n" style="text-align:left">' + e.n + '</td><td>' + when(e.to) + '</td><td class="n">' + fmtInt(e.rewards.reduce((a, x) => a + (x.park || 0), 0)) + '</td><td class="n">' + fmtSOL(e.rewards.reduce((a, x) => a + (x.sol || 0), 0)) + '</td><td class="n">' + e.rewards.length + '</td></tr>').join('') + '</tbody></table></div></section>' : '')
@@ -6289,7 +6330,9 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
         + [10, 50, 250].map((a) => '<button class="btn" type="button" data-act="confirm-boost" data-gid="' + esc(g.gid) + '" data-amt="' + a + '"' + (have < a ? ' disabled' : '') + '>Burn ' + a + '</button>').join('')
         + '</div>' + (have < 10 ? '<p class="muted">You earn GPLY when an epoch settles: make games people play, or place on a leaderboard.</p>' : '') + '<div class="row"><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
     },
+    'refresh-plan': () => loadPlan(),
     'get-pro': async () => {
+      if (sponsoredAI()) return;
       const p = S.plan && S.plan.pro; if (!p || !p.memo) return;
       await ensureWallet();
       if (MAINNET && S.wallet.kind === 'embedded') throw new Error('Real SOL is paid from your own wallet app. Connect Phantom, Solflare or Backpack in Wallet.');
@@ -6301,6 +6344,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
         + '<div class="row"><button class="btn primary" type="button" data-act="confirm-pro"' + (short_ ? ' disabled' : '') + '>Pay ' + fmtSOL(p.price) + ' ' + UNIT + '</button><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>');
     },
     'confirm-pro': async () => {
+      if (sponsoredAI()) return;
       const p = S.plan && S.plan.pro; if (!p || !p.memo) return;
       closeModal();
       if (S.wallet.kind !== 'embedded') toast('Approve the payment in your wallet app.');
@@ -6654,7 +6698,7 @@ label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-o
     else if (k === 'pub-desc') st.desc = t.value;
     else if (k === 'pub-price') st.price = t.value;
     else if (k === 'pub-cap') st.cap = t.value;
-    else if (k === 'quality') st.quality = t.value;
+    else if (k === 'quality') { st.quality = t.value; renderAllowanceControls(); }
     else if (k === 'genre') st.genre = t.value;
     else if (k === 'pic-name') {
       const i = +t.dataset.i, p = st.pics && st.pics[i];

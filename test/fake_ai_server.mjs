@@ -5,6 +5,7 @@ import { createServer } from '../server/server.mjs';
 import { openGallery } from '../server/gallery.mjs';
 import { openChain } from '../server/chain.mjs';
 import { fakeRpc } from './fake_rpc.mjs';
+import { memoryKv } from '../server/plans.mjs';
 
 const GAME = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Block Miner</title>
@@ -75,14 +76,14 @@ const text = (content) => (typeof content === 'string' ? content : content.map((
 const calls = [];
 const screens = [];
 const playtests = [];
-const reply = (params, out) => ({ async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: out } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { output_tokens: 1 } }; } });
+const reply = (params, out) => ({ async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: out } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }; } });
 const client = { beta: { messages: { stream(params, options = {}) {
   if (params.system[0].text.startsWith('You review browser games')) {
     const content = params.messages[0].content;
     const all = content.map((p) => p.text || '').join('\n');
     screens.push({ model: params.model, images: content.filter((p) => p.type === 'image').length, title: (all.match(/TITLE: (.*)/) || [])[1] });
     const verdict = /BLOCKME/.test(all) ? '{"verdict":"block","reasons":["It shows something not allowed (test)."]}' : '{"verdict":"allow","reasons":[]}';
-    return { async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: verdict } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { output_tokens: 1 } }; } };
+    return { async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: verdict } }; }, async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }; } };
   }
   if (params.system[0].text.startsWith('You play-test browser games')) {
     // Play-test review: passes, unless the creator's request says PLAYTESTFIX.
@@ -108,14 +109,17 @@ const client = { beta: { messages: { stream(params, options = {}) {
         yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: doc.slice(i, i + 300) } };
       }
     },
-    async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { output_tokens: 1 } }; },
+    async finalMessage() { return { model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }; },
   };
 } } } };
 
 const gallery = await openGallery({ adminKey: 'owner_' + 'x'.repeat(40) });
-const fake = ['chain', 'mainnet'].includes(process.argv[3]) ? fakeRpc() : null;
+const sponsored = ['sponsored', 'sponsored-budget', 'sponsored-partial', 'sponsored-off'].includes(process.argv[3]);
+const fake = sponsored || ['chain', 'mainnet'].includes(process.argv[3]) ? fakeRpc() : null;
 const chain = fake ? openChain({ cluster: process.argv[3] === 'mainnet' ? 'mainnet-beta' : 'devnet', treasury: 'GPTreasury1111111111111111111111111111111111', rpc: fake.rpc }) : null;
-const server = createServer({ client, daily: 50, gallery, chain, pro: { price: 1e8, days: 30, daily: 10 } });
+// The persistent marker is a fixture only: no paid API calls or restart durability are involved.
+const sponsorOpts = sponsored ? { sponsored: true, kv: Object.assign(memoryKv(), { persistent: true }), daily: 1, dailyEdits: 5, dailyScreens: 12, dailyPlaytests: 12, aiBudgetUsd: process.argv[3] === 'sponsored-budget' ? 0.01 : process.argv[3] === 'sponsored-partial' ? 2 : 400 } : {};
+const server = createServer({ client: process.argv[3] === 'sponsored-off' ? null : client, daily: 50, gallery, chain, pro: { price: 1e8, days: 30, daily: 10 }, ...sponsorOpts });
 const handle = server.listeners('request')[0];
 server.removeAllListeners('request');
 server.on('request', (req, res) => {

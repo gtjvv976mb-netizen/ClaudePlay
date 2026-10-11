@@ -10,7 +10,7 @@
 // has to trust its contents. The site owner is whoever holds GP_ADMIN_KEY: they can settle
 // epochs and delist games.
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile, readdir, open, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const MAX_ACCOUNT = 256 * 1024;
@@ -56,37 +56,112 @@ export function fileStore(dir) {
   };
 }
 
-/* Small key-value store for build counts and Pro passes, saved to kv.json (batched like the index). */
+const budgetArgs = (key, amount, cap, id) => {
+  if (typeof key !== 'string' || !key || key.length > 200 || !Number.isSafeInteger(amount) || amount < 0 ||
+      (cap !== undefined && (!Number.isSafeInteger(cap) || cap < 0 || amount < 1)) || !/^[A-Za-z0-9_-]{16,128}$/.test(id || '')) throw new Error('Invalid budget operation');
+};
+const budgetValue = (value) => {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid stored budget');
+  return value;
+};
+const receiptKey = (key, id) => key + ':reservation:' + id;
+
+/* Write-through counters. The directory lock serializes independent processes; rereading inside
+   it avoids stale caches. A crash leaves a lock and fails closed until the owner removes it after
+   stopping all writers. Never reclaim a possibly live lock automatically. */
 function fileKv(dir) {
-  let m = null, timer = null, saving = Promise.resolve();
   const file = join(dir, 'kv.json');
-  const load = async () => {
-    if (m) return;
-    m = new Map();
-    try { for (const [k, e] of Object.entries(JSON.parse(await readFile(file, 'utf8')))) m.set(k, e); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  const lock = join(dir, 'kv.lock');
+  const transact = async (fn, write = true) => {
+    await mkdir(dir, { recursive: true });
+    const until = Date.now() + 5000;
+    for (;;) {
+      try { await mkdir(lock); break; } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        if (Date.now() >= until) throw new Error('Persistent counters are locked; refusing the operation');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    let tmp;
+    try {
+      let data = {};
+      try { data = JSON.parse(await readFile(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid persistent counters');
+      const m = new Map(Object.entries(data));
+      const now = Date.now();
+      for (const [k, e] of m) {
+        if (!e || typeof e !== 'object' || !Object.hasOwn(e, 'v')) throw new Error('Invalid persistent counter entry');
+        if (e.exp && e.exp <= now) m.delete(k);
+      }
+      const result = fn(m);
+      if (write) {
+        tmp = file + '.' + process.pid + '.' + createHash('sha256').update(String(Math.random())).digest('hex').slice(0, 16) + '.tmp';
+        const fd = await open(tmp, 'wx', 0o600);
+        try { await fd.writeFile(JSON.stringify(Object.fromEntries(m))); await fd.sync(); } finally { await fd.close(); }
+        await rename(tmp, file); tmp = null;
+        const parent = await open(dir, 'r');
+        try { await parent.sync(); } finally { await parent.close(); }
+      }
+      return result;
+    } finally {
+      try { if (tmp) await rm(tmp, { force: true }); } finally { await rm(lock, { recursive: true }); }
+    }
   };
-  const flush = () => {
-    clearTimeout(timer); timer = null;
-    if (!m) return saving;
-    const now = Date.now();
-    const data = JSON.stringify(Object.fromEntries([...m].filter(([, e]) => !e.exp || e.exp > now)));
-    saving = saving.then(async () => {
-      await mkdir(dir, { recursive: true });
-      await writeFile(file + '.tmp', data);
-      await rename(file + '.tmp', file);
-    }).catch((e) => console.error('kv save failed', e));
-    return saving;
-  };
-  const touch = () => { if (!timer) timer = setTimeout(flush, 250); };
-  const live = (k) => { const e = m.get(k); if (e && e.exp && e.exp < Date.now()) { m.delete(k); return null; } return e || null; };
   return {
-    async incr(k, by, ttl) { await load(); const e = live(k); const v = (e ? Number(e.v) || 0 : 0) + by; m.set(k, { v, exp: e ? e.exp : ttl ? Date.now() + ttl * 1000 : 0 }); touch(); return v; },
-    async get(k) { await load(); const e = live(k); return e ? e.v : null; },
-    async set(k, v) { await load(); m.set(k, { v, exp: 0 }); touch(); },
-    async once(k) { await load(); if (live(k)) return false; m.set(k, { v: 1, exp: 0 }); touch(); return true; },
-    flush,
+    persistent: true,
+    incr(k, by, ttl) { return transact((m) => { const e = m.get(k), v = (e ? Number(e.v) || 0 : 0) + by; m.set(k, { v, exp: e ? e.exp : ttl ? Date.now() + ttl * 1000 : 0 }); return v; }); },
+    get(k) { return transact((m) => m.has(k) ? m.get(k).v : null, false); },
+    set(k, v) { return transact((m) => { m.set(k, { v, exp: 0 }); }); },
+    once(k) { return transact((m) => { if (m.has(k)) return false; m.set(k, { v: 1, exp: 0 }); return true; }); },
+    reserve(k, amount, cap, id) {
+      budgetArgs(k, amount, cap, id);
+      return transact((m) => {
+        const used = budgetValue(m.has(k) ? m.get(k).v : 0), receipt = receiptKey(k, id);
+        if (m.has(receipt) || amount > cap - used) return { ok: false, used };
+        m.set(k, { v: used + amount, exp: 0 });
+        m.set(receipt, { v: { reserved: amount }, exp: 0 });
+        return { ok: true, used: used + amount };
+      });
+    },
+    settle(k, id, actual) {
+      budgetArgs(k, actual, undefined, id);
+      return transact((m) => {
+        const used = budgetValue(m.has(k) ? m.get(k).v : 0), receipt = receiptKey(k, id), entry = m.get(receipt)?.v;
+        if (!entry || !Number.isSafeInteger(entry.reserved) || actual > entry.reserved) return { ok: false, used };
+        if (Object.hasOwn(entry, 'actual')) return { ok: entry.actual === actual, used };
+        const next = budgetValue(used - entry.reserved + actual);
+        m.set(k, { v: next, exp: 0 }); m.set(receipt, { v: { ...entry, actual }, exp: 0 });
+        return { ok: true, used: next };
+      });
+    },
+    async flush() {},
   };
 }
+
+const RESERVE_BUDGET = `-- budget-reserve-v1
+local used = tonumber(redis.call('GET', KEYS[1]) or '0')
+if not used or used < 0 or used ~= math.floor(used) then return redis.error_reply('Invalid stored budget') end
+local amount, cap = tonumber(ARGV[1]), tonumber(ARGV[2])
+if redis.call('EXISTS', KEYS[2]) == 1 or amount > cap - used then return {0, used} end
+redis.call('SET', KEYS[1], tostring(used + amount))
+redis.call('SET', KEYS[2], cjson.encode({reserved=amount}))
+return {1, used + amount}`;
+const SETTLE_BUDGET = `-- budget-settle-v1
+local used = tonumber(redis.call('GET', KEYS[1]) or '0')
+if not used or used < 0 or used ~= math.floor(used) then return redis.error_reply('Invalid stored budget') end
+local raw = redis.call('GET', KEYS[2])
+if not raw then return {0, used} end
+local receipt, actual = cjson.decode(raw), tonumber(ARGV[1])
+if not receipt.reserved or actual > receipt.reserved then return {0, used} end
+if receipt.actual ~= nil then
+  if receipt.actual == actual then return {1, used} else return {0, used} end
+end
+local next = used - receipt.reserved + actual
+if next < 0 then return redis.error_reply('Invalid stored budget') end
+receipt.actual = actual
+redis.call('SET', KEYS[1], tostring(next))
+redis.call('SET', KEYS[2], cjson.encode(receipt))
+return {1, next}`;
 
 /* Upstash Redis over its REST API (plain fetch, no driver): one hash per collection, one key per
    game file, and a set listing the game files. Every write is saved before it is acknowledged. */
@@ -113,10 +188,23 @@ export function redisStore(url, token, prefix = 'gp:') {
     async flush() {},
     // Build counts and Pro passes (see plans.mjs): atomic counters, so several instances can share them.
     kv: {
+      persistent: true,
       async incr(k, by, ttl) { const [v] = await call([['INCRBY', prefix + k, String(by)]].concat(ttl ? [['EXPIRE', prefix + k, String(ttl)]] : [])); return Number(v); },
       async get(k) { const [v] = await call([['GET', prefix + k]]); return v == null ? null : JSON.parse(v); },
       async set(k, v) { await call([['SET', prefix + k, JSON.stringify(v)]]); },
       async once(k) { const [v] = await call([['SET', prefix + k, '1', 'NX']]); return v === 'OK'; },
+      async reserve(k, amount, cap, id) {
+        budgetArgs(k, amount, cap, id);
+        const [r] = await call([['EVAL', RESERVE_BUDGET, '2', prefix + k, prefix + receiptKey(k, id), String(amount), String(cap)]]);
+        if (!Array.isArray(r) || r.length !== 2 || ![0, 1].includes(Number(r[0]))) throw new Error('Invalid budget response');
+        return { ok: Number(r[0]) === 1, used: budgetValue(Number(r[1])) };
+      },
+      async settle(k, id, actual) {
+        budgetArgs(k, actual, undefined, id);
+        const [r] = await call([['EVAL', SETTLE_BUDGET, '2', prefix + k, prefix + receiptKey(k, id), String(actual)]]);
+        if (!Array.isArray(r) || r.length !== 2 || ![0, 1].includes(Number(r[0]))) throw new Error('Invalid budget response');
+        return { ok: Number(r[0]) === 1, used: budgetValue(Number(r[1])) };
+      },
     },
   };
 }
@@ -124,6 +212,12 @@ export function redisStore(url, token, prefix = 'gp:') {
 /* Copies a gallery from one store to another (used once, when moving from a disk to Redis).
    Does nothing unless the target is empty. Returns how many documents and game files it copied. */
 export async function copyGallery(from, to) {
+  // A gallery-only move must never silently start a new sponsorship allowance. Budget migration
+  // requires an explicit offline operation that preserves the counter and all outstanding receipts.
+  if (from.kv) {
+    const funded = await from.kv.get('ai:budget:v1');
+    if (funded !== null && funded !== undefined && (!Number.isSafeInteger(funded) || funded !== 0)) throw new Error('Cannot automatically migrate a funded AI store. Stop all writers and explicitly preserve its lifetime budget and receipts.');
+  }
   const target = { ver: 0, accounts: {}, protocol: {} };
   const have = await to.load(target);
   if (have.length || Object.keys(target.accounts).length || Object.keys(target.protocol).length) return null;

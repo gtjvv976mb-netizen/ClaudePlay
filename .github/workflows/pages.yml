@@ -34,6 +34,10 @@ jobs:
         run: node test/solana.test.mjs
       - name: AI server tests
         run: node test/server.test.mjs
+      - name: Persistent AI budget tests
+        run: node test/budget-store.test.mjs
+      - name: Sponsored AI integration tests
+        run: node --test test/sponsored.test.mjs
       - name: Check that GitHub Pages is set to deploy from Actions
         id: pages
         env:
