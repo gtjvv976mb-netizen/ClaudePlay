@@ -47,7 +47,7 @@ await import('../src/harness.js');
 const H = globalThis.PPHarness;
 
 const here = fileURLToPath(new URL('.', import.meta.url));
-const TYPES = { '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
 const MAX_BODY = 512 * 1024;
 const MAX_TOKENS = 64000;
 // Models that accept server-side refusal fallbacks ("default" routes by refusal category).

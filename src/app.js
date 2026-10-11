@@ -41,10 +41,11 @@
     play: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.6v10.8l8.6-5.4z" fill="currentColor"/></svg>',
     ok: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.4 3.1 3.1L13 4.6" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>',
     no: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>',
+    chev: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 10.2 4.5-4.5 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
 
   const KEY = { wallet: 'pp.wallet.v1', session: 'pp.session.v1', account: 'pp.account.v1', protocol: 'pp.protocol.v1', studio: 'pp.studio.v1', blob: 'pp.blob.', prefs: 'gp.prefs.v1', gallery: 'pp.gallery.v1', pending: 'pp.pending.v1', pro: 'pp.pro.v1' };
-  const PREF_DEFAULTS = { theme: 'system', text: 'md', motion: 'system', speed: 1, sound: true };
+  const PREF_DEFAULTS = { theme: 'system', text: 'md', motion: 'system', speed: 1, sound: true, layout: 'fit' };
   const ADJ = ['brisk', 'quiet', 'lucky', 'neon', 'sunny', 'swift', 'cosmic', 'mellow', 'bold', 'tiny', 'jolly', 'pixel', 'rapid', 'calm', 'wild', 'zesty'];
   const NOUN = ['lynx', 'otter', 'comet', 'falcon', 'gecko', 'panda', 'koi', 'badger', 'heron', 'moth', 'yak', 'wombat', 'raven', 'ibis', 'tapir', 'newt'];
   const autoName = (pk) => { let h = 0; for (const c of String(pk)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return ADJ[h % 16] + '-' + NOUN[(h >>> 4) % 16]; };
@@ -153,13 +154,16 @@
     if (p.theme && p.theme !== 'system') r.setAttribute('data-gp-theme', p.theme); else r.removeAttribute('data-gp-theme');
     if (p.text && p.text !== 'md') r.setAttribute('data-gp-text', p.text); else r.removeAttribute('data-gp-text');
     if (p.motion === 'reduce') r.setAttribute('data-gp-motion', 'reduce'); else r.removeAttribute('data-gp-motion');
+    if (p.layout === 'scroll') r.removeAttribute('data-fit'); else r.setAttribute('data-fit', '');
+    if (typeof fitSoon === 'function') fitSoon();
     const b = $('#a11y-btn');
-    if (b) b.classList.toggle('on', Number(p.speed) < 1 || p.theme === 'contrast' || p.text !== 'md' || p.motion === 'reduce' || !p.sound);
+    if (b) b.classList.toggle('on', Number(p.speed) < 1 || p.theme === 'contrast' || p.text !== 'md' || p.motion === 'reduce' || !p.sound || p.layout === 'scroll');
   }
   const PREF_GROUPS = [
     { key: 'theme', label: 'Theme', opts: [['system', 'Match my device'], ['light', 'Light'], ['dark', 'Dark'], ['contrast', 'High contrast']] },
     { key: 'text', label: 'Text size', opts: [['md', 'Default'], ['lg', 'Large'], ['xl', 'Larger']] },
     { key: 'motion', label: 'Motion', opts: [['system', 'Match my device'], ['reduce', 'Reduce motion']], hint: 'Reduce motion turns off page animations and screen shake in kit games.' },
+    { key: 'layout', label: 'Page layout', opts: [['fit', 'One screen'], ['scroll', 'Scrolling pages']], hint: 'One screen keeps every page inside the window and flips between its parts instead of scrolling.' },
     { key: 'speed', label: 'Game speed (assist mode)', opts: [['1', '100%'], ['0.75', '75%'], ['0.5', '50%']], hint: 'Slows every game. Assisted runs are kept as personal results and stay off ranked leaderboards.' },
     { key: 'sound', label: 'Game sound', opts: [['on', 'On'], ['off', 'Off']] },
   ];
@@ -177,6 +181,7 @@
     LS.set(KEY.prefs, S.prefs);
     applyPrefs();
     const after = gameOpts();
+    if (key === 'theme') { const cv = $('#home-world'); if (cv) { const fresh = cv.cloneNode(); cv.replaceWith(fresh); homeWorld(fresh); } }
     if (before.speed !== after.speed || before.calm !== after.calm || before.mute !== after.mute) renderView(true);
     const g = PREF_GROUPS.find((x) => x.key === key), o = g && g.opts.find(([v]) => v === raw);
     if (g && o) announce(g.label + ': ' + o[1] + '.');
@@ -914,17 +919,24 @@
 
   /* ---------------- rendering ---------------- */
   function renderHeader() {
+    document.documentElement.dataset.route = S.route;
     $$('.nav a').forEach((a) => { if (a.dataset.nav === S.route || (S.route === 'game' && a.dataset.nav === 'explore')) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     const chip = $('#wchip');
     if (!S.wallet) { chip.innerHTML = '<span class="dot off"></span><span>Get a wallet</span>'; return; }
     const w = myWallet();
     chip.innerHTML = '<span class="dot"></span><span class="addr">' + esc(short(S.wallet.from)) + '</span><span class="bal"><span title="' + UNIT + '">' + I.sol + fmtSOL(solOf(w)) + '</span><span title="Sparks">' + I.spark + fmtInt(w ? w.sparks : 0) + '</span><span title="GPLY">' + I.park + fmtInt(w ? w.park : 0) + '</span></span>';
   }
-  function footHTML() {
+  // compact: the front page's one-line footer, with the same facts in fewer words.
+  function footHTML(compact) {
     const where = S.mode === 'shared' ? 'Connected to the shared gallery'
       : S.hasDb ? 'View-only on the shared gallery; your activity stays on this device'
       : 'Running on this device only: your key, games and scores stay in this browser';
-    return '<footer class="foot"><div class="foot-main"><b class="foot-mark">CLAUDEPLAY</b>'
+    if (compact) {
+      return '<footer class="foot foot-mini"><p>ClaudePlay is an unofficial fan project, not affiliated with or endorsed by Anthropic or Google. Claude is a trademark of Anthropic.</p>'
+        + '<p>' + (MAINNET ? 'Collects and tips are real SOL on Solana mainnet, paid from your own wallet.' : CHAIN ? 'Devnet: payments use free test SOL, so no real funds move.' : 'Devnet preview: no real funds move.') + ' ' + esc(S.mode === 'shared' ? 'Connected to the shared gallery.' : S.hasDb ? 'View-only on the shared gallery.' : 'Your games stay in this browser.') + '</p>'
+        + '<nav class="foot-links" aria-label="Footer"><a href="#business" data-nav="business">For business</a><a href="#economy" data-nav="economy">Economy</a><button class="linkish" type="button" data-act="settings">Accessibility</button></nav></footer>';
+    }
+    return '<footer class="foot"><div class="foot-main"><b class="foot-mark">ClaudePlay</b>'
       + '<p>An unofficial fan project on Solana. Not affiliated with or endorsed by Anthropic, Google or Google Labs Playground. Claude is a trademark of Anthropic.</p>'
       + '<p>' + (MAINNET ? 'Collects and tips are real SOL on Solana mainnet, paid from your own wallet app straight to creators. ClaudePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.'
         : CHAIN ? 'Devnet: collects and tips are real Solana devnet transactions paid with free test SOL, so no real funds move. GPLY is a working name and is not for sale.'
@@ -958,11 +970,122 @@
         if (!full && typing) { S.ui.deferred = true; return; }
         v.innerHTML = S.route === 'wallet' ? viewWallet() : S.route === 'ledger' ? viewLedger() : S.route === 'economy' ? viewEconomy() : viewExplore();
     }
+    fitSoon();
   }
+
+  /* ---------- one screen ---------- */
+  // Pages never scroll. The page's blocks are grouped into panes that fit the window, and a pager flips between them
+  // (also by wheel, swipe and Page Up/Down). A block taller than the window keeps its own scroll box. The Page layout
+  // setting turns this off for people who prefer long pages.
+  let fitQueued = false, fitKey = '', flipAt = 0, fitSeen = [];
+  const fitRO = window.ResizeObserver ? new ResizeObserver(() => fitSoon()) : null;
+  function fitSoon() { if (fitQueued) return; fitQueued = true; requestAnimationFrame(() => { fitQueued = false; fitPanes(); }); }
+  function paneBlocks(v) {
+    const out = [];
+    for (const el of v.children) {
+      if (el.classList.contains('pager')) continue;
+      // One-column layouts on narrow screens split into their columns, so each column can get a pane of its own.
+      if (el.matches('.pack, .gp-grid, .studio, .grid2, .hero') && matchMedia('(max-width: 960px)').matches) out.push(...el.children); else out.push(el);
+    }
+    return out;
+  }
+  function fitPanes() {
+    const v = $('#view'); if (!v) return;
+    const on = document.documentElement.hasAttribute('data-fit');
+    let pager = v.querySelector(':scope > .pager');
+    const blocks = paneBlocks(v);
+    blocks.forEach((b) => { b.classList.remove('fit-off', 'fit-lead', 'fit-tall', 'enter-up', 'enter-down'); b.style.removeProperty('--fit-h'); });
+    for (const el of v.children) el.classList.remove('fit-off', 'fit-lead');
+    // Re-observe only when the blocks change: observe() always reports once, which would refit every frame.
+    if (fitRO && (blocks.length !== fitSeen.length || blocks.some((b, i) => b !== fitSeen[i]))) { fitRO.disconnect(); blocks.forEach((b) => fitRO.observe(b)); fitSeen = blocks; }
+    if (!on || !blocks.length) { if (pager) pager.remove(); S.ui.panes = null; return; }
+    const cs = getComputedStyle(v);
+    const room = v.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const sizes = blocks.map((b, i) => {
+      const gap = i && blocks[i - 1].parentElement === b.parentElement && b.parentElement !== v ? parseFloat(getComputedStyle(b.parentElement).rowGap) || 0 : 0;
+      // The first column of a split layout also carries the layout's own top margin.
+      const outer = b.parentElement !== v && b === b.parentElement.firstElementChild ? parseFloat(getComputedStyle(b.parentElement).marginTop) || 0 : 0;
+      const st = getComputedStyle(b);
+      return { h: b.getBoundingClientRect().height + (parseFloat(st.marginBottom) || 0), m: (parseFloat(st.marginTop) || 0) + gap + outer };
+    });
+    const total = sizes.reduce((a, x, i) => a + x.h + (i ? x.m : 0), 0);
+    const avail = total <= room + 1 ? room : room - (pager ? pager.getBoundingClientRect().height : 48) - 12;
+    // Greedy: fill a pane until the next block does not fit. A block taller than a pane takes what is left of the
+    // current pane when that is at least half of it (so a page title stays with its studio), else a pane of its own.
+    const groups = []; let cur = [], used = 0;
+    blocks.forEach((b, i) => {
+      const { h, m } = sizes[i];
+      const left = avail - used - (cur.length ? m : 0);
+      // The game page and the studio shrink into what is left under the title rather than leave it alone on a pane.
+      const squeeze = h > left + 1 && cur.length && left >= avail / 2 && b.matches('.gp-grid, .studio');
+      if (h > avail + 1 || squeeze) {
+        if (cur.length && left < avail / 2) { groups.push(cur); cur = []; used = 0; }
+        const box = cur.length ? avail - used - m : avail;
+        b.classList.add('fit-tall'); b.style.setProperty('--fit-h', Math.floor(box) + 'px');
+        cur.push(i); groups.push(cur); cur = []; used = 0; return;
+      }
+      if (cur.length && h > left + 1) { groups.push(cur); cur = []; used = 0; }
+      used += (cur.length ? m : 0) + h; cur.push(i);
+    });
+    if (cur.length) groups.push(cur);
+    const key = S.route + ':' + (S.arg || '');
+    if (key !== fitKey) { fitKey = key; S.ui.pane = 0; }
+    S.ui.pane = Math.max(0, Math.min(groups.length - 1, S.ui.pane || 0));
+    S.ui.panes = groups;
+    groups.forEach((g, gi) => g.forEach((bi, k) => { if (gi !== S.ui.pane) blocks[bi].classList.add('fit-off'); else if (!k) blocks[bi].classList.add('fit-lead'); }));
+    // A split layout whose columns are all on other panes is hidden too, so its margin takes no room.
+    for (const el of v.children) if (!blocks.includes(el)) el.classList.toggle('fit-off', [...el.children].every((c) => c.classList.contains('fit-off')));
+    if (groups.length < 2) { if (pager) pager.remove(); return; }
+    const names = groups.map((g, gi) => paneName(g.map((i) => blocks[i]), gi));
+    const html = '<button class="pg-step" type="button" data-act="pane" data-pane="' + (S.ui.pane - 1) + '"' + (S.ui.pane ? '' : ' disabled') + ' aria-label="Previous part">' + I.chev + '</button>'
+      + '<span class="pg-dots">' + names.map((n, i) => '<button class="pg-dot" type="button" data-act="pane" data-pane="' + i + '" aria-label="' + esc(n) + '"' + (i === S.ui.pane ? ' aria-current="step"' : '') + '><i></i></button>').join('') + '</span>'
+      + '<span class="pg-name" aria-hidden="true">' + esc(names[S.ui.pane]) + ' <span class="pg-count">' + (S.ui.pane + 1) + ' / ' + groups.length + '</span></span>'
+      + '<button class="pg-step next" type="button" data-act="pane" data-pane="' + (S.ui.pane + 1) + '"' + (S.ui.pane < groups.length - 1 ? '' : ' disabled') + ' aria-label="Next part">' + I.chev + '</button>';
+    if (!pager) { pager = document.createElement('nav'); pager.className = 'pager'; pager.setAttribute('aria-label', 'Parts of this page'); v.appendChild(pager); }
+    if (pager.dataset.sig !== html) { pager.innerHTML = html; pager.dataset.sig = html; }
+  }
+  function paneName(els, i) {
+    for (const el of els) if (el.dataset.part) return el.dataset.part;
+    for (const el of els) { const h = el.matches('h1, h2, h3') ? el : el.querySelector('h1, h2, h3, figcaption b'); if (h && h.textContent.trim()) return h.textContent.trim().replace(/\s+/g, ' ').slice(0, 40); }
+    return els.some((el) => el.matches('footer')) ? 'About ClaudePlay' : 'Part ' + (i + 1);
+  }
+  function flip(to) {
+    const g = S.ui.panes; if (!g || to < 0 || to >= g.length || to === S.ui.pane) return false;
+    const dir = to > S.ui.pane ? 'enter-up' : 'enter-down';
+    S.ui.pane = to; fitPanes();
+    const v = $('#view');
+    paneBlocks(v).forEach((b) => { if (!b.classList.contains('fit-off')) b.classList.add(dir); });
+    const dot = v.querySelector('.pg-dot[aria-current]');
+    announce((dot && dot.getAttribute('aria-label')) || '');
+    flipAt = performance.now();
+    return true;
+  }
+  function canScroll(el, dy) {
+    for (let n = el; n && n.id !== 'view'; n = n.parentElement) {
+      if (n.scrollHeight > n.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(n).overflowY)) {
+        if (dy > 0 ? n.scrollTop + n.clientHeight < n.scrollHeight - 1 : n.scrollTop > 0) return true;
+      }
+    }
+    return false;
+  }
+  addEventListener('resize', fitSoon);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSoon);
+  document.addEventListener('wheel', (e) => {
+    if (!S.ui.panes || S.ui.panes.length < 2 || Math.abs(e.deltaY) < 24 || $('.modal-back')) return;
+    if (!e.target.closest || !e.target.closest('#view') || canScroll(e.target, e.deltaY)) return;
+    if (performance.now() - flipAt < 700) return;
+    flip(S.ui.pane + (e.deltaY > 0 ? 1 : -1));
+  }, { passive: true });
+  let touchY = null;
+  document.addEventListener('touchstart', (e) => { touchY = e.touches.length === 1 && e.target.closest && e.target.closest('#view') && !canScroll(e.target, 1) && !canScroll(e.target, -1) ? e.touches[0].clientY : null; }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (touchY == null || !S.ui.panes) return;
+    const dy = touchY - e.changedTouches[0].clientY; touchY = null;
+    if (Math.abs(dy) > 70) flip(S.ui.pane + (dy > 0 ? 1 : -1));
+  }, { passive: true });
 
   /* ---------- explore ---------- */
   function cartHTML(g) {
-    const players = g.players ? g.players.size : 0;
     const tags = [];
     if (g.starter) tags.push('<span class="chip">Starter kit</span>');
     if (g.parent) tags.push('<span class="chip accent">Remix</span>');
@@ -971,14 +1094,13 @@
     if (g.local) tags.push('<span class="chip">This device</span>');
     if (g.ratingCount) tags.push('<span class="chip" title="Rated ' + g.rating.toFixed(1) + ' out of 5 by ' + plural(g.ratingCount, 'player') + '"><span aria-hidden="true">★</span> ' + g.rating.toFixed(1) + '<span class="sr"> out of 5 stars</span> (' + fmtInt(g.ratingCount) + ')</span>');
     const price = g.starter ? 'Free' : g.price ? fmtSOL(g.price) + ' SOL' : 'Free collect';
-    return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '">'
-      + '<div class="cart-body"><div class="cart-label">'
-      + '<img src="' + K.cover(g) + '" alt="" width="480" height="300">'
-      + '<div class="cart-title">' + esc(g.title) + '</div>'
-      + '<div class="cart-by"><span>by <b>' + esc(nameOf(g.creator)) + '</b></span><span>' + esc(price) + '</span></div>'
-      + '<div class="cart-tags">' + tags.join('') + '</div>'
-      + '<div class="cart-serial"><span>' + serial(g.hash) + '</span><span>' + plural(players, 'player') + '</span></div>'
-      + '</div><div class="cart-grip"></div></div></a>';
+    // Each sticker sits a few degrees off straight, the same way every time for the same game.
+    const tilt = ((parseInt(String(g.hash || g.gid).slice(-2), 16) || 0) % 7 - 3) * 0.6;
+    return '<a class="cart" href="#game-' + esc(g.gid) + '" data-act="open-game" data-gid="' + esc(g.gid) + '" style="--r:' + tilt.toFixed(1) + 'deg">'
+      + '<span class="sticker"><img src="' + K.cover(g) + '" alt="" width="480" height="300"></span>'
+      + '<span class="cart-title">' + esc(g.title) + '</span>'
+      + '<span class="cart-by"><span>by <b>' + esc(nameOf(g.creator)) + '</b></span><span>' + esc(price) + '</span></span>'
+      + '<span class="cart-tags">' + tags.join('') + '</span></a>';
   }
   const SORTS = [['new', 'Newest'], ['played', 'Most played'], ['earning', 'Top earning'], ['remixed', 'Most remixed'], ['rated', 'Top rated'], ['boosted', 'Boosted']];
   /* Ranks by rating, pulled toward 3 stars until a game has a few ratings, so one 5-star vote does not top the list. */
@@ -999,7 +1121,7 @@
     const totalPlayers = w ? new Set([].concat(...[...w.games.values()].map((g) => [...g.players]))).size : 0;
     const sigs = w ? w.log.filter((r) => r.ok).length : 0;
     return '<section class="page-head"><div class="stack">'
-      + '<p class="eyebrow">Arcade</p><h1>Play any game free</h1>'
+      + '<h1>Play any game free</h1>'
       + '<p class="lede">Open a cartridge and play in your browser. Your best runs are signed to the leaderboard. Slower game speed, sound and contrast are in <button class="linkish" type="button" data-act="settings">Accessibility settings</button>.</p></div>'
       + '<div class="facts"><div class="fact"><b>' + fmtInt(w ? [...w.games.values()].filter((g) => !g.starter).length : 0) + '</b><span>community cartridges</span></div><div class="fact"><b>' + fmtInt(totalPlayers) + '</b><span>' + (totalPlayers === 1 ? 'unique player' : 'unique players') + '</span></div><div class="fact"><b>' + fmtInt(sigs) + '</b><span>signed transactions</span></div></div>'
       + '</section>'
@@ -1014,42 +1136,6 @@
   }
 
   /* ---------- home: the public front door ---------- */
-  const PLAYGROUND_SOURCES = [
-    ['Gizmodo', 'https://gizmodo.com/googles-new-playground-aims-to-make-it-easy-to-vibe-code-a-game-right-in-your-browser-2000822955'],
-    ['Nerdzap', 'https://nerdzap.com/news/google-playground-ai-game-maker-uk-roblox-build/'],
-  ];
-  const ROADMAP = [
-    { name: 'Validate', now: true, what: 'This preview, creator interviews and tuning the AI studio', gate: '40% of testers publish a game' },
-    { name: 'Devnet alpha', what: 'Solana programs and passkey wallets, still with no real money', gate: 'Security audit passed and reports handled within 24 hours' },
-    { name: 'Mainnet beta', what: 'USDC collects, royalties and tips, plus free tournaments', gate: 'A legal opinion on GPLY' },
-    { name: 'Economy', what: 'Points convert to GPLY, weekly rewards and human checks against bots', gate: 'Fees cover rewards four weeks running' },
-    { name: 'Scale', what: 'A developer SDK and export, a mobile app and a multiplayer kit' },
-  ];
-  const FAQ = [
-    ['Is ClaudePlay free?', 'Yes. Playing, making and publishing are free. Every week you get ' + R.WEEKLY_SPARKS + ' Sparks for AI builds, and you earn ' + R.SPARKS_PER_PLAYER + ' more for each new player who tries one of your games.'],
-    ['Do I need a crypto wallet?', 'No. The first time you score or publish, ClaudePlay creates a wallet key in your browser. You can connect Phantom, Solflare or Backpack later, or export the key from Wallet.'],
-    MAINNET ? ['Is this real money?', 'Yes. Collects and tips are paid in real SOL from your own wallet app, straight to the creator, the remix creators and a 5% protocol fee. ClaudePlay never holds your funds. GPLY rewards are points with no cash value, and nothing is for sale.']
-      : ['Is this real money?', 'Not yet. This preview runs on Solana devnet, so SOL balances are test tokens. GPLY is the working name of a future reward token. Nothing is for sale and there is no presale.'],
-    ['Who can use it?', 'Anyone with a modern browser, in any country. When real-money features arrive they will follow local rules, including age checks where the law requires them.'],
-    ['Is ClaudePlay made by Anthropic or Google?', 'No. ClaudePlay is an unofficial fan project. It is not affiliated with or endorsed by Anthropic, Google or Google Labs Playground. Claude is a trademark of Anthropic.'],
-    ['Can I keep my game?', 'Yes. Every game is one HTML file. Download it from its page and it plays offline in any browser, with no ClaudePlay account.'],
-    ['How are leaderboards kept fair?', 'Each score is signed by the player’s key and tied to the exact game file, with a seed and an input log so a suspicious run can be checked. Runs in assist mode stay off ranked boards.'],
-    ['Where is my data stored?', 'In this preview your wallet key, games and scores stay in your browser on this device. Clearing site data removes them, so export your key from Wallet if you want to keep it.'],
-    ['How do I report a game?', 'Open the game and press Report. Moderators can delist it, and the signed record stays on the ledger.'],
-  ];
-  function specTable() {
-    const rows = [
-      ['Who can use it', 'US only, 18+, with a Google sign-in', 'Anyone, anywhere, with no sign-up to play or make'],
-      ['Cost of making', 'Weekly token allowance; more with Google One', R.WEEKLY_SPARKS + ' free Sparks a week, plus ' + R.SPARKS_PER_PLAYER + ' for every new player you bring'],
-      ['Ownership', 'Hosted on Google’s platform', 'A signed game file you can download and host anywhere'],
-      ['Creator earnings', 'None announced', 'Collects, tips, remix royalties and weekly rewards'],
-      ['Leaderboards', 'Play Games profile, in select genres', 'Wallet-signed scores tied to the exact game file'],
-      ['Sharing', 'No outside links; built-in Social Links only', 'Share a link anywhere or download the file'],
-    ];
-    return '<div class="spec"><table><caption class="sr">ClaudePlay compared with Google Labs Playground</caption><thead><tr><th scope="col"><span class="sr">Feature</span></th><th scope="col">Google Labs Playground</th><th scope="col">ClaudePlay</th></tr></thead><tbody>'
-      + rows.map(([k, a, b]) => '<tr><th scope="row">' + esc(k) + '</th><td class="them">' + esc(a) + '</td><td class="us">' + esc(b) + '</td></tr>').join('')
-      + '</tbody></table></div>';
-  }
   function startersList() {
     const w = S.world;
     return S.starters.map((s) => (w && w.games.get(s.gid)) || Object.assign({ creator: C.STARTER, starter: true, players: new Set(), collects: [] }, s));
@@ -1059,84 +1145,33 @@
     const community = w ? [...w.games.values()].filter((g) => !g.starter && !g.delisted).sort((a, b) => (b.players.size - a.players.size) || (b.ts - a.ts)).slice(0, 3) : [];
     return community.concat(startersList()).slice(0, 8).map(cartHTML).join('');
   }
+  // The front page is one screen over the background game: the copy card with the prompt, the playable console and a rail of games.
   function homeHTML() {
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
-    const creatorBps = 10000 - R.FEE_BPS - R.PARENT_BPS - R.GRAND_BPS;
-    const seg = [['you', 'You, the remixer', creatorBps], ['parent', 'Creator of the game you remixed', R.PARENT_BPS], ['grand', 'Creator one step further back', R.GRAND_BPS], ['fee', 'ClaudePlay protocol fee', R.FEE_BPS]];
-    const solOf = (bps) => (bps / 10000).toFixed(2);
     const st = S.studio || {};
     const dim = st.dim || '2d';
-    return '<section class="hero hero-home" aria-labelledby="hero-title"><canvas class="hero-3d" id="hero-3d" aria-hidden="true"></canvas><div class="hero-copy">'
+    return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy">'
       + '<h1 class="hero-title" id="hero-title"><span>Make it.</span> <span>Play it.</span> <span class="hl">Own it.</span></h1>'
-      + '<p class="lede">Describe a game in one sentence and Claude builds it, ready to play on any phone. Share it with a link, and earn when people play, collect or remix it.</p>'
+      + '<p class="lede">Describe a game and Claude builds it. Share the link and earn when people collect it.</p>'
       + '<form class="maker" data-form="home-build"><label class="sr" for="home-prompt">Describe your game</label>'
       + '<div class="maker-box"><textarea id="home-prompt" rows="2" maxlength="600" placeholder="A cat on a skateboard dodging gas fees across neon rooftops">' + esc(st.versions && st.versions.length ? '' : (st.prompt || '')) + '</textarea>'
       + '<div class="maker-bar"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + (dim === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
       + '<button class="btn primary" type="submit">' + I.spark + (aiReady() ? ' Build it' : ' Open the studio') + '</button></div></div>'
-      + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or start from a crypto idea</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form>'
-      + '<div class="row cta"><a class="btn" href="#explore" data-nav="explore">' + I.play + ' Play a game</a><a class="btn ghost" href="#create" data-act="home-kit">Tune a kit, no AI</a></div>'
-      + '<p class="fine">Free to play and make, with no sign-up or wallet needed. ' + (MAINNET ? 'Collects and tips are paid in real SOL from your own wallet.' : 'Preview on Solana devnet: balances are test tokens and nothing is for sale.') + '</p></div>'
-      + '<div class="stage3d"><figure class="console" id="home-console"><div class="console-bar"><span class="led" aria-hidden="true"></span><span>Now playing</span><span class="serial">' + serial(hero ? hero.hash : '') + '</span></div>'
+      + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Or try</span>' + CRYPTO_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form></div>'
+      + '<div class="stage3d">'
+      + '<figure class="console" id="home-console">'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
-      + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure></div></section>'
-
-      + '<section class="section" aria-labelledby="h-carts"><div class="section-head"><h2 id="h-carts">Pick a cartridge</h2><a href="#explore" data-nav="explore">See the whole arcade</a></div>'
-      + '<p class="muted">Every game here is free to play and free to remix.</p><div class="shelf" id="home-shelf">' + homeShelf() + '</div></section>'
-
-      + '<section class="section" aria-labelledby="h-ways"><div class="section-head"><h2 id="h-ways">Three ways in</h2></div><div class="ways">'
-      + '<article class="way"><p class="eyebrow">Players</p><h3>Play</h3><p>Play any game free. Your best scores are signed to a public leaderboard, and top players share the weekly reward pool.</p><a class="btn" href="#explore" data-nav="explore">Browse the arcade</a></article>'
-      + '<article class="way"><p class="eyebrow">Creators</p><h3>Make</h3><p>Tune one of five game kits in a minute, or describe a new game to the AI studio. Publishing is free, and the result is one file you own.</p><a class="btn" href="#create" data-nav="create">Open the maker</a></article>'
-      + '<article class="way"><p class="eyebrow">Brands, communities, schools</p><h3>Bring it to your crowd</h3><p>Branded mini-games, playable quests with checkable winners, and game-making workshops.</p><a class="btn" href="#business" data-nav="business">ClaudePlay for business</a></article>'
-      + '</div></section>'
-
-      + '<section class="section" aria-labelledby="h-steps"><div class="section-head"><h2 id="h-steps">From idea to published game</h2></div><ol class="steps">'
-      + '<li><b>Start from a kit or a sentence</b><p>Pick Runner, Flapper, Shooter, Breaker or Dodger and tune speed, gravity and colors. Or describe a new game to the AI studio.</p></li>'
-      + '<li><b>Play-test as you go</b><p>The preview restarts with every change. Each game works with touch, mouse and keyboard.</p></li>'
-      + '<li><b>Publish and sign</b><p>Your wallet signs the game’s fingerprint, so anyone can check it was not changed. You set the collect price and the number of editions.</p></li>'
-      + '<li><b>Earn as it spreads</b><p>New players bring you Sparks, collectors pay you SOL, and every remix of your game pays you a share.</p></li>'
-      + '</ol></section>'
-
-      + '<section class="section" aria-labelledby="h-earn"><div class="section-head"><h2 id="h-earn">How creators earn</h2><a href="#economy" data-nav="economy">Full economy</a></div><div class="earn">'
-      + '<div class="panel stack"><p class="eyebrow">Someone collects a remix of a remix for 1 SOL</p>'
-      + '<div class="splitbar" role="img" aria-label="' + esc(seg.map(([, l, b]) => l + ' ' + pct(b)).join(', ')) + '">' + seg.map(([k, , b]) => '<i class="seg-' + k + '" style="flex:' + b + '"></i>').join('') + '</div>'
-      + '<ul class="legend">' + seg.map(([k, l, b]) => '<li><i class="seg-' + k + '" aria-hidden="true"></i><span>' + esc(l) + '</span><b class="num">' + solOf(b) + ' SOL</b></li>').join('') + '</ul>'
-      + '<p class="muted">An original game keeps ' + pct(10000 - R.FEE_BPS) + '. Tips go 100% to the creator.</p></div>'
-      + '<ul class="earn-list">'
-      + '<li><b>Collects</b><span>Fans pay to own a numbered edition. The game stays free to play for everyone.</span></li>'
-      + '<li><b>Tips</b><span>Players can tip any creator, and the whole tip goes to them.</span></li>'
-      + '<li><b>Remix royalties</b><span>' + pct(R.PARENT_BPS) + ' of a remix’s collects goes to the original creator and ' + pct(R.GRAND_BPS) + ' to the one before.</span></li>'
-      + '<li><b>Weekly rewards</b><span>' + Math.round(R.CREATOR_SHARE * 100) + '% of each week’s GPLY goes to creators, by unique players. ' + Math.round(R.PLAYER_SHARE * 100) + '% goes to players, by leaderboard places.</span></li>'
-      + '<li><b>Sparks</b><span>' + R.SPARKS_PER_PLAYER + ' Sparks for each new player of your game, up to ' + R.SPARKS_PLAYER_CAP + ' players per game.</span></li>'
-      + '</ul></div><p class="fine">' + (MAINNET ? 'Collects, tips and royalties are paid in real SOL straight to your wallet. GPLY rewards are points with no cash value.' : 'On devnet these are test balances. Real payouts start at mainnet beta, after a security audit.') + '</p></section>'
-
-      + '<section class="section" aria-labelledby="h-compare"><div class="section-head"><h2 id="h-compare">ClaudePlay and Google Labs Playground</h2></div>'
-      + '<p class="muted">Google Labs launched Playground on October 7, 2026. Here is how the two compare.</p>'
-      + '<div class="table-scroll">' + specTable() + '</div>'
-      + '<p class="fine">Playground details as reported in October 2026: ' + PLAYGROUND_SOURCES.map(([n, u]) => '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(n) + '</a>').join(', ') + '.</p></section>'
-
-      + '<section class="section access" aria-labelledby="h-access"><div class="section-head"><h2 id="h-access">Built for every player</h2><button class="btn" type="button" data-act="settings">Open accessibility settings</button></div>'
-      + '<p class="muted">These settings work across the site and inside every game.</p><ul class="feature-grid">'
-      + '<li><b>Assist mode</b><span>Slow any game to 75% or 50% speed. Assisted runs count as personal results and stay off ranked leaderboards.</span></li>'
-      + '<li><b>One-button friendly</b><span>Runner and Flapper play with a single key or tap. Every kit works with keyboard, touch or mouse.</span></li>'
-      + '<li><b>Calm motion</b><span>Turn off screen shake and page animations, or follow your device’s reduced-motion setting.</span></li>'
-      + '<li><b>High contrast, larger text</b><span>A black-and-yellow high-contrast theme and three text sizes.</span></li>'
-      + '<li><b>Screen reader support</b><span>Labeled controls, focus that moves to each new page, and a spoken score when a run ends.</span></li>'
-      + '<li><b>Light on data</b><span>One small page with no tracking scripts. Games are single files you can download and play offline.</span></li>'
-      + '</ul></section>'
-
-      + '<section class="section" aria-labelledby="h-road"><div class="section-head"><h2 id="h-road">Roadmap</h2></div>'
-      + '<p class="muted">Fun first, money second, the token last. Each stage opens when the checkpoint before it is met, not on a date.</p><ol class="road">'
-      + ROADMAP.map((s, i) => '<li class="stage' + (s.now ? ' now' : '') + '"><div class="stage-top"><span class="stage-n">Stage ' + (i + 1) + '</span>' + (s.now ? '<span class="chip accent">We are here</span>' : '') + '</div><b>' + esc(s.name) + '</b><p>' + esc(s.what) + '</p>' + (s.gate ? '<p class="gate"><span>Checkpoint</span>' + esc(s.gate) + '</p>' : '') + '</li>').join('')
-      + '</ol></section>'
-
-      + '<section class="section" aria-labelledby="h-faq"><div class="section-head"><h2 id="h-faq">Questions</h2></div><div class="faq">'
-      + FAQ.map(([q, a]) => '<details><summary>' + esc(q) + '</summary><p>' + esc(a) + '</p></details>').join('')
-      + '</div></section>';
+      + '<figcaption class="console-cap"><span><b>Neon Dash</b> · Tap the game, or press Tab to reach it and Space to jump.</span><a href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">Leaderboard</a></figcaption></figure>'
+      + '<img class="mascot" id="home-mascot" src="' + MASCOT + '" alt="" width="370" height="403" decoding="async"></div>'
+      + '<div class="pack-shelf"><div class="pack-shelf-head"><h2 id="h-carts">Pick a game</h2><a href="#explore" data-nav="explore">See every game</a></div>'
+      + '<div class="shelf" id="home-shelf">' + homeShelf() + '</div></div></section>';
   }
   function mountHome() {
     unmountPlayer('home-screen');
-    $('#view').innerHTML = homeHTML() + footHTML();
-    heroScene($('#hero-3d'));
+    $('#view').innerHTML = '<canvas class="world" id="home-world" aria-hidden="true"></canvas>' + homeHTML() + footHTML(true);
+    homeWorld($('#home-world'));
+    wakeMascot($('#home-mascot'));
+    packDepth($('#home-pack'));
     revealShelf($('#home-shelf'));
     const host = $('#home-screen');
     const hero = S.starters.find((s) => s.gid === 'kit-neon-dash');
@@ -1147,129 +1182,428 @@
       onMessage: (d, p) => { if (d.t === 'over') onGameOver(hero.gid, d, p).catch((e) => toast(e.message, 'bad')); },
     });
   }
-  /* The front page's backdrop: cartridges floating in 3D, drawn with a small perspective projection on a
-     2D canvas (no WebGL needed). Colors come from the theme tokens, so every theme recolors it. It pauses
-     off screen and in a hidden tab, and draws one still frame when calm motion is on. */
-  function heroScene(canvas) {
-    const ctx = canvas.getContext && canvas.getContext('2d');
-    if (!ctx) return;
-    let pal, palAt = -1;
-    const readPal = () => {
-      const css = getComputedStyle(document.documentElement), tok = (n) => css.getPropertyValue(n).trim() || '#888';
-      pal = { body: tok('--shell'), side: tok('--shell-dark'), line: tok('--line'), labels: [tok('--accent'), tok('--gold'), tok('--seg-3'), tok('--bad'), tok('--good')] };
-    };
-    readPal();
-    let seed = 7;
-    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    const carts = Array.from({ length: 30 }, (_, i) => ({
-      x: (rnd() - 0.5) * 30, y: (rnd() - 0.5) * 13, z: 9 + rnd() * 16,
-      rx: rnd() * 6.28, ry: rnd() * 6.28, vx: (rnd() - 0.5) * 0.5, vy: 0.25 + rnd() * 0.45, drift: 0.08 + rnd() * 0.12,
-      label: i % 5, s: 0.8 + rnd() * 0.5,
-    }));
-    // A cartridge: a box 1.0 wide, 1.2 tall, 0.26 deep, with a label on the front face.
-    const W = 0.5, H = 0.6, D = 0.13;
-    const V = [[-W, -H, -D], [W, -H, -D], [W, H, -D], [-W, H, -D], [-W, -H, D], [W, -H, D], [W, H, D], [-W, H, D]];
-    const F = [[0, 1, 2, 3, 'front'], [5, 4, 7, 6, 'back'], [4, 0, 3, 7, 'side'], [1, 5, 6, 2, 'side'], [4, 5, 1, 0, 'side'], [3, 2, 6, 7, 'side']];
-    const LIGHT = (() => { const l = [-0.4, -0.6, -0.7], m = Math.hypot(...l); return l.map((v) => v / m); })();
-    let w = 0, h = 0, raf = 0, last = 0, t = 0, px = 0, py = 0, visible = true;
-    function size() {
-      const r = canvas.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
-      w = r.width; h = r.height; canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    const shade = (hex, k) => {
-      const m = /^#?([0-9a-f]{6})$/i.exec(hex); if (!m) return hex;
-      const n = parseInt(m[1], 16), f = (c) => Math.max(0, Math.min(255, Math.round(c * k)));
-      return 'rgb(' + f(n >> 16) + ',' + f((n >> 8) & 255) + ',' + f(n & 255) + ')';
-    };
-    function draw() {
-      if (Math.floor(t) !== palAt) { palAt = Math.floor(t); readPal(); } // follows theme changes
-      ctx.clearRect(0, 0, w, h);
-      const focal = Math.min(w, 900) * 0.9, cx = w * (w > 900 ? 0.62 : 0.5) + px * 18, cy = h * 0.5 + py * 12;
-      const polys = [];
-      for (const c of carts) {
-        const ax = c.rx + t * c.vx, ay = c.ry + t * c.vy, sx = Math.sin(ax), cxr = Math.cos(ax), sy = Math.sin(ay), cyr = Math.cos(ay);
-        const yy = c.y + Math.sin(t * c.drift + c.x) * 0.6;
-        const pts = V.map(([x, y, z]) => {
-          x *= c.s; y *= c.s; z *= c.s;
-          const x1 = x * cyr + z * sy, z1 = -x * sy + z * cyr;
-          const y2 = y * cxr - z1 * sx, z2 = y * sx + z1 * cxr;
-          return [x1 + c.x + px * 0.4, y2 + yy + py * 0.3, z2 + c.z];
-        });
-        for (const [a, b, cc, d, kind] of F) {
-          const A = pts[a], B = pts[b], Cc = pts[cc];
-          const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [Cc[0] - A[0], Cc[1] - A[1], Cc[2] - A[2]];
-          const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-          const mid = [(A[0] + Cc[0]) / 2, (A[1] + Cc[1]) / 2, (A[2] + Cc[2]) / 2];
-          if (n[0] * mid[0] + n[1] * mid[1] + n[2] * mid[2] <= 0) continue; // facing away
-          const nm = Math.hypot(n[0], n[1], n[2]) || 1, lit = 0.72 + 0.38 * Math.max(0, -(n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / nm);
-          const quad = [a, b, cc, d].map((i) => pts[i]);
-          if (quad.some((p) => p[2] < 0.5)) continue;
-          polys.push({ z: mid[2], kind, lit, label: pal.labels[c.label], quad, fog: Math.min(0.9, Math.max(0.15, 1.5 - mid[2] / 20)) });
-        }
-      }
-      polys.sort((p, q) => q.z - p.z);
-      const proj = (p) => [cx + (p[0] / p[2]) * focal, cy + (p[1] / p[2]) * focal];
-      for (const p of polys) {
-        const q = p.quad.map(proj);
-        ctx.globalAlpha = p.fog;
-        ctx.beginPath(); q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
-        ctx.fillStyle = shade(p.kind === 'side' ? pal.side : pal.body, p.lit); ctx.fill();
-        ctx.lineWidth = 1; ctx.strokeStyle = pal.line; ctx.stroke();
-        if (p.kind === 'front') {
-          // The label: the top two thirds of the face, inset.
-          const lerp = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
-          const [tl, tr, br, bl] = [q[0], q[1], q[2], q[3]];
-          const L = (u, v) => lerp(lerp(tl, tr, u), lerp(bl, br, u), v);
-          const lab = [L(0.14, 0.1), L(0.86, 0.1), L(0.86, 0.6), L(0.14, 0.6)];
-          ctx.beginPath(); lab.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
-          ctx.fillStyle = shade(p.label, p.lit); ctx.fill();
-        }
-      }
-      ctx.globalAlpha = 1;
-    }
-    function frame(now) {
-      if (!canvas.isConnected) return;
-      raf = 0;
-      if (!visible || !w || document.hidden || calmNow()) return;
-      t += Math.min(0.05, (now - (last || now)) / 1000); last = now;
-      draw();
-      raf = requestAnimationFrame(frame);
-    }
-    const wake = () => { if (!raf && canvas.isConnected && canvas.offsetWidth) { last = 0; draw(); if (!calmNow()) raf = requestAnimationFrame(frame); } };
-    size(); draw();
-    if ('IntersectionObserver' in window) new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible) wake(); }).observe(canvas);
-    heroScene.cur = { resize: () => { size(); draw(); wake(); }, wake };
-    if (!heroScene.bound) {
-      heroScene.bound = true;
-      const live = () => heroScene.cur && $('#hero-3d') ? heroScene.cur : null;
-      window.addEventListener('resize', () => { const c = live(); if (c) c.resize(); });
-      document.addEventListener('visibilitychange', () => { const c = live(); if (c && !document.hidden) c.wake(); });
-    }
-    const hero = canvas.parentElement;
-    if (hero && window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
-      hero.addEventListener('pointermove', (e) => {
-        if (calmNow()) return;
-        const r = hero.getBoundingClientRect();
-        px = (e.clientX - r.left) / r.width - 0.5; py = (e.clientY - r.top) / r.height - 0.5;
-        const con = $('#home-console');
-        if (con) con.style.setProperty('--tilt-x', (-py * 5).toFixed(2) + 'deg'), con.style.setProperty('--tilt-y', (px * 7 - 9).toFixed(2) + 'deg');
-      });
-      hero.addEventListener('pointerleave', () => { px = py = 0; const con = $('#home-console'); if (con) { con.style.removeProperty('--tilt-x'); con.style.removeProperty('--tilt-y'); } });
-    }
-    wake();
+  // Cart, the mascot, is a sticker on the console. The page carries a still; on the website (SITE.mascot, set by
+  // build.mjs) the waving loop, a separate file next to the page, replaces it once loaded, unless calm motion is on.
+  const MASCOT = 'MASCOT_STILL';
+  function wakeMascot(img) {
+    if (!img || !SITE.mascot || calmNow()) return;
+    const anim = new Image();
+    anim.onload = () => { if (img.isConnected && !calmNow()) img.src = anim.src; };
+    anim.src = SITE.mascot;
   }
-  // Cartridges on a shelf slide up in turn the first time they scroll into view.
+  // The pack follows the pointer: each layer moves by its own depth (--d), so the stickers read as a 3D stack.
+  function packDepth(pack) {
+    if (!pack || !window.matchMedia || !window.matchMedia('(pointer: fine)').matches) return;
+    let raf = 0, x = 0, y = 0;
+    const put = () => { raf = 0; pack.style.setProperty('--px', x.toFixed(3)); pack.style.setProperty('--py', y.toFixed(3)); };
+    pack.addEventListener('pointermove', (e) => {
+      if (calmNow()) return;
+      const r = pack.getBoundingClientRect();
+      x = (e.clientX - r.left) / r.width - 0.5; y = (e.clientY - r.top) / r.height - 0.5;
+      if (!raf) raf = requestAnimationFrame(put);
+    });
+    pack.addEventListener('pointerleave', () => { x = y = 0; if (!raf) raf = requestAnimationFrame(put); });
+  }
+  // Game tiles rise in turn the first time they scroll into view.
   function revealShelf(root) {
     if (!root || calmNow() || !('IntersectionObserver' in window)) return;
     const io = new IntersectionObserver((list) => list.forEach((e) => {
       if (!e.isIntersecting) return;
       io.unobserve(e.target);
-      e.target.style.setProperty('--i', String([...e.target.parentElement.children].indexOf(e.target) % 8));
+      const row = e.target.parentElement;
+      if (!row) return;
+      e.target.style.setProperty('--i', String([...row.children].indexOf(e.target) % 8));
       e.target.classList.add('in');
     }), { rootMargin: '0px 0px -8% 0px' });
     [...root.children].forEach((c) => io.observe(c));
   }
+  /* ---------- the background: a 3D game that plays itself behind the front page ---------- */
+  // Cart's hover-kart races down a quiet track through a city of game cartridges, grabbing coins and dodging blocks.
+  // It drives itself; move the mouse to steer it and click an empty spot to jump. It holds still while the console game has focus. Raw WebGL, no libraries; colors come
+  // from the --w-* tokens. Calm motion draws one still frame. The contrast theme and browsers without WebGL keep the
+  // plain page. It is decoration: aria-hidden, no pointer events, and it stops when the page leaves the front page.
+  let bgGame = null;
+  function homeWorld(cv) {
+    if (bgGame) { bgGame.stop(); bgGame = null; }
+    if (!cv) return;
+    if (document.documentElement.getAttribute('data-gp-theme') === 'contrast') { cv.hidden = true; return; }
+    let gl = null;
+    // Only with a real graphics chip: on software rendering the scene would slow the playable console down.
+    try { gl = cv.getContext('webgl', { antialias: true, alpha: false, powerPreference: 'low-power', failIfMajorPerformanceCaveat: true }); } catch (e) { gl = null; }
+    if (gl) {
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      const who = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
+      if (/swiftshader|llvmpipe|softpipe|software/i.test(who)) gl = null;
+    }
+    if (!gl) { cv.hidden = true; return; }
+    cv.hidden = false;
+    const rnd = Math.random, TAU = Math.PI * 2;
+    const pick = (a) => a[Math.floor(rnd() * a.length)];
+
+    // Colors: the --w-* tokens of the current theme.
+    let P = null;
+    function palette() {
+      const css = getComputedStyle(document.documentElement);
+      const c = (n) => { const m = css.getPropertyValue(n).trim().match(/^#([0-9a-f]{6})$/i); const v = m ? parseInt(m[1], 16) : 0x808080; return [(v >> 16 & 255) / 255, (v >> 8 & 255) / 255, (v & 255) / 255]; };
+      P = { sky: c('--w-sky'), haze: c('--w-haze'), floor: c('--w-floor'), grid: c('--w-grid'), sunA: c('--w-sun'), sunB: c('--w-sun-2'),
+        coin: c('--w-coin'), hot: c('--w-hot'), cool: c('--w-cool'), pop: c('--w-pop'), ship: c('--w-ship'), die: c('--w-glow') };
+      const l = 0.2126 * P.sky[0] + 0.7152 * P.sky[1] + 0.0722 * P.sky[2];
+      P.dark = l < 0.3;
+      P.blocks = [P.hot, P.pop, P.cool];
+    }
+    palette();
+
+    // Shaders.
+    const prog = (vs, fs) => {
+      const p = gl.createProgram();
+      [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]].forEach(([t, s]) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh); gl.attachShader(p, sh); });
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('shader');
+      const u = {}, a = {};
+      for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i++) { const n = gl.getActiveUniform(p, i).name; u[n] = gl.getUniformLocation(p, n); }
+      for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES); i++) { const n = gl.getActiveAttrib(p, i).name; a[n] = gl.getAttribLocation(p, n); }
+      return { p, u, a };
+    };
+    const FOG = 'uniform vec3 uFog, uCam; uniform float uFN, uFF; vec3 fog(vec3 c, vec3 w) { float f = clamp((length(w - uCam) - uFN) / (uFF - uFN), 0., 1.); return mix(c, uFog, f * f); }';
+    let SKY, FLOOR, MESH, PTS;
+    try {
+      SKY = prog('attribute vec2 aP; varying vec2 vQ; void main() { vQ = aP; gl_Position = vec4(aP, 0.999, 1.); }',
+        'precision mediump float; varying vec2 vQ; uniform vec3 uTop, uHaze, uSunA, uSunB; uniform float uH, uAsp, uTime, uDark;'
+        + 'float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }'
+        + 'void main() { float y = vQ.y; float t = clamp((y - uH) / (1.2 - uH), 0., 1.); vec3 c = mix(uHaze, uTop, pow(t, .55));'
+        + 'vec2 s = vec2(vQ.x * uAsp, y - uH - .2); float r = length(s), R = .3;'
+        + 'float cut = s.y < .02 ? step(.3 - s.y / R * .5, fract(s.y * 16. + uTime * .35)) : 1.;'
+        + 'vec3 sun = mix(uSunB, uSunA, clamp((s.y + R) / (2. * R), 0., 1.));'
+        + 'c += uSunB * .22 * exp(-max(r - R, 0.) * 4.) * step(uH, y);'
+        + 'c = mix(c, sun, smoothstep(R, R - .006, r) * cut * step(uH, y));'
+        + 'vec2 g = floor(vQ * vec2(uAsp, 1.) * 150.); float st = step(.996, hash(g)) * uDark * t * (.6 + .4 * sin(uTime * 2. + hash(g + 3.) * 30.));'
+        + 'gl_FragColor = vec4(c + st, 1.); }');
+      FLOOR = prog('attribute vec3 aP; uniform mat4 uVP; varying vec3 vW; void main() { vW = aP; gl_Position = uVP * vec4(aP, 1.); }',
+        'precision mediump float; varying vec3 vW; uniform vec3 uFloor, uGrid; uniform float uScroll, uPulse; ' + FOG
+        + 'void main() { vec2 g = vec2(vW.x / 2.2 + .5, (vW.z - uScroll) / 3.); float d = length(vW - uCam); float w = .03 + d * .0022;'
+        + 'vec2 e = .5 - abs(fract(g) - .5); float line = 1. - smoothstep(0., w, min(e.x, e.y));'
+        + 'float track = 1. - smoothstep(5.4, 6.4, abs(vW.x)); vec3 c = mix(uFloor, uFloor * .78 + uGrid * .1, track);'
+        + 'c = mix(c, uGrid, line * mix(.4, 1., track)); c += uGrid * track * .06 * (1. + uPulse) * exp(-abs(vW.x) * .3);'
+        + 'gl_FragColor = vec4(fog(c, vW), 1.); }');
+      MESH = prog('attribute vec3 aP, aN; attribute vec2 aU; uniform mat4 uVP, uM; varying vec3 vN, vW; varying vec2 vU;'
+        + 'void main() { vec4 w = uM * vec4(aP, 1.); vW = w.xyz; vN = (uM * vec4(aN, 0.)).xyz; vU = aU; gl_Position = uVP * w; }',
+        'precision mediump float; varying vec3 vN, vW; varying vec2 vU; uniform vec3 uC, uL; uniform float uE, uEdge, uT; uniform sampler2D uTex; ' + FOG
+        + 'void main() { vec3 n = normalize(vN); float d = max(dot(n, uL), 0.); float rim = pow(1. - max(dot(n, normalize(uCam - vW)), 0.), 3.);'
+        + 'vec3 b = uT > .5 ? texture2D(uTex, vU).rgb : uC; float edge = step(.9, max(abs(vU.x - .5), abs(vU.y - .5)) * 2.);'
+        + 'vec3 c = b * (.45 + .6 * d) + uC * rim * .4 + b * uE + uC * edge * uEdge;'
+        + 'gl_FragColor = vec4(fog(c, vW), 1.); }');
+      PTS = prog('attribute vec3 aP; attribute vec4 aC; attribute float aS; uniform mat4 uVP; uniform float uPx; varying vec4 vC;'
+        + 'void main() { vec4 p = uVP * vec4(aP, 1.); gl_Position = p; gl_PointSize = clamp(aS * uPx / p.w, 1., 90.); vC = aC; }',
+        'precision mediump float; varying vec4 vC; void main() { float a = smoothstep(.5, .1, length(gl_PointCoord - .5)); gl_FragColor = vec4(vC.rgb, vC.a * a); }');
+    } catch (e) { cv.hidden = true; return; }
+
+    // Meshes: position, normal, uv per vertex, drawn as plain triangles.
+    const mesh = (data) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW); return { b, n: data.length / 8 }; };
+    const CUBE = mesh((() => {
+      const v = [], F = [[0, 0, 1, 1, 0, 0, 0, 1, 0], [0, 0, -1, -1, 0, 0, 0, 1, 0], [1, 0, 0, 0, 0, -1, 0, 1, 0], [-1, 0, 0, 0, 0, 1, 0, 1, 0], [0, 1, 0, 1, 0, 0, 0, 0, -1], [0, -1, 0, 1, 0, 0, 0, 0, 1]];
+      for (const [nx, ny, nz, ux, uy, uz, vx, vy, vz] of F) {
+        const q = [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]];
+        for (const [a, b] of q) v.push((nx + ux * a + vx * b) / 2, (ny + uy * a + vy * b) / 2, (nz + uz * a + vz * b) / 2, nx, ny, nz, (a + 1) / 2, (b + 1) / 2);
+      }
+      return v;
+    })());
+    const COIN = mesh((() => {
+      const v = [], N = 18;
+      for (let i = 0; i < N; i++) {
+        const a0 = i / N * TAU, a1 = (i + 1) / N * TAU, c0 = Math.cos(a0) / 2, s0 = Math.sin(a0) / 2, c1 = Math.cos(a1) / 2, s1 = Math.sin(a1) / 2;
+        for (const z of [0.5, -0.5]) { const o = z > 0 ? [[0, 0], [c0, s0], [c1, s1]] : [[0, 0], [c1, s1], [c0, s0]]; for (const [x, y] of o) v.push(x, y, z, 0, 0, z * 2, x + 0.5, y + 0.5); }
+        const nm = [Math.cos((a0 + a1) / 2), Math.sin((a0 + a1) / 2)];
+        for (const [x, y, z] of [[c0, s0, .5], [c0, s0, -.5], [c1, s1, -.5], [c0, s0, .5], [c1, s1, -.5], [c1, s1, .5]]) v.push(x, y, z, nm[0], nm[1], 0, 0, 0);
+      }
+      return v;
+    })());
+    const GEM = mesh((() => {
+      const v = [], T = [0, .5, 0], B = [0, -.5, 0], R = [[.5, 0, 0], [0, 0, .5], [-.5, 0, 0], [0, 0, -.5]];
+      for (let i = 0; i < 4; i++) {
+        const a = R[i], b = R[(i + 1) % 4];
+        for (const tri of [[T, b, a], [B, a, b]]) {
+          const u = tri[1].map((x, k) => x - tri[0][k]), w = tri[2].map((x, k) => x - tri[0][k]);
+          const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(...n);
+          tri.forEach((p) => v.push(p[0], p[1], p[2], n[0] / l, n[1] / l, n[2] / l, 0.5, 0.5));
+        }
+      }
+      return v;
+    })());
+    const FLOORB = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, FLOORB);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-90, 0, 30, 90, 0, 30, 90, 0, -300, -90, 0, 30, 90, 0, -300, -90, 0, -300]), gl.STATIC_DRAW);
+    const SKYB = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, SKYB); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+
+    // Game covers become cartridge labels and billboards.
+    const covers = [];
+    const covGames = S.starters.slice(0, 6);
+    covGames.forEach((g) => {
+      const img = new Image();
+      img.onload = () => {
+        if (stopped) return;
+        const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img); } catch (e) { return; }
+        [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T].forEach((k) => gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE));
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        covers.push(t);
+        if (still) draw();
+      };
+      img.src = K.cover(Object.assign({ creator: C.STARTER }, g), 320, 200);
+    });
+
+    // Matrices (column-major).
+    const mul = (a, b) => { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; return o; };
+    function trs(x, y, z, rx, ry, rz, sx, sy, sz) {
+      const cx = Math.cos(rx), snx = Math.sin(rx), cy = Math.cos(ry), sny = Math.sin(ry), cz = Math.cos(rz), snz = Math.sin(rz);
+      return new Float32Array([
+        (cy * cz + sny * snx * snz) * sx, cx * snz * sx, (-sny * cz + cy * snx * snz) * sx, 0,
+        (-cy * snz + sny * snx * cz) * sy, cx * cz * sy, (sny * snz + cy * snx * cz) * sy, 0,
+        sny * cx * sz, -snx * sz, cy * cx * sz, 0,
+        x, y, z, 1]);
+    }
+    function viewProj(eye, at, asp) {
+      const f = 1 / Math.tan(29 * Math.PI / 180), n = 0.1, far = 320;
+      const pr = new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + n) / (n - far), -1, 0, 0, 2 * far * n / (n - far), 0]);
+      let z = [eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]; let l = Math.hypot(...z); z = z.map((v) => v / l);
+      let x = [z[2], 0, -z[0]]; l = Math.hypot(...x); x = x.map((v) => v / l);
+      const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+      const dot = (a) => a[0] * eye[0] + a[1] * eye[1] + a[2] * eye[2];
+      const vw = new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot(x), -dot(y), -dot(z), 1]);
+      return mul(pr, vw);
+    }
+
+    // Particles: a pool of glowing points that ride with the world.
+    const PN = 1400, pd = new Float32Array(PN * 13), palpha = new Float32Array(PN), pbuf = new Float32Array(PN * 8), PB = gl.createBuffer();
+    let pi = 0;
+    function spark(x, y, z, vx, vy, vz, life, col, size, grav, a) {
+      const o = (pi++ % PN) * 13;
+      pd.set([x, y, z, vx, vy, vz, life, life, col[0], col[1], col[2], size, grav], o);
+      palpha[o / 13] = a == null ? 1 : a;
+    }
+    function burst(x, y, z, col, n, sp, size, grav) {
+      for (let i = 0; i < n; i++) {
+        const t = rnd() * TAU, u = rnd() * 2 - 1, s = sp * (0.4 + rnd() * 0.6), q = Math.sqrt(1 - u * u);
+        spark(x, y, z, Math.cos(t) * q * s, Math.abs(u) * s * 0.9 + sp * 0.2, Math.sin(t) * q * s, 0.5 + rnd() * 0.7, col, size * (0.6 + rnd() * 0.8), grav);
+      }
+    }
+
+    // The game state.
+    const LANES = [-4.4, -2.2, 0, 2.2, 4.4];
+    const ship = { x: 0, vx: 0, y: 0, vy: 0, lane: 2, spin: 0 };
+    let objs = [], speed = 14, boost = 0, dist = 0, nextRow = 0, nextSide = 0, nextBoard = 0, coins = 0, shake = 0, pulse = 0, think = 0, clock = 0;
+    let userX = null, userUntil = 0;
+    const add = (o) => { o.alive = true; o.t = rnd() * 10; objs.push(o); return o; };
+    function row(z) {
+      const r = rnd();
+      if (r < 0.42) {
+        const l = Math.floor(rnd() * 5), arc = rnd() < 0.3;
+        for (let i = 0; i < 6; i++) add({ k: 'coin', x: LANES[l], y: 0.95 + (arc ? Math.sin(i / 5 * Math.PI) * 2.2 : 0), z: z - i * 2.3 });
+      } else if (r < 0.84) {
+        const n = 1 + Math.floor(rnd() * 2.4), used = new Set();
+        while (used.size < n) used.add(Math.floor(rnd() * 5));
+        used.forEach((l) => add({ k: 'block', x: LANES[l], y: 0, z, w: 1.8, h: 1.45, d: 0.55, col: pick(P.blocks), cov: Math.floor(rnd() * 6) }));
+        if (rnd() < 0.5) { const l = [...used][0]; for (let i = 0; i < 5; i++) add({ k: 'coin', x: LANES[l], y: 1.2 + Math.sin(i / 4 * Math.PI) * 2.4, z: z + 4.6 - i * 2.3 }); }
+      } else {
+        add({ k: 'gate', x: 0, y: 0, z });
+        for (let i = 0; i < 4; i++) add({ k: 'coin', x: 0, y: 0.95, z: z + 3 - i * 2.3 });
+      }
+    }
+    function side(z) {
+      for (const s of [-1, 1]) {
+        if (rnd() < 0.15) continue;
+        const w = 2 + rnd() * 3.5, h = 2.5 + rnd() * rnd() * 22;
+        add({ k: 'tower', x: s * (9 + rnd() * 34), y: 0, z: z - rnd() * 3, w, h, d: 2 + rnd() * 3, col: pick([P.cool, P.pop, P.hot, P.grid]) });
+      }
+      if (rnd() < 0.25) add({ k: 'gem', x: (rnd() < 0.5 ? -1 : 1) * (6 + rnd() * 20), y: 7 + rnd() * 9, z, s: 0.8 + rnd() * 1.4, col: pick([P.pop, P.cool, P.coin]) });
+    }
+    function board(z) { const s = rnd() < 0.5 ? -1 : 1; add({ k: 'board', x: s * (9.5 + rnd() * 3), y: 0, z, side: s, cov: Math.floor(rnd() * 6) }); }
+    // Fill the road ahead so the first frame is already a full scene.
+    for (let z = -16; z > -170; z -= 9 + rnd() * 4) row(z);
+    for (let z = 12; z > -190; z -= 4) side(z);
+    for (let z = -20; z > -190; z -= 26) board(z);
+
+    function crash(o) {
+      o.alive = false; shake = 0.2; ship.spin = 1; speed = Math.max(10, speed * 0.7); boost = 0;
+      burst(o.x, 0.8, o.z, o.col, 30, 8, 0.22, 18); burst(o.x, 0.8, o.z, P.die, 12, 5, 0.16, 10);
+    }
+    function grab(o) {
+      o.alive = false; coins++; pulse = 1;
+      burst(o.x, o.y, o.z, P.coin, 16, 5, 0.32, 4);
+      if (coins % 10 === 0) { boost = 2.2; for (let i = 0; i < 3; i++) burst(ship.x + (i - 1) * 3, 6 + rnd() * 3, -14 - rnd() * 8, pick([P.pop, P.cool, P.coin, P.hot]), 24, 7, 0.45, 3); }
+    }
+    function jump() { if (ship.y < 0.05) { ship.vy = 9.6; burst(ship.x, 0.1, 0.4, P.ship, 14, 4, 0.3, 6); } }
+    function pilot() {
+      let best = ship.lane, bs = -1e9;
+      for (let l = 0; l < 5; l++) {
+        let s = -Math.abs(l - ship.lane) * 0.5 - Math.abs(l - 2) * 0.15;
+        for (const o of objs) {
+          if (!o.alive || o.z > -1.5 || o.z < -44 || Math.abs(o.x - LANES[l]) > 1) continue;
+          const near = 1 + (44 + o.z) / 14;
+          if (o.k === 'coin') s += (o.y > 2 ? 0.5 : 1.3) * near; else if (o.k === 'block') s -= (o.z > -10 ? 40 : 6) * near;
+        }
+        if (s > bs) { bs = s; best = l; }
+      }
+      ship.lane = best;
+    }
+
+    function step(dt) {
+      clock += dt; dt = Math.min(dt, 0.05);
+      const user = userX != null && performance.now() < userUntil;
+      speed = Math.min(20, speed + dt * 0.4);
+      const v = speed + (boost > 0 ? 6 : 0); boost = Math.max(0, boost - dt);
+      dist += v * dt;
+      for (const o of objs) { o.z += v * dt; o.t += dt; }
+      for (let i = 0; i < PN; i++) { const o = i * 13; if (pd[o + 6] <= 0) continue; pd[o + 2] += v * dt; }
+      while (dist > nextRow) { row(-150); nextRow += 9 + rnd() * 5; }
+      while (dist > nextSide) { side(-180); nextSide += 4; }
+      while (dist > nextBoard) { board(-185); nextBoard += 22 + rnd() * 10; }
+      think -= dt; if (think <= 0) { pilot(); think = 0.12; }
+      const tx = user ? Math.max(-5.6, Math.min(5.6, userX)) : LANES[ship.lane];
+      ship.vx += ((tx - ship.x) * 42 - ship.vx * 11) * dt; ship.x += ship.vx * dt;
+      ship.vy -= 24 * dt; ship.y = Math.max(0, ship.y + ship.vy * dt); if (ship.y === 0) ship.vy = 0;
+      ship.spin = Math.max(0, ship.spin - dt * 1.7);
+      for (const o of objs) {
+        if (!o.alive) continue;
+        if (o.k === 'block' && Math.abs(o.z) < 1.1 && Math.abs(o.x - ship.x) < 1.45 && ship.y < o.h - 0.15) crash(o);
+        else if (o.k === 'block' && !user && ship.y < 0.05 && o.z > -7.4 && o.z < -5.6 && Math.abs(o.x - ship.x) < 1.5) jump();
+        else if (o.k === 'coin' && Math.abs(o.z) < 1 && Math.abs(o.x - ship.x) < 1.1 && Math.abs(o.y - (ship.y + 0.6)) < 1.2) grab(o);
+      }
+      objs = objs.filter((o) => o.alive && o.z < (o.k === 'coin' ? 1.5 : o.k === 'block' ? 3 : 26));
+      // Engine trail and the dust that streams past.
+      for (const s of [-0.36, 0.36]) spark(ship.x + s, ship.y + 0.42, 1.0, (rnd() - 0.5) * 0.8, (rnd() - 0.2) * 0.8, 2, 0.35 + rnd() * 0.25, boost > 0 ? P.coin : P.cool, 0.24, 0, 0.9);
+      for (let i = 0; i < (boost > 0 ? 6 : 2); i++) spark((rnd() - 0.5) * 40, 0.4 + rnd() * 9, -90 - rnd() * 40, 0, 0, 0, 3, P.die, 0.12 + rnd() * 0.12, 0, 0.55);
+      for (let i = 0; i < PN; i++) {
+        const o = i * 13; if (pd[o + 6] <= 0) continue;
+        pd[o + 6] -= dt; pd[o + 4] -= pd[o + 12] * dt;
+        pd[o] += pd[o + 3] * dt; pd[o + 1] += pd[o + 4] * dt; pd[o + 2] += pd[o + 5] * dt;
+        if (pd[o + 1] < 0.02) { pd[o + 1] = 0.02; pd[o + 4] *= -0.4; }
+      }
+      shake = Math.max(0, shake - dt * 1.4); pulse = Math.max(0, pulse - dt * 2.5);
+    }
+
+    // Drawing.
+    let W = 0, H = 0, scale = 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, window.innerWidth < 700 ? 1 : 1.5);
+    function size() {
+      const w = Math.max(1, Math.round(cv.clientWidth * dpr * scale)), h = Math.max(1, Math.round(cv.clientHeight * dpr * scale));
+      if (w !== W || h !== H) { W = cv.width = w; H = cv.height = h; }
+    }
+    function bindMesh(m) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, m.b);
+      gl.vertexAttribPointer(MESH.a.aP, 3, gl.FLOAT, false, 32, 0); gl.vertexAttribPointer(MESH.a.aN, 3, gl.FLOAT, false, 32, 12); gl.vertexAttribPointer(MESH.a.aU, 2, gl.FLOAT, false, 32, 24);
+    }
+    function put(m, M, col, emit, edge, tex) {
+      gl.uniformMatrix4fv(MESH.u.uM, false, M); gl.uniform3fv(MESH.u.uC, col); gl.uniform1f(MESH.u.uE, emit || 0); gl.uniform1f(MESH.u.uEdge, edge || 0);
+      if (tex) { gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1f(MESH.u.uT, 1); } else gl.uniform1f(MESH.u.uT, 0);
+      gl.drawArrays(gl.TRIANGLES, 0, m.n);
+    }
+    function draw() {
+      size();
+      gl.viewport(0, 0, W, H);
+      const asp = W / H, wide = asp > 1.2;
+      const sx = shake * (rnd() - 0.5) * 0.9, sy = shake * (rnd() - 0.5) * 0.6;
+      const eye = [ship.x * 0.45 + sx, (wide ? 3.6 : 4.6) + ship.y * 0.3 + sy, wide ? 7.6 : 10], at = [ship.x * 0.7, -0.5, -12];
+      const VP = viewProj(eye, at, asp);
+      const far = [VP[0] * eye[0] + VP[4] * eye[1] + VP[8] * (eye[2] - 1000) + VP[12], VP[1] * eye[0] + VP[5] * eye[1] + VP[9] * (eye[2] - 1000) + VP[13], 0, VP[3] * eye[0] + VP[7] * eye[1] + VP[11] * (eye[2] - 1000) + VP[15]];
+      const horizon = far[1] / far[3];
+      gl.clearColor(P.haze[0], P.haze[1], P.haze[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      // sky
+      gl.disable(gl.DEPTH_TEST); gl.useProgram(SKY.p);
+      gl.bindBuffer(gl.ARRAY_BUFFER, SKYB); gl.enableVertexAttribArray(SKY.a.aP); gl.vertexAttribPointer(SKY.a.aP, 2, gl.FLOAT, false, 0, 0);
+      gl.uniform3fv(SKY.u.uTop, P.sky); gl.uniform3fv(SKY.u.uHaze, P.haze); gl.uniform3fv(SKY.u.uSunA, P.sunA); gl.uniform3fv(SKY.u.uSunB, P.sunB);
+      gl.uniform1f(SKY.u.uH, horizon); gl.uniform1f(SKY.u.uAsp, asp); gl.uniform1f(SKY.u.uTime, clock); gl.uniform1f(SKY.u.uDark, P.dark ? 1 : 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.enable(gl.DEPTH_TEST);
+      const fogU = (pr) => { gl.uniform3fv(pr.u.uFog, P.haze); gl.uniform3fv(pr.u.uCam, eye); gl.uniform1f(pr.u.uFN, 24); gl.uniform1f(pr.u.uFF, 175); };
+      // floor
+      gl.useProgram(FLOOR.p); gl.bindBuffer(gl.ARRAY_BUFFER, FLOORB); gl.enableVertexAttribArray(FLOOR.a.aP); gl.vertexAttribPointer(FLOOR.a.aP, 3, gl.FLOAT, false, 0, 0);
+      gl.uniformMatrix4fv(FLOOR.u.uVP, false, VP); gl.uniform3fv(FLOOR.u.uFloor, P.floor); gl.uniform3fv(FLOOR.u.uGrid, P.grid);
+      gl.uniform1f(FLOOR.u.uScroll, -dist % 3); gl.uniform1f(FLOOR.u.uPulse, pulse); fogU(FLOOR);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.disableVertexAttribArray(FLOOR.a.aP);
+      // meshes
+      gl.useProgram(MESH.p); [MESH.a.aP, MESH.a.aN, MESH.a.aU].forEach((a) => gl.enableVertexAttribArray(a));
+      gl.uniformMatrix4fv(MESH.u.uVP, false, VP); gl.uniform3fv(MESH.u.uL, [0.35, 0.85, 0.4]); fogU(MESH); gl.uniform1i(MESH.u.uTex, 0); gl.activeTexture(gl.TEXTURE0);
+      const tex = (i) => covers.length ? covers[i % covers.length] : null;
+      bindMesh(CUBE);
+      for (const o of objs) {
+        if (o.k === 'tower') {
+          const g = Math.min(1, Math.max(0, (o.z + 175) / 30)), h = o.h * (1 - Math.pow(1 - g, 3));
+          if (h < 0.05) continue;
+          put(CUBE, trs(o.x, h / 2, o.z, 0, 0, 0, o.w, h, o.d), o.col, P.dark ? 0.12 : 0, 0.75);
+          put(CUBE, trs(o.x, h + 0.18, o.z, 0, 0, 0, o.w * 0.92, 0.36, o.d * 0.92), P.die, P.dark ? 0.25 : 0.1, 0);
+        } else if (o.k === 'block') {
+          const bob = Math.sin(o.t * 3) * 0.05;
+          put(CUBE, trs(o.x, o.h / 2 + bob, o.z, 0, 0, 0, o.w, o.h, o.d), o.col, P.dark ? 0.18 : 0.04, 0.9);
+          put(CUBE, trs(o.x, o.h * 0.56 + bob, o.z + 0.03, 0, 0, 0, o.w * 0.74, o.h * 0.6, o.d), P.die, 0.15, 0, tex(o.cov));
+        } else if (o.k === 'gate') {
+          for (const s of [-1, 1]) put(CUBE, trs(s * 6.1, 2.6, o.z, 0, 0, 0, 0.6, 5.2, 0.6), P.ship, P.dark ? 0.3 : 0.05, 0.8);
+          put(CUBE, trs(0, 5.4, o.z, 0, 0, 0, 12.8, 0.6, 0.6), P.ship, P.dark ? 0.3 : 0.05, 0.8);
+        } else if (o.k === 'board') {
+          put(CUBE, trs(o.x, 2.2, o.z, 0, 0, 0, 0.25, 4.4, 0.25), P.floor, 0, 0.5);
+          put(CUBE, trs(o.x, 5.6, o.z, 0, -o.side * 0.45, 0, 5.4, 3.4, 0.3), P.die, 0.1, 0.4);
+          put(CUBE, trs(o.x, 5.6, o.z, 0, -o.side * 0.45, 0, 5, 3.05, 0.34), P.die, P.dark ? 0.35 : 0.08, 0, tex(o.cov));
+        }
+      }
+      // the kart
+      const S0 = trs(ship.x, ship.y + 0.55 + Math.sin(clock * 5) * 0.06, 0, -ship.vy * 0.025, ship.spin * TAU, -ship.vx * 0.06, 1, 1, 1);
+      const part = (x, y, z, sx, sy, sz, col, e) => put(CUBE, mul(S0, trs(x, y, z, 0, 0, 0, sx, sy, sz)), col, e, 0.5);
+      part(0, 0, 0, 1.25, 0.34, 1.7, P.ship, 0.1);
+      part(0, -0.03, -1.0, 0.8, 0.26, 0.5, P.ship, 0.1);
+      part(0, 0.27, 0.12, 0.56, 0.26, 0.7, P.die, 0.3);
+      for (const s of [-1, 1]) { part(s * 0.85, -0.06, 0.35, 0.7, 0.1, 0.95, P.pop, 0.15); part(s * 0.45, 0.32, 0.72, 0.08, 0.36, 0.4, P.hot, 0.2); }
+      bindMesh(COIN);
+      for (const o of objs) if (o.k === 'coin') put(COIN, trs(o.x, o.y + Math.sin(o.t * 4) * 0.12, o.z, 0, o.t * 4, 0, 0.75, 0.75, 0.14), P.coin, P.dark ? 0.45 : 0.2, 0);
+      bindMesh(GEM);
+      for (const o of objs) if (o.k === 'gem') put(GEM, trs(o.x, o.y + Math.sin(o.t) * 0.6, o.z, 0.3, o.t * 0.8, 0.2, o.s, o.s * 1.5, o.s), o.col, P.dark ? 0.45 : 0.15, 0);
+      [MESH.a.aP, MESH.a.aN, MESH.a.aU].forEach((a) => gl.disableVertexAttribArray(a));
+      // points: particles, coin halos and engine glow
+      let n = 0;
+      const pt = (x, y, z, col, a, s) => { const o = n * 8; pbuf[o] = x; pbuf[o + 1] = y; pbuf[o + 2] = z; pbuf[o + 3] = col[0]; pbuf[o + 4] = col[1]; pbuf[o + 5] = col[2]; pbuf[o + 6] = a; pbuf[o + 7] = s; n++; };
+      for (let i = 0; i < PN && n < PN; i++) { const o = i * 13; const L = pd[o + 6]; if (L <= 0 || pd[o + 2] > 4) continue; const k = L / pd[o + 7]; pt(pd[o], pd[o + 1], pd[o + 2], [pd[o + 8], pd[o + 9], pd[o + 10]], Math.min(1, k * 1.6) * palpha[i], pd[o + 11]); }
+      if (P.dark) for (const o of objs) if (o.k === 'coin' && n < PN) pt(o.x, o.y, o.z, P.coin, 0.35, 1.6);
+      for (const s of [-0.36, 0.36]) if (n < PN) pt(ship.x + s, ship.y + 0.5, 0.95, boost > 0 ? P.coin : P.cool, 0.7, 0.6);
+      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, P.dark ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+      gl.useProgram(PTS.p); gl.bindBuffer(gl.ARRAY_BUFFER, PB); gl.bufferData(gl.ARRAY_BUFFER, pbuf.subarray(0, n * 8), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(PTS.a.aP); gl.enableVertexAttribArray(PTS.a.aC); gl.enableVertexAttribArray(PTS.a.aS);
+      gl.vertexAttribPointer(PTS.a.aP, 3, gl.FLOAT, false, 32, 0); gl.vertexAttribPointer(PTS.a.aC, 4, gl.FLOAT, false, 32, 12); gl.vertexAttribPointer(PTS.a.aS, 1, gl.FLOAT, false, 32, 28);
+      gl.uniformMatrix4fv(PTS.u.uVP, false, VP); gl.uniform1f(PTS.u.uPx, H * 0.9);
+      gl.drawArrays(gl.POINTS, 0, n);
+      [PTS.a.aP, PTS.a.aC, PTS.a.aS].forEach((a) => gl.disableVertexAttribArray(a));
+      gl.depthMask(true); gl.disable(gl.BLEND);
+    }
+
+    // Steering: the mouse takes over for a few seconds after it moves; a click on an empty spot jumps.
+    const onMove = (e) => { if (e.pointerType === 'touch') return; userX = (e.clientX / window.innerWidth * 2 - 1) * 6.2; userUntil = performance.now() + 2600; };
+    const onDown = (e) => { const t = e.target; if (t === document.body || t === document.documentElement || (t.matches && t.matches('#view, .pack, .stage3d, .pack-shelf, .shelf'))) jump(); };
+    window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('pointerdown', onDown, { passive: true });
+
+    let raf = 0, last = 0, stopped = false, ema = 16, slow = 0;
+    const still = calmNow();
+    function frame(now) {
+      raf = 0;
+      if (stopped) return;
+      if (!cv.isConnected) { stop(); return; }
+      const dt = last ? (now - last) / 1000 : 0.016; last = now;
+      // While someone plays the console game, the background holds still.
+      if (document.activeElement && document.activeElement.tagName === 'IFRAME') { raf = requestAnimationFrame(frame); return; }
+      ema += (Math.min(dt * 1000, 100) - ema) * 0.05;
+      if (ema > 26 && scale > 0.5 && ++slow > 40) { scale = Math.max(0.5, scale * 0.8); slow = 0; } else if (ema <= 26) slow = 0;
+      step(dt); draw();
+      raf = requestAnimationFrame(frame);
+    }
+    function stop() {
+      stopped = true; if (raf) cancelAnimationFrame(raf); raf = 0;
+      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerdown', onDown);
+      if (bgGame && bgGame.cv === cv) bgGame = null;
+    }
+    const onVis = () => { if (stopped) { document.removeEventListener('visibilitychange', onVis); return; } if (!document.hidden && !raf && !still) { last = 0; raf = requestAnimationFrame(frame); } };
+    document.addEventListener('visibilitychange', onVis);
+    if (still) { step(0.016); draw(); } else raf = requestAnimationFrame(frame);
+    bgGame = { cv, stop, retheme() { palette(); if (still) draw(); } };
+  }
+
   function updateHome() { const s = $('#home-shelf'); if (s) s.innerHTML = homeShelf(); }
 
   /* ---------- business: services for brands, communities and schools ---------- */
@@ -1289,11 +1623,11 @@
   function bizHTML() {
     const contact = contactHTML();
     return '<section class="hero biz" aria-labelledby="biz-title"><div class="hero-copy">'
-      + '<p class="eyebrow">ClaudePlay for business</p><h1 class="page-title" id="biz-title">Games your audience plays from a link</h1>'
+      + '<h1 class="page-title" id="biz-title">Games your audience plays from a link</h1>'
       + '<p class="lede">We build branded mini-games for brands, crypto communities and classrooms. Players need no app and no sign-up, and you get a leaderboard you can check.</p>'
       + '<div class="row cta"><button class="btn primary big" type="button" data-act="brand-demo">Make a branded demo</button>' + contact + '</div>'
       + '<p class="fine">The demo takes about a minute: pick your colors, rename the game and play it.</p></div>'
-      + '<figure class="console"><div class="console-bar"><span class="led" aria-hidden="true"></span><span>Example build</span><span class="serial">Your colors here</span></div>'
+      + '<figure class="console">'
       + '<div class="screen" id="biz-screen"></div>'
       + '<figcaption class="console-cap"><span><b>' + esc(BIZ_DEMO.title) + '</b> · A branded runner for a made-up coffee shop, in its own colors.</span></figcaption></figure></section>'
 
@@ -1427,7 +1761,7 @@
       return;
     }
     v.innerHTML = '<div class="gp-head"><a href="#explore" data-nav="explore">← Explore</a><h1>' + esc(g.title) + '</h1><div class="row" id="gp-chips">' + gameChips(g) + '</div></div>'
-      + '<div class="gp-grid"><div class="gp-main"><div class="screen" id="gp-screen" data-gid="' + esc(g.gid) + '" style="background:#05070a url(' + K.cover(g) + ') center/cover"></div>'
+      + '<div class="gp-grid"><div class="gp-main" data-part="Play"><div class="screen" id="gp-screen" data-gid="' + esc(g.gid) + '" style="background:#05070a url(' + K.cover(g) + ') center/cover"></div>'
       + '<div class="toolbar" id="gp-actions">' + gameActions(g) + '</div><div id="gp-room"></div><div id="gp-about">' + gameAbout(g) + '</div></div>'
       + '<aside class="gp-side"><div class="tabs" role="tablist" id="gp-tabs">' + TABS.map(([k, l]) => '<button role="tab" type="button" data-act="tab" data-tab="' + k + '" aria-selected="' + (S.ui.tab === k) + '">' + l + '</button>').join('') + '</div><div class="panel" id="gp-panel">' + gamePanel(g) + '</div></aside></div>' + footHTML();
     const code = await getBlob(g.hash);
@@ -1584,9 +1918,9 @@
   }
   function mountStudio() {
     if (!S.studio) loadStudio();
-    $('#view').innerHTML = '<div class="gp-head"><p class="eyebrow">Create</p><h1>Make a cartridge</h1></div>'
+    $('#view').innerHTML = '<div class="gp-head"><h1>Make a cartridge</h1></div>'
       + '<div class="studio"><section class="st-left stack" id="st-left">' + studioLeft() + '</section>'
-      + '<section class="st-right" id="st-right"><div class="screen" id="st-screen"></div><div class="toolbar" id="st-tools">' + studioTools() + '</div><div id="st-status">' + studioStatus() + '</div></section></div>' + footHTML();
+      + '<section class="st-right" id="st-right" data-part="Preview"><div class="screen" id="st-screen"></div><div class="toolbar" id="st-tools">' + studioTools() + '</div><div id="st-status">' + studioStatus() + '</div></section></div>' + footHTML();
     loadPreview();
     renderStream();
     loadPlan();
@@ -1771,9 +2105,9 @@
   function viewWallet() {
     const inj = injectedProvider();
     if (!S.wallet) {
-      return '<div class="gp-head"><p class="eyebrow">Wallet</p><h1>Get a wallet in one click</h1></div>'
-        + '<div class="grid2"><div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">ClaudePlay wallet</h2><p>A Solana keypair made in your browser. No extension, no seed phrase to write down first, and it works on phones.</p><p class="muted" style="font-size:0.875rem">Production uses a passkey or social-login embedded wallet with gasless transactions. This prototype keeps the devnet key in this browser so you can export it any time.</p><div class="row"><button class="btn primary" type="button" data-act="create-wallet">Create wallet</button><button class="btn ghost" type="button" data-act="import-wallet">Import a key</button></div></div>'
-        + '<div class="panel stack"><h2 class="display" style="font-size:1.25rem;text-transform:uppercase">Bring your own</h2><p>Connect Phantom, Solflare or Backpack. You sign once to approve a 7-day session key, so games never interrupt you with pop-ups.</p>'
+      return '<div class="gp-head"><h1>Get a wallet in one click</h1></div>'
+        + '<div class="grid2"><div class="panel stack"><h2 class="display" style="font-size:1.25rem">ClaudePlay wallet</h2><p>A Solana keypair made in your browser. No extension, no seed phrase to write down first, and it works on phones.</p><p class="muted" style="font-size:0.875rem">Production uses a passkey or social-login embedded wallet with gasless transactions. This prototype keeps the devnet key in this browser so you can export it any time.</p><div class="row"><button class="btn primary" type="button" data-act="create-wallet">Create wallet</button><button class="btn ghost" type="button" data-act="import-wallet">Import a key</button></div></div>'
+        + '<div class="panel stack"><h2 class="display" style="font-size:1.25rem">Bring your own</h2><p>Connect Phantom, Solflare or Backpack. You sign once to approve a 7-day session key, so games never interrupt you with pop-ups.</p>'
         + (inj ? '<div class="row"><button class="btn" type="button" data-act="connect-injected">Connect ' + esc(inj.name) + '</button></div>' : '<p class="muted" style="font-size:0.875rem">No wallet extension can reach this page. Embedded pages often hide extensions, so open ClaudePlay in its own tab to use one.</p>')
         + '</div></div>' + footHTML();
     }
@@ -1785,7 +2119,7 @@
     const games = S.world ? [...S.world.games.values()].filter((g) => g.creator === S.wallet.from) : [];
     const owned = S.world ? [...S.world.games.values()].filter((g) => g.collects.some((c) => c.pk === S.wallet.from)) : [];
     const recent = S.world ? S.world.log.filter((r) => r.ok && (r.tx.from === S.wallet.from || r.moves.some((m) => m.to === S.wallet.from))).slice(-12).reverse() : [];
-    return '<div class="gp-head"><p class="eyebrow">Wallet</p><h1>' + esc(nameOf(S.wallet.from)) + '</h1></div>'
+    return '<div class="gp-head"><h1>' + esc(nameOf(S.wallet.from)) + '</h1></div>'
       + '<div class="grid3">'
       + '<div class="panel balance"><span class="unit">' + UNIT + '</span><span class="amt">' + fmtSOL(solOf(w)) + '</span><span class="muted" style="font-size:0.875rem">For collects and tips. Earned ' + fmtSOL(w.earnedSol) + ' SOL so far.</span>' + (MAINNET ? '<p class="muted" style="font-size:0.875rem">Real SOL on Solana mainnet, paid straight from your wallet app.</p>' : '<div class="row"><button class="btn small" type="button" data-act="airdrop"' + (now < nextDrop ? ' disabled' : '') + '>' + (now < nextDrop ? 'Faucet in ' + Math.ceil((nextDrop - now) / 3600000) + 'h' : 'Get ' + dropAmt / C.LAMPORTS + ' devSOL') + '</button></div>') + '</div>'
       + '<div class="panel balance"><span class="unit">Sparks</span><span class="amt">' + fmtInt(w.sparks) + '</span><span class="muted" style="font-size:0.875rem">Pay for AI builds. Not transferable. ' + fmtInt(w.sparksEarned) + ' earned from players.</span><div class="row"><button class="btn small" type="button" data-act="claim"' + (claimed ? ' disabled' : '') + '>' + (claimed ? 'Claimed this week' : 'Claim ' + R.WEEKLY_SPARKS + ' free') + '</button>' + (CHAIN ? '' : '<button class="btn small ghost" type="button" data-act="buy-sparks">Buy ' + R.SPARK_PACK.sparks + ' for ' + R.SPARK_PACK.lamports / C.LAMPORTS + ' SOL</button>') + '</div></div>'
@@ -1864,7 +2198,7 @@
     const all = w ? w.log.slice().reverse() : [];
     const rows = all.filter((r) => inFilter(r, S.ui.ledger)).slice(0, 200);
     const ok = all.filter((r) => r.ok).length;
-    return '<div class="gp-head"><p class="eyebrow">Ledger</p><h1>Every move, signed</h1><p class="muted" style="max-width:62ch">ClaudePlay replays every signed transaction in order and recomputes all balances, so nothing here depends on trusting the server. Tap a row to see the exact bytes that were signed.</p></div>'
+    return '<div class="gp-head"><h1>Every move, signed</h1><p class="muted" style="max-width:62ch">ClaudePlay replays every signed transaction in order and recomputes all balances, so nothing here depends on trusting the server. Tap a row to see the exact bytes that were signed.</p></div>'
       + '<div class="facts" style="margin-bottom:16px"><div class="fact"><b>' + fmtInt(all.length) + '</b><span>transactions</span></div><div class="fact"><b>' + fmtInt(ok) + '</b><span>verified</span></div><div class="fact"><b>' + fmtInt(all.length - ok) + '</b><span>rejected by the rules</span></div><div class="fact"><b>' + fmtInt(w ? w.wallets.size : 0) + '</b><span>wallets</span></div></div>'
       + '<div class="row" role="group" aria-label="Filter" style="margin-bottom:12px">' + FILTERS.map(([k, l]) => '<button class="chip" type="button" data-act="ledger-filter" data-f="' + k + '" aria-pressed="' + (S.ui.ledger === k) + '">' + l + '</button>').join('') + '</div>'
       + (rows.length ? ledgerTable(rows) : '<div class="empty"><h2>Nothing here yet</h2><p>Transactions appear as soon as anyone signs one.</p></div>') + footHTML();
@@ -1907,7 +2241,7 @@
     const circulating = w.supply.emitted - w.supply.burned;
     const last = w.epochs[w.epochs.length - 1];
     const rows = pending.rewards.slice(0, 12);
-    return '<div class="gp-head"><p class="eyebrow">Economy</p><h1>Rewards paid from real activity</h1><p class="muted" style="max-width:66ch">Players and collectors pay creators directly. A 5% fee and Spark packs fill the treasury, which pays for everyone’s free Sparks and sends 40% of fees back to creators each epoch. GPLY is emitted on a fixed, decaying schedule and burned when people boost games or convert it to Sparks.</p></div>'
+    return '<div class="gp-head"><h1>Rewards paid from real activity</h1><p class="muted" style="max-width:66ch">Players and collectors pay creators directly. A 5% fee and Spark packs fill the treasury, which pays for everyone’s free Sparks and sends 40% of fees back to creators each epoch. GPLY is emitted on a fixed, decaying schedule and burned when people boost games or convert it to Sparks.</p></div>'
       + '<div class="facts" style="margin-bottom:20px"><div class="fact"><b>' + pending.n + '</b><span>next epoch</span></div><div class="fact"><b>' + fmtInt(pending.emission) + '</b><span>GPLY it emits</span></div><div class="fact"><b>' + fmtSOL(w.treasury.sol) + '</b><span>SOL in treasury</span></div><div class="fact"><b>' + fmtInt(w.supply.emitted) + '</b><span>GPLY emitted</span></div><div class="fact"><b>' + fmtInt(w.supply.burned) + '</b><span>GPLY burned</span></div><div class="fact"><b>' + fmtInt(circulating) + '</b><span>GPLY circulating of ' + fmtInt(R.MAX_SUPPLY) + ' max</span></div></div>'
       + '<div class="grid2"><div class="panel stack"><div class="split"><p class="eyebrow">Epoch ' + pending.n + ' preview</p><span class="muted" style="font-size:0.8125rem">activity since ' + (last ? when(last.to) : 'launch') + '</span></div>'
       + (rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Wallet</th><th>Role</th><th class="r">GPLY</th><th class="r">SOL</th></tr></thead><tbody>' + rows.map((r) => '<tr><td>' + esc(nameOf(r.to)) + (S.wallet && r.to === S.wallet.from ? ' <span class="chip accent">you</span>' : '') + '</td><td>' + esc(r.roles.join(' + ')) + '</td><td class="n">' + fmtInt(r.park) + '</td><td class="n">' + fmtSOL(r.sol) + '</td></tr>').join('') + '</tbody></table></div>'
@@ -1968,6 +2302,7 @@
     'sort': (el) => { S.ui.sort = el.dataset.sort; renderView(true); },
     'tab': (el) => { S.ui.tab = el.dataset.tab; const g = S.world.games.get(S.arg); if (g) updateGame(g); },
     'modal-close': () => closeModal(),
+    pane: (el) => { flip(Number(el.dataset.pane)); const d = $('#view .pg-dot[aria-current]'); if (d && el.classList.contains('pg-dot')) d.focus(); },
     'modal-backdrop': (el, e) => { if (e.target === el) closeModal(); },
     'create-wallet': async () => { await createWallet(false); renderView(true); },
     'connect-injected': async () => { await connectInjected(); },
@@ -2238,6 +2573,7 @@
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr[data-act]')) { e.preventDefault(); e.target.click(); }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target.id === 'home-prompt') { e.preventDefault(); e.target.form.requestSubmit(); }
+    if ((e.key === 'PageDown' || e.key === 'PageUp') && S.ui.panes && !$('.modal-back') && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) && flip(S.ui.pane + (e.key === 'PageDown' ? 1 : -1))) e.preventDefault();
   });
   document.addEventListener('submit', (e) => {
     const f = e.target.closest('[data-form]');

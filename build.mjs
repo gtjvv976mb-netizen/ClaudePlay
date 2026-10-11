@@ -9,10 +9,13 @@ const read = (f) => readFileSync(here('./src/' + f), 'utf8');
 
 // Site settings for the static website. Fill in `contact` (an email address or an https:// link)
 // to show a contact button on the Business page.
-const SITE = { contact: process.env.GP_CONTACT || '' };
+const SITE = { contact: process.env.GP_CONTACT || '', mascot: 'mascot-wave.webp' };
 
+// The mascot: a small still is inlined into the page (so the claude.ai artifact shows it too);
+// its animated loop ships next to the website as its own file and loads after the page.
+const MASCOT_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/mascot.webp')).toString('base64');
 const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'app.js'].map((f) => {
-  const s = read(f);
+  const s = read(f).replace("'MASCOT_STILL'", () => JSON.stringify(MASCOT_STILL));
   for (const bad of ['</script', '<!--', '<script']) if (s.toLowerCase().includes(bad)) throw new Error(f + ' contains ' + bad);
   return s;
 });
@@ -47,5 +50,6 @@ const site = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\
   + sitePage.slice(0, cut).trim() + '\n</head>\n<body>\n' + sitePage.slice(cut) + '\n</body>\n</html>\n';
 writeFileSync(here('./dist/site/index.html'), site);
 writeFileSync(here('./dist/site/README.md'), readFileSync(here('./site-README.md'), 'utf8'));
+writeFileSync(here('./dist/site/mascot-wave.webp'), readFileSync(here('./src/assets/mascot-wave.webp')));
 
 console.log('built', (page.length / 1024).toFixed(1) + ' KB page,', (site.length / 1024).toFixed(1) + ' KB website');
