@@ -24,6 +24,12 @@
 //   GP_PRO_BUILDS        Pro new games per day (10)
 //   GP_PRO_EDITS         Pro AI changes per day (60)
 //   GP_MAX_ACTIVE        AI builds running at once across all visitors (4)
+//   GP_DAILY_PLAYTESTS   play-test reviews (a small Claude Haiku call after each build) per day across
+//                        the whole site (1000; 0 = no cap). Past it, builds still get the in-page checks
+//   GP_ROOM_PLAYERS      players per multiplayer room (16, at most 32)
+//   GP_ROOM_MB_DAY       megabytes the multiplayer relay may send per day (100; 0 = no limit). Render's
+//                        free plan includes 5 GB of outbound traffic a month, and a full 16-player
+//                        room sends about 0.7 GB an hour
 //   GP_TRUST_PROXY=1     read the visitor address from the first X-Forwarded-For entry (set this
 //                        behind a proxy that overwrites that entry, as Render does)
 //   GP_DATA_DIR          folder for the shared gallery (./data); put it on a persistent disk
@@ -122,7 +128,9 @@ export function createServer(opts = {}) {
   }
   const chainHits = new Map();
   // Multiplayer rooms need the shared gallery, since friends join through a published game's link.
-  const rooms = opts.rooms === false || !gallery ? null : opts.rooms || openRooms({ maxPlayers: opts.roomPlayers });
+  const roomMb = opts.roomMbDay === undefined ? 100 : opts.roomMbDay;
+  const rooms = opts.rooms === false || !gallery ? null : opts.rooms || openRooms({ maxPlayers: opts.roomPlayers, kv, maxBytes: roomMb * 1e6 });
+  const playtestCap = opts.playtestTotal === undefined ? 1000 : opts.playtestTotal;
   const roomHits = new Map(), streams = new Map(), screenHits = new Map(), testHits = new Map();
   /* Safety check: /api/screen reviews a game and returns a token for its hash; the gallery only stores
      game files that carry a valid token, so nothing reaches the public arcade unchecked. */
@@ -146,21 +154,35 @@ export function createServer(opts = {}) {
     res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
   };
 
+  const files = new Map();
   async function serveFile(req, res) {
     let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (path.endsWith('/')) path += 'index.html';
     const file = normalize(join(root, path));
     if (file !== root && !file.startsWith(root + sep)) return send(res, 404, 'Not found', 'text/plain; charset=utf-8');
+    let info;
     try {
-      if (!(await stat(file)).isFile()) throw new Error('not a file');
+      info = await stat(file);
+      if (!info.isFile()) throw new Error('not a file');
     } catch (e) { return send(res, 404, 'Not found', 'text/plain; charset=utf-8'); }
+    const stamp = info.mtimeMs + ':' + info.size, cached = files.get(file);
+    if (cached && cached.stamp === stamp) return sendFile(req, res, file, cached);
     let body = await readFile(file);
     if ((client || gallery || chain) && file === join(root, 'index.html')) {
       // Tell the page where to send AI builds, where the shared gallery lives and which Solana network pays.
       const extra = Object.assign(client ? { ai: 'api/build', playtest: 'api/playtest' } : {}, client && plans.pro ? { pro: true } : {}, gallery ? { gallery: 'api/db' } : {}, rooms ? { rooms: 'api/rooms' } : {}, gallery ? { screen: 'api/screen' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
       body = body.toString('utf8').replace(/window\.GP_SITE = (\{.*?\});/, (m, json) => 'window.GP_SITE = ' + JSON.stringify(Object.assign(JSON.parse(json), extra)).replace(/</g, '\\u003c') + ';');
     }
-    res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
+    // A validator lets returning visitors get a 304 instead of the whole page and mascot again (free hosts
+    // include only a few GB of traffic a month). Files are kept with their tag until they change on disk.
+    const entry = { stamp, body, etag: '"' + createHash('sha256').update(body).digest('base64url').slice(0, 27) + '"' };
+    if (files.size > 50) files.clear();
+    files.set(file, entry);
+    return sendFile(req, res, file, entry);
+  }
+  function sendFile(req, res, file, { body, etag }) {
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304, { etag, 'cache-control': 'no-cache' }); return res.end(); }
+    res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache', etag });
     res.end(req.method === 'HEAD' ? undefined : body);
   }
 
@@ -305,6 +327,11 @@ export function createServer(opts = {}) {
     try { body = JSON.parse(await readBody(req, 600 * 1024)); } catch (e) { return send(res, e.tooBig ? 413 : 400, { code: 'bad_request', message: 'The request was not valid.' }); }
     const checked = H.checkPlaytest(body);
     if (!checked.ok) return send(res, 400, { code: 'bad_request', message: 'The request was not valid: ' + checked.error + '.' });
+    const today = 'lim:' + new Date().toISOString().slice(0, 10) + ':playtest:*site';
+    if (playtestCap > 0 && (await kv.incr(today, 1, 2 * 86400)) > playtestCap) {
+      await kv.incr(today, -1, 2 * 86400);
+      return send(res, 429, { code: 'daily_limit', message: 'Play-test reviews have reached today’s limit for this site.' });
+    }
     const r = checked.req, content = [];
     r.shots.forEach((data, i) => content.push({ type: 'text', text: ['Title screen:', 'During play:', 'Later in play:'][i] || 'Screenshot:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }));
     content.push({ type: 'text', text: H.playtestTask(r) });
@@ -315,6 +342,7 @@ export function createServer(opts = {}) {
       await stream.finalMessage();
     } catch (e) {
       log({ playtest: 'error', error: e && (e.status || e.message) });
+      if (playtestCap > 0) await kv.incr(today, -1, 2 * 86400).catch(() => {});
       return send(res, 503, { code: 'unavailable', message: 'The play-test review is not available right now.' });
     }
     const v = H.parsePlaytest(text);
@@ -428,6 +456,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     totalEdits: Number(env.GP_DAILY_EDIT_TOTAL) || undefined,
     maxActive: Number(env.GP_MAX_ACTIVE) || undefined,
     roomPlayers: Number(env.GP_ROOM_PLAYERS) || undefined,
+    roomMbDay: env.GP_ROOM_MB_DAY ? Math.max(0, Number(env.GP_ROOM_MB_DAY) || 0) : undefined,
+    playtestTotal: env.GP_DAILY_PLAYTESTS ? Math.max(0, Number(env.GP_DAILY_PLAYTESTS) || 0) : undefined,
     trustProxy: env.GP_TRUST_PROXY === '1',
     log: (o) => console.log(JSON.stringify(Object.assign({ ts: new Date().toISOString() }, o))),
   });

@@ -108,6 +108,10 @@ ok((await T.take('z', 5, cap2)).ok, 'refund frees a site-wide build');
   const { server, base } = await start({ client: null });
   const html = await (await fetch(base + '/')).text();
   ok(html.includes('<title>ClaudePlay</title>') && !html.includes('"ai":'), 'serves the site with the AI studio off when there is no key');
+  const first = await fetch(base + '/'), tag = first.headers.get('etag');
+  await first.text();
+  const again = await fetch(base + '/', { headers: { 'if-none-match': tag } });
+  ok(tag && again.status === 304 && !(await again.text()), 'a returning visitor gets a 304 instead of the whole page');
   const r = await post(base, { kind: 'new', prompt: 'x' });
   ok(r.status === 503, 'build returns 503 without a key');
   const st = await (await fetch(base + '/api/status')).json();
@@ -524,6 +528,11 @@ redis.close();
   ok((await pt('Pass', { shots: [JPG, JPG, JPG, JPG] })).status === 400, 'at most three screenshots');
   ok((await pt('Pass', { shots: ['/9j/' + 'A'.repeat(150001)] })).status === 400, 'over-large screenshots are refused');
   server.close();
+  const capped = await start({ client, playtestTotal: 2 });
+  const ptc = async (title) => (await fetch(capped.base + '/api/playtest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, request: 'x', shots: [JPG], log: {} }) })).status;
+  const runs = [await ptc('Pass'), await ptc('Down'), await ptc('Pass'), await ptc('Pass')];
+  ok(runs.join() === '200,503,200,429', 'play-test reviews stop at the site-wide daily cap, and failed reviews do not count: ' + runs.join());
+  capped.server.close();
   const off = await start({});
   ok((await fetch(off.base + '/api/playtest', { method: 'POST', body: '{}' })).status === 503, 'no play-test review without the AI studio');
   off.server.close();
@@ -561,6 +570,38 @@ redis.close();
   ok(statuses.join() === '200,200,409', 'a full room turns the next player away');
   ctls.forEach((c) => c.abort());
   server.close();
+}
+
+// Room traffic budget: past the day's bytes no room opens or fills; past twice the budget, rooms close.
+{
+  const { openRooms } = await import('../server/rooms.mjs');
+  const kv = memoryKv();
+  let t = Date.UTC(2026, 9, 11, 12);
+  const fakeRes = () => ({ out: '', ended: false, get writableEnded() { return this.ended; }, writeHead() {}, write(x) { this.out += x; }, end() { this.ended = true; if (this.onclose) this.onclose(); }, on(ev, f) { if (ev === 'close') this.onclose = f; } });
+  const R = openRooms({ maxBytes: 8000, kv, now: () => t });
+  const a = R.create('g1').body, A = fakeRes(), B = fakeRes();
+  R.join(a.code, 'g1', 'Ann', A); R.join(a.code, 'g1', 'Bo', B);
+  const ha = JSON.parse(A.out.split('data: ')[1]);
+  const say = () => R.send(a.code, { id: ha.you, token: ha.token, msgs: [{ d: 'x'.repeat(500) }] });
+  for (let i = 0; i < 6; i++) say();
+  ok(R.create('g2').status === 200, 'rooms open while under the daily traffic budget');
+  say();
+  const late = R.create('g3'), extra = R.join(a.code, 'g1', 'Cy', fakeRes());
+  ok(late.status === 503 && /traffic/.test(late.body.message) && extra && extra.status === 503, 'past the budget no new rooms open and no one new joins');
+  let r = null;
+  for (let i = 0; i < 40 && (!r || r.status === 204); i++) r = say();
+  ok(r.status === 503 && A.ended && B.ended, 'a fifth past the budget, a running room closes');
+  await R.traffic();
+  const R2 = openRooms({ maxBytes: 8000, kv, now: () => t });
+  ok((await R2.traffic()) >= 9600 && R2.create('g4').status === 503, 'the day\'s count survives a restart through the shared store');
+  t += 86400000;
+  ok(R2.create('g5').status === 200, 'the budget resets the next day');
+  ok(openRooms({}).create('g6').status === 200, 'no budget by default in the relay itself');
+  let calls = 0;
+  const R3 = openRooms({ maxBytes: 8000, kv: Object.assign({}, kv, { incr: (...x) => { calls++; return kv.incr(...x); } }), now: () => t });
+  await R3.traffic(); await R3.traffic(); await R3.traffic();
+  ok(calls === 1, 'quiet rooms make no store calls after loading the day\'s count: ' + calls);
+  R.close(); R2.close(); R3.close();
 }
 
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');
