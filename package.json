@@ -11,7 +11,8 @@
     "serve": "cd dist && python3 -m http.server 8765 --bind 127.0.0.1",
     "e2e": "python3 test/e2e.py /tmp/gameplay-shots",
     "test:workshop": "node --test test/workshop-scene.test.mjs",
-    "audit:design": "node test/design-audit.mjs"
+    "audit:design": "node test/design-audit.mjs",
+    "test:world": "node --test test/world-background.test.mjs"
   },
   "engines": {
     "node": ">=20"

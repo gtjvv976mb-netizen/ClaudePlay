@@ -12,6 +12,7 @@
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2032%2032'%3E%3Cpath%20d%3D'M5%209h22l4%2015-4%203-7-6h-8l-7%206-4-3z'%20fill%3D'%23163f9a'%2F%3E%3Cpath%20d%3D'M7%2014h8m-4-4v8'%20stroke%3D'%23fff'%20stroke-width%3D'2.5'%2F%3E%3Cpath%20d%3D'M21%2013h3v3h-3zm4%204h3v3h-3z'%20fill%3D'%23ffcf67'%2F%3E%3C%2Fsvg%3E">
 <link rel="preload" as="image" href="play-world-v1.webp">
+<link rel="preload" as="image" href="world-sky-v1.webp">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
 <title>ClaudePlay</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,6 +20,7 @@
 <link id="optional-fonts" rel="stylesheet" media="print" onload="this.onload=null;this.media='all'" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"></noscript>
 <style>
+#site-world{--world-art:url('play-world-v1.webp');--world-sky:url('world-sky-v1.webp')}
 /* A playful pixel-world portal. Sky, cream and navy keep games in the foreground;
    readable controls and a complete calm-motion mode keep every tool usable. */
 :root {
@@ -693,7 +695,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 /* One world to create in, one real game to play, then a shelf to explore. Each can be a fitted pane. */
 .pack { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 28px; padding: 0; align-items: start; }
 .pack .hero-copy { grid-column: 1; position: relative; isolation: isolate; min-height: 530px; overflow: hidden; padding: 48px; gap: 20px; border: 1px solid #6fa4c7; border-radius: 24px; background: #a4daf4; color: #14334b; box-shadow: none; translate: none; animation: none; align-content: center; }
-.play-world-art { position: absolute; inset: 0; z-index: -2; background: #a4daf4 url('play-world-v1.webp') center/cover no-repeat; image-rendering: pixelated; }
+.play-world-art { display: none; }
 .pack .hero-copy::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, rgba(234,249,255,.95), rgba(234,249,255,.84) 32%, rgba(234,249,255,0) 64%); pointer-events: none; }
 .pack .hero-copy > :not(.play-world-art):not(.workshop-scene) { position: relative; width: min(520px, 100%); z-index: 2; }
 .pack .hero-title { font: 700 clamp(2.25rem, 3.7vw, 3.6rem)/1.12 var(--display); letter-spacing: -.065em; color: #14334b; text-wrap: balance; text-shadow: 3px 3px 0 #fffdf0; }
@@ -902,7 +904,71 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
 :root[data-gp-theme="contrast"] .maker-bar .seg button { color: var(--ink); background: var(--panel); }
 :root[data-gp-theme="contrast"] .maker-bar .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 :root[data-gp-motion="reduce"] .cart:hover, :root[data-gp-motion="reduce"] .cart:focus-visible { transform: none; }
-@media (prefers-reduced-motion: reduce) { .cart:hover, .cart:focus-visible { transform: none; } }
+@media (prefers-reduced-motion: reduce) { :root:not([data-gp-motion="full"]) .cart:hover, :root:not([data-gp-motion="full"]) .cart:focus-visible { transform: none; } }
+
+/* ---------- pages within the persistent floating world ---------- */
+/* The decorative world lives outside #view. Opaque, bounded surfaces protect text
+   contrast while the sky, drifting clouds and islands remain visible around them. */
+body { margin: 0; isolation: isolate; }
+.wrap { position: relative; z-index: 1; background: transparent; }
+.top { background: var(--panel); }
+.pack { justify-items: start; }
+.pack .hero-copy { width: min(540px, 53%); min-height: 0; padding: 28px; gap: 16px; background: var(--panel); color: var(--ink); border-color: var(--line); box-shadow: 0 10px 35px var(--shadow); overflow: visible; }
+.pack .hero-copy::after, .pack .play-world-art, .pack .workshop-scene { display: none; }
+.pack .hero-copy > :not(.play-world-art):not(.workshop-scene) { width: 100%; }
+.pack .hero-title, .pack .hero-title .hl { color: var(--ink); text-shadow: none; }
+.pack .lede, .pack .page-kicker, .pack .maker-ideas .fine { color: var(--ink-2); }
+.pack .page-kicker { width: fit-content; padding: 0; background: transparent; }
+:root:not([data-gp-theme="contrast"]) .pack .hero-copy > .page-kicker { padding: 0; background: var(--panel); color: var(--ink-2); }
+.maker-box, .maker-box textarea { background: var(--panel); color: var(--ink); border-color: var(--ink-2); }
+.maker-box textarea::placeholder { color: var(--muted); }
+.maker-bar .btn { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); box-shadow: 0 3px 0 var(--ink-2); }
+.maker-bar .seg { background: var(--sheet); }
+.maker-bar .seg button { color: var(--ink-2); }
+.maker-bar .seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.pack .maker-ideas .chip { background: var(--sheet); color: var(--ink-2); border-color: var(--line); }
+.pack .stage3d { width: min(960px, 100%); background: var(--panel); box-shadow: 0 10px 35px var(--shadow); }
+.pack-shelf { width: 100%; }
+.pack-shelf-head { width: fit-content; max-width: 100%; padding: 13px 18px; gap: 16px 32px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--ink); }
+.pack .cart-title { background: var(--panel); padding: 10px 14px 14px; }
+.page-head, .gp-head { width: min(1040px, 100%); padding: 20px 24px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); color: var(--ink); box-shadow: 0 8px 25px var(--shadow); }
+.studio-heading { width: fit-content; padding-block: 16px; }
+.page-head .facts { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.section-head { justify-self: start; width: fit-content; max-width: 100%; padding: 14px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--ink); box-shadow: 0 6px 20px var(--shadow); }
+.section-head p { color: var(--muted); }
+#view > .facts { width: fit-content; max-width: 100%; padding: 16px 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 6px 20px var(--shadow); }
+#view > p { width: fit-content; max-width: 100%; padding: 16px 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.gp-side, .st-left { padding: 20px; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); box-shadow: 0 10px 35px var(--shadow); }
+.gp-main, .st-right, .panel, .table-wrap, .empty { box-shadow: 0 8px 25px var(--shadow); }
+.biz .hero-copy { padding: 26px; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); box-shadow: 0 10px 35px var(--shadow); }
+.way { padding: 24px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); }
+.ways { gap: 18px; }
+.section > .steps { gap: 18px; }
+.section > .steps li { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.feature-grid { gap: 16px; }
+.feature-grid li { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.section > h2 { justify-self: start; width: fit-content; max-width: 100%; padding: 12px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.foot, .foot-mini { padding: 18px 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+@media (max-width: 960px) {
+  .pack .hero-copy { width: min(560px, 100%); padding: 24px; gap: 16px; min-height: 0; }
+  .pack .hero-copy > .page-kicker { padding: 0; background: transparent; }
+  .page-head, .gp-head { padding: 18px 20px; }
+  .gp-side, .st-left { padding: 18px; }
+}
+@media (max-width: 560px) {
+  .wrap { padding-inline: 14px; }
+  .pack .hero-copy { padding: 18px; gap: 14px; border-radius: 18px; }
+  .pack .hero-title { font-size: 1.875rem; }
+  .page-head, .gp-head { padding: 16px; border-radius: 16px; }
+  .studio-heading { padding-block: 12px; }
+  .section-head, .pack-shelf-head { padding: 12px 14px; gap: 10px 16px; }
+  #view > .facts { padding: 14px 16px; }
+  .gp-side, .st-left { padding: 14px; border-radius: 16px; }
+  .biz .hero-copy, .way, .section > .steps li, .feature-grid li { padding: 18px; }
+  .foot, .foot-mini { padding: 14px 16px; }
+}
+/* A tall creation card scrolls inside the fitted pane rather than spilling into the pager. */
+:root[data-fit] .pack .hero-copy.fit-tall { overflow: auto; min-height: 0; }
 
 /* ---------- contrast, motion, forced colors ---------- */
 :root[data-gp-theme="contrast"] a, :root[data-gp-theme="contrast"] .linkish { text-decoration-color: currentColor; }
@@ -915,7 +981,7 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
 /* Calm motion also flattens the tilted console and parks the score pops. */
 :root[data-gp-motion="reduce"] .pack .console { transform: none; }
 @media (prefers-reduced-motion: reduce) { :root:not([data-gp-motion="full"]) .pack .console { transform: none; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+@media (prefers-reduced-motion: reduce) { :root:not([data-gp-motion="full"]) *, :root:not([data-gp-motion="full"]) *::before, :root:not([data-gp-motion="full"]) *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 :root[data-gp-motion="reduce"] *, :root[data-gp-motion="reduce"] *::before, :root[data-gp-motion="reduce"] *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 @media (forced-colors: active) {
   .btn, .chip, .swatch, .hbtn, .wchip, label.opt { border: 1px solid ButtonText; }
@@ -3799,355 +3865,259 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
 
 </script>
 <script>
-/* Floating miniature game worlds are decoration, independent of games and their hashes.
-   Inline before app.js. PPWorkshop.mount(host, { reducedMotion }) returns an idempotent handle.
-   It never catches a wheel, captures a pointer, or fetches an asset. */
+/* Persistent decorative pixel world. Images are supplied by the self-contained build.
+   No route content, game documents, GPU context or per-frame JavaScript is owned here. */
 (function () {
   'use strict';
   const mounted = new WeakMap();
+  const RATIO = 1672 / 941;
+  const pixels = (points) => points.map(([x,y]) => [x / 1672 * 100,y / 941 * 100]);
+  const ROUTES = Object.freeze({
+    home:     { island: 'overview', x: .50, y: .50, zoom: 1,    focus: .50 },
+    explore:  { island: 'castle',   x: .87, y: .29, zoom: 1.60, focus: .70 },
+    create:   { island: 'forest',   x: .55, y: .29, zoom: 1.75, focus: .70 },
+    game:     { island: 'city',     x: .86, y: .73, zoom: 1.75, focus: .70 },
+    maker:    { island: 'forest',   x: .48, y: .30, zoom: 1.65, focus: .68 },
+    group:    { island: 'castle',   x: .83, y: .30, zoom: 1.80, focus: .68 },
+    wallet:   { island: 'race',     x: .48, y: .72, zoom: 1.70, focus: .70 },
+    ledger:   { island: 'city',     x: .89, y: .77, zoom: 1.85, focus: .68 },
+    economy:  { island: 'race',     x: .49, y: .69, zoom: 1.55, focus: .70 },
+    business: { island: 'castle',   x: .89, y: .26, zoom: 1.95, focus: .72 },
+  });
   const CSS = `
-  .workshop-scene {
-    --ws-grass:#74c84a; --ws-leaf:#2e9958; --ws-dirt:#976c45; --ws-rock:#8faac4;
-    --ws-cream:#fff9e8; --ws-charcoal:#263651; --ws-coral:#ed785f; --ws-cobalt:#437be2;
-    --ws-gold:#ffd54a; --ws-water:#57bfdf; --ws-cloud:#f7fcff; --ws-road:#415575;
-    overflow:hidden; isolation:isolate; pointer-events:none; contain:layout paint; user-select:none;
-  }
-  :root[data-gp-theme="dark"] .workshop-scene, :root[data-theme="dark"] .workshop-scene {
-    --ws-rock:#6e87ac; --ws-cloud:#c8def4; --ws-dirt:#866343;
-  }
-  @media(prefers-color-scheme:dark) {
-    :root:not([data-gp-theme="light"]):not([data-theme="light"]) .workshop-scene { --ws-rock:#6e87ac; --ws-cloud:#c8def4; --ws-dirt:#866343; }
-  }
-  .workshop-scene .ws-canvas, .workshop-scene .ws-still { position:absolute; inset:0; width:100%; height:100%; display:block; }
-  .workshop-scene[data-workshop-mode="webgl"] .ws-still { display:none; }
-  .workshop-scene[data-workshop-mode="static"] .ws-canvas { display:none; }
-  .workshop-scene .ws-island { position:absolute; left:40%; top:41%; width:185px; height:96px; transform:translate(-50%,-50%) rotate(-12deg) skewY(8deg); background:var(--ws-grass); border:2px solid var(--ws-leaf); box-shadow:0 12px 0 var(--ws-dirt),0 21px 0 color-mix(in srgb,var(--ws-dirt) 75%,var(--ws-charcoal)); clip-path:polygon(8% 0,89% 0,100% 22%,96% 81%,82% 100%,10% 94%,0 70%,0 16%); }
-  .workshop-scene .ws-land { position:absolute; width:190px; height:170px; left:38%; top:44%; transform:translate(-50%,-50%); }
-  .workshop-scene .ws-land .ws-island { left:50%; top:68%; }
-  .workshop-scene .ws-tree { position:absolute; width:14px; height:74px; background:var(--ws-dirt); left:41%; top:8%; transform:rotate(-12deg); }
-  .workshop-scene .ws-tree::before { content:""; position:absolute; left:-19px; top:0; width:52px; height:49px; background:var(--ws-leaf); box-shadow:8px -13px 0 -3px var(--ws-grass),-7px 17px 0 -8px var(--ws-grass); }
-  .workshop-scene .ws-tree-small { left:73%; top:27%; transform:scale(.65) rotate(13deg); }
-  .workshop-scene .ws-water { position:absolute; width:45%; height:17%; top:66%; left:11%; background:var(--ws-water); transform:rotate(-13deg) skewX(-20deg); }
-  .workshop-scene .ws-race { left:76%; top:60%; width:143px; height:75px; transform:translate(-50%,-50%) rotate(12deg) skewY(-7deg); background:var(--ws-rock); border-color:var(--ws-cobalt); }
-  .workshop-scene .ws-race::before { content:""; position:absolute; inset:9px 11px; border:12px solid var(--ws-road); border-radius:50%; outline:2px dashed var(--ws-cream); outline-offset:-8px; }
-  .workshop-scene .ws-race::after { content:""; position:absolute; width:19px; height:10px; right:16px; top:18px; background:var(--ws-coral); border:2px solid var(--ws-charcoal); }
-  .workshop-scene .ws-city { position:absolute; left:17%; top:24%; width:136px; height:130px; transform:translate(-50%,-50%) scale(.83); }
-  .workshop-scene .ws-city .ws-island { left:50%; top:76%; width:150px; height:68px; background:var(--ws-rock); border-color:var(--ws-cobalt); }
-  .workshop-scene .ws-building { position:absolute; width:33px; height:65px; left:24%; top:19%; background:var(--ws-cobalt); border-right:7px solid color-mix(in srgb,var(--ws-cobalt) 70%,var(--ws-charcoal)); border-top:5px solid var(--ws-cream); }
-  .workshop-scene .ws-building::after { content:""; position:absolute; top:13px; left:5px; width:6px; height:7px; background:var(--ws-cream); box-shadow:10px 0 0 var(--ws-cream),0 17px 0 var(--ws-cream),10px 17px 0 var(--ws-cream); }
-  .workshop-scene .ws-building-small { left:57%; top:34%; height:44px; background:var(--ws-coral); border-color:var(--ws-charcoal); }
-  .workshop-scene .ws-cloud { position:absolute; left:58%; top:18%; width:90px; height:22px; background:var(--ws-cloud); box-shadow:20px -17px 0 -1px var(--ws-cloud),46px -7px 0 -3px var(--ws-cloud); }
-  .workshop-scene .ws-cloud-low { left:5%; top:77%; transform:scale(.7); }
-  .workshop-scene .ws-coin { position:absolute; width:18px; height:18px; background:var(--ws-gold); border:2px solid var(--ws-cream); transform:rotate(17deg); left:61%; top:38%; box-shadow:5px 4px 0 color-mix(in srgb,var(--ws-gold) 70%,var(--ws-dirt)); }
-  .workshop-scene .ws-coin-high { left:86%; top:25%; transform:rotate(-15deg) scale(.7); }
-  :root[data-gp-theme="contrast"] .workshop-scene { --ws-grass:Canvas; --ws-leaf:CanvasText; --ws-dirt:CanvasText; --ws-rock:Canvas; --ws-cream:CanvasText; --ws-charcoal:CanvasText; --ws-coral:Canvas; --ws-cobalt:CanvasText; --ws-gold:Canvas; --ws-water:CanvasText; --ws-cloud:CanvasText; --ws-road:CanvasText; }
-  @media(forced-colors:active) { .workshop-scene { --ws-grass:Canvas; --ws-leaf:CanvasText; --ws-dirt:CanvasText; --ws-rock:Canvas; --ws-cream:CanvasText; --ws-charcoal:CanvasText; --ws-coral:Canvas; --ws-cobalt:CanvasText; --ws-gold:Canvas; --ws-water:CanvasText; --ws-cloud:CanvasText; --ws-road:CanvasText; } }
-  @media(max-width:560px) { .workshop-scene .ws-land { left:41%; transform:translate(-50%,-50%) scale(.8); } .workshop-scene .ws-city { left:18%; transform:translate(-50%,-50%) scale(.65); } .workshop-scene .ws-race { left:77%; transform:translate(-50%,-50%) rotate(12deg) skewY(-7deg) scale(.72); } .workshop-scene .ws-cloud { transform:scale(.65); } }
+  .world-background{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;contain:strict;background:#77c7ee;isolation:isolate}
+  .world-background *{pointer-events:none;box-sizing:border-box}
+  .world-background .world-viewport,.world-background .world-atlas{position:absolute;inset:0;overflow:hidden}
+  .world-background .world-camera{position:absolute;left:50%;top:50%;transform-origin:50% 50%;will-change:transform}
+  .world-background .world-atlas{overflow:visible}
+  .world-background .world-sky{position:absolute;inset:-5%;background-image:var(--world-sky,var(--world-art));background-size:100% 100%;background-repeat:no-repeat}
+  .world-background .world-still{position:absolute;inset:0;background-image:var(--world-art);background-size:100% 100%}
+  .world-background .world-island{position:absolute}
+  .world-background .world-island-float,.world-background .world-island-art{position:absolute;inset:0}
+  .world-background .world-island-float{animation:world-island-float var(--world-period,9s) ease-in-out infinite alternate;animation-delay:var(--world-delay,-3s);will-change:transform}
+  .world-background .world-island-art{background-image:var(--world-art);background-repeat:no-repeat}
+  .world-background .world-clouds-back,.world-background .world-clouds-front,.world-background .world-flights,.world-background .world-waterfalls,.world-background .world-sparks{position:absolute;inset:0}
+  .world-background .world-clouds-back{z-index:0;opacity:.68}
+  .world-background .world-island{z-index:1}
+  .world-background .world-waterfalls,.world-background .world-sparks{z-index:2}
+  .world-background .world-flights{z-index:3}
+  .world-background .world-clouds-front{z-index:4;opacity:.64}
+  .world-background .world-cloud{position:absolute;width:var(--cloud-width,9%);height:2.8%;background:#f8fcff;box-shadow:14px 9px 0 #e6f2fc,-12px 5px 0 #f8fcff;animation:world-cloud-drift var(--cloud-period,110s) linear infinite;animation-delay:var(--cloud-delay,-30s);will-change:transform}
+  .world-background .world-cloud:before,.world-background .world-cloud:after{content:'';position:absolute;background:inherit;bottom:95%;width:41%;height:85%;left:13%;box-shadow:10px -6px 0 #f8fcff}
+  .world-background .world-cloud:after{left:49%;width:30%;height:140%;box-shadow:none}
+  .world-background .world-vehicle{position:absolute;left:0;top:var(--flight-y,18%);width:7%;height:7%;animation:world-flight var(--flight-period,72s) linear infinite;animation-delay:var(--flight-delay,-25s);will-change:transform}
+  .world-background .world-vehicle.reverse{animation-name:world-flight-return}
+  .world-background .world-craft{position:absolute;inset:0;animation:world-craft-bob 3.8s ease-in-out infinite alternate;filter:drop-shadow(0 5px 0 #28475b22)}
+  .world-background .world-craft.hoverskiff{width:80%;height:43%;left:10%;top:36%;background:#f7794b;clip-path:polygon(0 39%,14% 39%,14% 19%,39% 19%,39% 0,65% 0,65% 20%,88% 20%,88% 40%,100% 40%,100% 80%,84% 80%,84% 100%,16% 100%,16% 80%,0 80%)}
+  .world-background .world-craft.hoverskiff:before{content:'';position:absolute;left:43%;top:2%;width:21%;height:32%;background:#a0e8ff;box-shadow:-17px 9px 0 #fff4bc,13px 11px 0 #fff4bc,0 26px 0 #ffe4a5}
+  .world-background .world-craft.hoverskiff:after{content:'';position:absolute;left:21%;right:14%;bottom:10%;height:15%;background:#526b88;box-shadow:0 4px 0 #bbeaff}
+  .world-background .world-craft.airship{width:95%;height:55%;top:10%;background:#fff4c8;clip-path:polygon(0 35%,11% 35%,11% 16%,27% 16%,27% 0,73% 0,73% 16%,89% 16%,89% 35%,100% 35%,100% 67%,89% 67%,89% 84%,62% 84%,62% 100%,38% 100%,38% 84%,11% 84%,11% 67%,0 67%)}
+  .world-background .world-craft.airship:before{content:'';position:absolute;left:25%;top:0;bottom:15%;width:12%;background:#efa666;box-shadow:26px 0 0 #efa666}
+  .world-background .world-craft.airship:after{content:'';position:absolute;left:37%;bottom:0;width:27%;height:20%;background:#547d98;box-shadow:0 -3px 0 #92d9eb}
+  .world-background .world-craft.glider{width:96%;height:52%;top:22%;background:#63dce4;clip-path:polygon(0 40%,35% 40%,43% 0,56% 0,64% 40%,100% 40%,100% 62%,64% 62%,56% 100%,43% 100%,35% 62%,0 62%)}
+  .world-background .world-craft.glider:after{content:'';position:absolute;left:43%;top:31%;width:15%;height:38%;background:#f8f1be}
+  .world-background .world-waterfall{position:absolute;width:.35%;height:var(--fall-height,12%);opacity:.72;background:repeating-linear-gradient(180deg,#d5fbff00 0 9px,#e1ffff 9px 14px,#d5fbff00 14px 31px);animation:world-waterfall 1.7s linear infinite;mask-image:linear-gradient(transparent,#000 17%,#000 83%,transparent)}
+  .world-background .world-spark{position:absolute;width:.48%;aspect-ratio:1;background:#fff2a8;clip-path:polygon(36% 0,64% 0,64% 36%,100% 36%,100% 64%,64% 64%,64% 100%,36% 100%,36% 64%,0 64%,0 36%,36% 36%);animation:world-spark 4s ease-in-out infinite;animation-delay:var(--spark-delay,-1s)}
+  .world-background .world-wash{position:absolute;inset:0;z-index:6;background:#fff6df;opacity:.045;transition:opacity 180ms linear}
+  .world-background[data-world-theme="dark"] .world-wash{background:#0b2038;opacity:.23}
+  .world-background[data-world-theme="dark"]{background:#294c6b}
+  .world-background[data-world-theme="contrast"]{background:#000}
+  .world-background[data-world-theme="contrast"] .world-viewport,.world-background[data-world-theme="contrast"] .world-wash{visibility:hidden}
+  .world-background[data-world-motion="paused"] *{animation-play-state:paused!important}
+  .world-background[data-world-motion="static"] *{animation:none!important;transition:none!important;will-change:auto!important}
+  .world-background[data-world-motion="static"] .world-vehicle{opacity:0}
+  @keyframes world-island-float{from{transform:translate3d(0,calc(var(--world-float,7px) * -1),0) rotate(-.09deg)}to{transform:translate3d(0,var(--world-float,7px),0) rotate(.09deg)}}
+  @keyframes world-cloud-drift{from{transform:translate3d(-180%,0,0)}to{transform:translate3d(1350%,0,0)}}
+  @keyframes world-flight{0%{transform:translate3d(-180%,-25%,0) rotate(-4deg)}22%{transform:translate3d(260%,55%,0) rotate(3deg)}54%{transform:translate3d(780%,-45%,0) rotate(-3deg)}78%{transform:translate3d(1120%,18%,0) rotate(2deg)}100%{transform:translate3d(1600%,-25%,0) rotate(-4deg)}}
+  @keyframes world-flight-return{0%{transform:translate3d(1600%,15%,0) scaleX(-1) rotate(3deg)}30%{transform:translate3d(1100%,-40%,0) scaleX(-1) rotate(-3deg)}65%{transform:translate3d(500%,60%,0) scaleX(-1) rotate(4deg)}100%{transform:translate3d(-180%,15%,0) scaleX(-1) rotate(3deg)}}
+  @keyframes world-craft-bob{from{translate:0 -3px}to{translate:0 3px}}
+  @keyframes world-waterfall{to{background-position:0 62px}}
+  @keyframes world-spark{0%,65%,100%{opacity:0;transform:scale(.4) translateY(3px)}23%,43%{opacity:.85;transform:scale(1) translateY(-3px)}}
+  @media(prefers-reduced-motion:reduce){:root:not([data-gp-motion="full"]) .world-background *{animation:none!important;transition:none!important;will-change:auto!important}}
+  @media(forced-colors:active),(prefers-contrast:more){.world-background *{animation:none!important;transition:none!important;will-change:auto!important}}
+  @media(forced-colors:active){.world-background{background:Canvas}.world-background .world-viewport,.world-background .world-wash{visibility:hidden}}
   `;
 
-  function installStyle() {
-    if (document.getElementById('workshop-scene-style')) return;
-    const style = document.createElement('style'); style.id = 'workshop-scene-style'; style.textContent = CSS;
-    (document.head || document.documentElement).appendChild(style);
+  function element(name, parent) {
+    const node = document.createElement('div'); node.className = name;
+    if (parent) parent.appendChild(node);
+    return node;
   }
-  function node(name, cls, parent) {
-    const el = document.createElement(name); el.className = cls; if (parent) parent.appendChild(el); return el;
+  function routeKey(value) {
+    const key = String(value || 'home').replace(/^#/, '').split(/[\-?&/]/)[0];
+    return Object.prototype.hasOwnProperty.call(ROUTES, key) ? key : 'home';
   }
-  function fallback(host) {
-    const still = node('div', 'ws-still', host);
-    const land = node('div', 'ws-land', still); node('div', 'ws-island', land); node('div', 'ws-water', land);
-    node('div', 'ws-tree', land); node('div', 'ws-tree ws-tree-small', land);
-    node('div', 'ws-island ws-race', still);
-    const city = node('div', 'ws-city', still); node('div', 'ws-island', city); node('div', 'ws-building', city); node('div', 'ws-building ws-building-small', city);
-    node('div', 'ws-cloud', still); node('div', 'ws-cloud ws-cloud-low', still);
-    node('div', 'ws-coin', still); node('div', 'ws-coin ws-coin-high', still);
-    return still;
-  }
-  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-  const TAU = Math.PI * 2;
 
   function mount(host, options = {}) {
-    if (!host || !host.appendChild) return { stop() {}, destroy() {}, retheme() {}, setMotion() {}, canvas: null };
-    if (mounted.has(host)) mounted.get(host).stop();
-    installStyle(); host.classList.add('workshop-scene'); host.setAttribute('aria-hidden', 'true');
-    const still = fallback(host), canvas = node('canvas', 'ws-canvas', host);
-    canvas.setAttribute('aria-hidden', 'true'); canvas.width = canvas.height = 1;
+    if (!host || host.nodeType !== 1) return null;
+    if (mounted.has(host)) return mounted.get(host);
     const root = document.documentElement;
-    const query = (s) => window.matchMedia ? window.matchMedia(s) : null;
-    const reduced = query('(prefers-reduced-motion: reduce)'), forced = query('(forced-colors: active)'), contrast = query('(prefers-contrast: more)'), dark = query('(prefers-color-scheme: dark)');
-    const media = [reduced, forced, contrast, dark].filter(Boolean);
-    let stopped = false, requestedReduce = !!options.reducedMotion, inView = true, renderer = null, unavailable = false;
-    let raf = 0, last = 0, elapsed = 0, stamp = 0, width = 1, height = 1, ema = 33, slow = 0;
-    let px = 0, py = 0, tx = 0, ty = 0, pointerUntil = 0, palette = null;
-    const cleanups = [];
-    const listen = (target, event, fn, opts) => { target.addEventListener(event, fn, opts); cleanups.push(() => target.removeEventListener(event, fn, opts)); };
-    const isCalm = () => requestedReduce || root.getAttribute('data-gp-motion') === 'reduce' || !!(reduced && reduced.matches);
-    const isContrast = () => root.getAttribute('data-gp-theme') === 'contrast' || !!(forced && forced.matches) || !!(contrast && contrast.matches);
-    const paused = () => document.hidden || !inView || (document.activeElement && /^(IFRAME|INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) || !!document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]');
-
-    function color(css, name, spare) {
-      const value = css.getPropertyValue(name).trim(), h = value.match(/^#([0-9a-f]{6})$/i), rgb = value.match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)/i);
-      if (h) { const n = parseInt(h[1], 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
-      if (rgb) return rgb.slice(1, 4).map((n) => clamp(Number(n) / 255, 0, 1));
-      return spare;
+    const cleanups = [], owned = [], prior = { hidden: host.getAttribute('aria-hidden'), className: host.className };
+    const query = (value) => window.matchMedia ? window.matchMedia(value) : null;
+    const reduced = query('(prefers-reduced-motion: reduce)'), forced = query('(forced-colors: active)');
+    const contrast = query('(prefers-contrast: more)'), dark = query('(prefers-color-scheme: dark)');
+    let dead = false, requestedReduce = !!options.reducedMotion, visible = true, route = 'home', cameraAnimation = null, cameraFinish = null;
+    let width = 1, height = 1, atlasWidth = 1, atlasHeight = 1;
+    host.classList.add('world-background'); host.setAttribute('aria-hidden', 'true');
+    const style = document.createElement('style'); style.textContent = CSS; host.appendChild(style); owned.push(style);
+    const viewport = element('world-viewport', host), camera = element('world-camera', viewport), atlas = element('world-atlas', camera);
+    owned.push(viewport);
+    const sky = element('world-sky', atlas);
+    const clipped = !window.CSS || !window.CSS.supports || window.CSS.supports('clip-path', 'polygon(0 0,100% 0,100% 100%)');
+    const back = element('world-clouds-back', atlas);
+    const fragment = (name, bounds, points, period, delay, amount) => {
+      const island = element('world-island world-island-' + name, atlas);
+      const [x, y, w, h] = bounds;
+      Object.assign(island.style, { left: x + '%', top: y + '%', width: w + '%', height: h + '%' });
+      island.style.setProperty('--world-period', period + 's'); island.style.setProperty('--world-delay', delay + 's'); island.style.setProperty('--world-float', amount + 'px');
+      const float = element('world-island-float', island), art = element('world-island-art', float);
+      art.style.backgroundSize = (10000 / w) + '% ' + (10000 / h) + '%';
+      art.style.backgroundPosition = (x / (100 - w) * 100) + '% ' + (y / (100 - h) * 100) + '%';
+      const contour = points.map(([px,py]) => [((px-x)/w*100).toFixed(3),((py-y)/h*100).toFixed(3)]);
+      art.style.clipPath = 'polygon(' + contour.map(([px,py]) => px + '% ' + py + '%').join(',') + ')';
+      // Feather only the runtime silhouette edge by roughly one original pixel.
+      // The texture remains the accepted, byte-identical original illustration.
+      const mask = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><filter id="edge" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation=".14"/></filter></defs><polygon fill="white" filter="url(#edge)" points="' + contour.map((point) => point.join(',')).join(' ') + '"/></svg>';
+      const maskUrl = 'url("data:image/svg+xml,' + encodeURIComponent(mask) + '")';
+      art.style.maskImage = maskUrl; art.style.webkitMaskImage = maskUrl; art.style.maskSize = art.style.webkitMaskSize = '100% 100%';
+      return island;
+    };
+    if (clipped) {
+      fragment('forest', [39, 2, 34, 55], [
+        [39.9,28],[40.6,24],[42,24],[42,20],[41.7,16],[41.9,12],[43,8],[44.7,7],[44.9,4],[47,3.7],[48.8,4.8],[49.1,8],[51,8.9],[51.9,12],[51.2,16],[52.2,18],[53.9,20],[54.3,24.4],[55,25.3],[55,31.4],[57.2,33.2],[58.1,28],[59,26],[60.8,25.4],[61.2,19],[62,14],[63,13],[63,10],[65,8.9],[66.3,9.7],[66.6,13.5],[67.4,14.3],[67.4,6.4],[68,6.4],[68.4,9.3],[68,9.4],[68,14.5],[69.1,14.1],[69,21],[69.1,24.9],[71.9,25.7],[72.2,29],
+        ...pixels([[1202,282],[1198,320],[1196,336],[1187,335],[1183,351],[1168,357],[1192,379],[1195,397],[1189,411],[1174,426],[1158,426],[1153,439],[1134,446],[1134,450],[1118,450],[1110,465],[1094,461],[1093,469],[1080,473],[1063,472],[1064,482],[1056,492],[1048,489],[1048,499],[1039,506],[1034,491],[1022,490],[1017,489],[1005,494],[1000,486],[986,493],[978,508],[961,510],[949,527],[929,532],[929,513],[919,521],[909,513],[899,506],[898,498],[886,500],[873,485],[865,482],[856,471],[842,469],[835,465],[829,472],[828,482],[817,490],[810,478],[800,472],[793,450],[791,499],[756,499],[762,446],[751,439],[743,422],[731,421],[731,405],[713,390],[704,381],[696,379],[693,363],[681,358],[675,342],[675,332],[669,320],[667,303],[666,275]])
+      ], 9.7, -4.4, 7);
+      fragment('castle', [75.8, 1.5, 24.2, 57.5], [
+        [76.5,36],[77.6,34],[77.3,28],[78.6,26],[80.2,25.2],[80.1,21],[80.9,18],[82.2,15],[84.3,14.1],[85.9,15],[86,12.3],[86.3,12.3],[86.3,8],[86.7,8],[86.7,12],[88,12.4],[88,18.4],[88.4,18.4],[88.4,8.9],[89.1,8.9],[89.1,2.2],[89.5,2.2],[89.7,4.1],[90.3,3.4],[90.7,4.3],[89.5,4.8],[89.5,5.8],[91,8.9],[91.1,15.5],[92,17],[92,12],[92.3,12],[92.3,8.5],[92.7,8.5],[92.7,12],[93.5,12.4],[93.5,18],[94.7,18.6],[95.5,17.5],[97,19],[97,22],[98.6,25],[99.8,28.8],[99,32],[98,34],[99.5,36.2],
+        ...pixels([[1658,345],[1647,367],[1649,386],[1632,394],[1629,404],[1618,413],[1616,437],[1603,444],[1593,438],[1593,417],[1584,426],[1579,442],[1570,438],[1560,424],[1554,448],[1545,464],[1537,470],[1536,496],[1523,515],[1510,520],[1499,526],[1491,519],[1477,525],[1470,509],[1458,516],[1453,527],[1440,520],[1426,523],[1416,514],[1408,491],[1391,484],[1388,470],[1375,469],[1370,450],[1356,449],[1343,432],[1340,419],[1332,412],[1329,399],[1310,398],[1300,381],[1287,383],[1285,373],[1278,376],[1278,359],[1266,357],[1267,340]])
+      ], 11.8, -8, 5);
+      fragment('race', [33, 49.7, 32.1, 47], [
+        [33.5,76],[33.9,71],[34.6,68],[35.4,64],[36.5,64],[36.7,58.7],[38.5,56.2],[39.2,51.6],[40.5,50.7],[41.7,52.4],[42.1,56],[43.4,54.8],[44.2,54],[46.1,53.4],[48.1,54.2],[50.2,57.9],[51.4,64.2],[53.6,63.8],[53.8,57.7],[54.7,55.6],[56.1,56.8],[57,59],[57.2,63],[58.4,63],[58.4,61.5],[60,61.4],
+        ...pixels([[1001,582],[1003,610],[1000,632],[1022,654],[1030,645],[1033,650],[1032,666],[1044,668],[1050,683],[1050,703],[1038,701],[1035,716],[1024,724],[1019,751],[1006,762],[1000,773],[982,778],[981,794],[961,803],[958,813],[951,812],[950,825],[936,825],[935,846],[924,848],[924,866],[913,880],[909,864],[896,862],[895,839],[887,835],[886,823],[879,837],[860,845],[849,852],[824,856],[824,869],[809,873],[806,895],[790,903],[775,898],[760,885],[760,868],[752,857],[728,852],[690,835],[690,819],[665,813],[665,800],[642,795],[625,787],[617,793],[601,790],[591,779],[588,765],[576,760],[573,743],[574,730],[561,728],[561,717]])
+      ], 10.9, -2.1, 8);
+      fragment('city', [69.7, 45, 30.3, 55], [
+        [70.2,80],[71.8,76],[72.6,72],[72.1,68],[73,65],[74.5,65.7],[75.1,64.7],[75.4,61],[76.8,58.8],[77.5,56.8],[79.9,56.4],[80.6,54.8],[81.4,51.5],[81.4,49.5],[81.8,49.5],[81.8,51.5],[82.6,53],[83.1,56.2],[83.1,58],[85.9,57.7],[87,59.2],[87,63],[89,61],[90.2,59],[91.1,56.8],[91.1,51.4],[91.5,51.4],[91.5,47.4],[91.9,47.4],[91.9,51.4],[92.6,52.3],[93.8,56],[94.5,54.4],[94.5,52],[94.9,52],[94.9,45.9],[95.2,45.9],[95.2,51.6],[96.2,52.5],[97,54],[96.4,57],[97.4,61],[98,65.4],[99.6,68],[100,69],[99.1,80],[98,86],[96.1,88],[95.4,91],[93,93.2],[90.2,94.6],[89.4,99.6],[86.8,100],[83,96.4],[80,94.7],[77,92.5],[73.8,90.4],[71.4,87]
+      ], 12.4, -6.2, 6);
+      // Two original stepping platforms stay between the large forest islands.
+      fragment('steps', [52.8, 26.3, 5.4, 6.2], [[53.7,27.8],[55,27.5],[56.6,28.2],[56.8,29.3],[56.3,31.1],[54.4,32],[53.4,31],[53.5,29]], 7.4, -3.9, 4);
+      fragment('coins', [55.5, 13.6, 5.7, 8.4], [[56.4,17.2],[56.4,15],[57,14.9],[57.3,16.9],[57.9,17],[57.9,15],[58.5,14.9],[58.7,17],[59,17],[59.1,15],[59.7,15],[60,17],[60.6,17.5],[60.5,20.5],[59.3,21.5],[57.5,21.2],[56,20.7],[55.7,18]], 8.5, -6, 5);
+    } else {
+      sky.style.backgroundImage = 'var(--world-sky,var(--world-art))'; element('world-still', atlas);
     }
-    function readPalette() {
-      const css = getComputedStyle(host);
-      palette = {};
-      const defaults = { grass:'#74c84a', leaf:'#2e9958', dirt:'#976c45', rock:'#8faac4', cream:'#fff9e8', charcoal:'#263651', coral:'#ed785f', cobalt:'#437be2', gold:'#ffd54a', water:'#57bfdf', cloud:'#f7fcff', road:'#415575' };
-      for (const [name, value] of Object.entries(defaults)) {
-        const v = parseInt(value.slice(1), 16);
-        palette[name] = color(css, '--ws-' + name, [(v >> 16 & 255) / 255, (v >> 8 & 255) / 255, (v & 255) / 255]);
+    const clouds = (parent, values) => values.forEach(([top, width, seconds, delay]) => {
+      const cloud = element('world-cloud', parent); cloud.style.top = top + '%';
+      cloud.style.setProperty('--cloud-width', width + '%'); cloud.style.setProperty('--cloud-period', seconds + 's'); cloud.style.setProperty('--cloud-delay', delay + 's');
+    });
+    clouds(back, [[12,5,154,-102],[38,7,178,-47],[66,8,201,-139]]);
+    const flights = element('world-flights', atlas);
+    [['hoverskiff',23,76,-28,false],['airship',9,118,-73,true],['glider',48,93,-12,false]].forEach(([type, y, seconds, delay, reverse]) => {
+      const flight = element('world-vehicle' + (reverse ? ' reverse' : ''), flights);
+      flight.style.setProperty('--flight-y', y + '%'); flight.style.setProperty('--flight-period', seconds + 's'); flight.style.setProperty('--flight-delay', delay + 's'); element('world-craft ' + type, flight);
+    });
+    const falls = element('world-waterfalls', atlas);
+    [[46.4,39,14],[47.8,40,12],[89.8,42,13],[81.7,85.4,13]].forEach(([x,y,h]) => {
+      const fall = element('world-waterfall', falls); fall.style.left = x + '%'; fall.style.top = y + '%'; fall.style.setProperty('--fall-height', h + '%');
+    });
+    const sparks = element('world-sparks', atlas);
+    [[57.7,17,-.7],[59.2,16.2,-2.5],[78.5,71,-1.8],[88.1,68.1,-3.1]].forEach(([x,y,delay]) => {
+      const spark = element('world-spark', sparks); spark.style.left = x + '%'; spark.style.top = y + '%'; spark.style.setProperty('--spark-delay', delay + 's');
+    });
+    const front = element('world-clouds-front', atlas);
+    clouds(front, [[87,11,158,-71],[55,6,127,-99]]);
+    owned.push(element('world-wash', host));
+
+    const listen = (target, name, fn, settings) => { target.addEventListener(name, fn, settings); cleanups.push(() => target.removeEventListener(name, fn, settings)); };
+    const theme = () => {
+      const choice = root.getAttribute('data-gp-theme') || root.getAttribute('data-theme');
+      if (choice === 'contrast' || (forced && forced.matches) || (contrast && contrast.matches)) return 'contrast';
+      if (choice === 'dark' || (!choice && dark && dark.matches)) return 'dark';
+      return 'light';
+    };
+    const calm = () => requestedReduce || root.getAttribute('data-gp-motion') === 'reduce' || (root.getAttribute('data-gp-motion') !== 'full' && !!(reduced && reduced.matches)) || theme() === 'contrast';
+    const focused = () => {
+      const active = document.activeElement;
+      return active && (/^(IFRAME|INPUT|TEXTAREA|SELECT)$/.test(active.tagName) || active.isContentEditable);
+    };
+    const blocked = () => document.hidden || !visible || focused() || !!document.querySelector('[role="dialog"][aria-modal="true"],dialog[open]');
+    const cancelCamera = () => {
+      if (cameraAnimation) { if (cameraFinish) cameraAnimation.removeEventListener('finish',cameraFinish); cameraAnimation.cancel(); }
+      cameraAnimation = null; cameraFinish = null;
+    };
+    function cameraTarget() {
+      const target = ROUTES[route], zoom = target.zoom;
+      const x = width * (target.focus - .5) - zoom * (target.x - .5) * atlasWidth;
+      const y = height * -.01 - zoom * (target.y - .5) * atlasHeight;
+      const px = route === 'home' ? 0 : x, py = route === 'home' ? 0 : y;
+      camera.style.setProperty('--world-x', px.toFixed(3) + 'px'); camera.style.setProperty('--world-y', py.toFixed(3) + 'px'); camera.style.setProperty('--world-zoom', String(zoom));
+      host.dataset.worldRoute = route; host.dataset.worldIsland = target.island; host.dataset.worldZoom = String(zoom);
+      return 'translate3d(-50%,-50%,0) translate3d(' + px.toFixed(3) + 'px,' + py.toFixed(3) + 'px,0) scale(' + zoom + ')';
+    }
+    function updateState() {
+      if (dead) return;
+      if (!host.isConnected) { stop(); return; }
+      host.dataset.worldTheme = theme();
+      const state = calm() ? 'static' : blocked() ? 'paused' : 'running';
+      host.dataset.worldMotion = state;
+      if (cameraAnimation) {
+        if (state === 'static') cancelCamera();
+        else if (state === 'paused') cameraAnimation.pause();
+        else if (cameraAnimation.playState === 'paused') cameraAnimation.play();
       }
-    }
-
-    function cancel() { if (raf) cancelAnimationFrame(raf); raf = 0; last = 0; stamp = 0; }
-    function staticMode() {
-      cancel(); host.dataset.workshopMode = 'static'; canvas.hidden = true;
-      // Keep only the tiny shared geometry when parked, and release the large drawing buffer.
-      if (canvas.width !== 1 || canvas.height !== 1) canvas.width = canvas.height = 1;
     }
     function resize() {
-      const rect = host.getBoundingClientRect(); width = Math.max(1, rect.width); height = Math.max(1, rect.height);
-      if (host.dataset.workshopMode !== 'webgl') return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(480000 / (width * height)));
-      const w = Math.max(1, Math.floor(width * dpr)), h = Math.max(1, Math.floor(height * dpr));
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      if (dead) return;
+      const bounds = host.getBoundingClientRect(); width = Math.max(1,bounds.width); height = Math.max(1,bounds.height);
+      atlasWidth = Math.max(width,height * RATIO); atlasHeight = atlasWidth / RATIO;
+      camera.style.width = atlasWidth.toFixed(3) + 'px'; camera.style.height = atlasHeight.toFixed(3) + 'px';
+      cancelCamera(); camera.style.transform = cameraTarget(); updateState();
     }
-    function schedule() {
-      if (stopped || !host.isConnected) { stop(); return; }
-      if (isCalm() || isContrast() || unavailable) { staticMode(); return; }
-      if (!renderer) {
-        try { renderer = createRenderer(canvas); } catch (e) { unavailable = true; staticMode(); return; }
-        if (!renderer) { unavailable = true; staticMode(); return; }
+    function setRoute(value) {
+      if (dead) return;
+      const next = routeKey(value); if (next === route) return;
+      const previous = getComputedStyle(camera).transform;
+      cancelCamera(); route = next;
+      const target = cameraTarget(); camera.style.transform = target; updateState();
+      if (!calm() && !blocked() && camera.animate && previous !== 'none') {
+        cameraAnimation = camera.animate([{ transform:previous },{ transform:target }], { duration:1450,easing:'cubic-bezier(.22,.68,.2,1)',fill:'none' });
+        const animation = cameraAnimation;
+        cameraFinish = () => { animation.removeEventListener('finish',cameraFinish); if (cameraAnimation === animation) { cameraAnimation = null; cameraFinish = null; } };
+        animation.addEventListener('finish',cameraFinish);
       }
-      host.dataset.workshopMode = 'webgl'; canvas.hidden = false; resize();
-      if (paused()) { cancel(); return; }
-      if (!raf) raf = requestAnimationFrame(frame);
     }
-    function frame(now) {
-      raf = 0;
-      if (stopped || !host.isConnected) { stop(); return; }
-      if (isCalm() || isContrast() || unavailable) { staticMode(); return; }
-      if (paused()) { cancel(); return; }
-      // Thirty deliberate frames per second; no simulation work in the skipped display frames.
-      if (stamp && now - stamp < 31) { raf = requestAnimationFrame(frame); return; }
-      const dt = last ? clamp((now - last) / 1000, 0, .08) : 1 / 30;
-      if (last) { ema += (Math.min(now - last, 120) - ema) * .04; if (ema > 65 && ++slow > 60) { unavailable = true; staticMode(); return; } else if (ema <= 65) slow = 0; }
-      last = stamp = now; elapsed += dt;
-      if (now > pointerUntil) tx = ty = 0;
-      const ease = 1 - Math.exp(-dt * 4); px += (tx - px) * ease; py += (ty - py) * ease;
-      try { renderer.draw(elapsed, width / height, px, py, palette); }
-      catch (e) { renderer.destroy(); renderer = null; unavailable = true; staticMode(); return; }
-      raf = requestAnimationFrame(frame);
-    }
-    function retheme() {
-      if (stopped) return; readPalette();
-      if (renderer) { try { renderer.labels(palette); } catch (e) { renderer.destroy(); renderer = null; unavailable = true; } }
-      schedule();
-    }
-    function setMotion(value) { requestedReduce = !!value; schedule(); }
+    function retheme() { updateState(); }
+    function setMotion(value) { if (!dead) { requestedReduce = !!value; updateState(); } }
     function stop() {
-      if (stopped) return; stopped = true; cancel();
-      cleanups.splice(0).forEach((fn) => fn());
-      if (renderer) { renderer.destroy(); renderer = null; }
-      canvas.remove(); still.remove(); delete host.dataset.workshopMode;
+      if (dead) return; dead = true; cancelCamera(); cleanups.splice(0).forEach((fn) => fn()); owned.splice(0).forEach((node) => node.remove());
+      ['worldMotion','worldTheme','worldRoute','worldIsland','worldZoom'].forEach((name) => { delete host.dataset[name]; });
+      if (prior.hidden === null) host.removeAttribute('aria-hidden'); else host.setAttribute('aria-hidden',prior.hidden);
+      if (!String(prior.className).split(/\s+/).includes('world-background')) host.classList.remove('world-background');
       if (mounted.get(host) === handle) mounted.delete(host);
     }
-    const handle = { stop, destroy: stop, retheme, setMotion, canvas }; mounted.set(host, handle);
-    const move = (event) => {
-      if (stopped || isCalm() || isContrast() || !inView) return;
-      const r = host.getBoundingClientRect(), x = event.clientX, y = event.clientY;
-      if (x < r.left - 80 || x > r.right + 80 || y < r.top - 80 || y > r.bottom + 80) return;
-      tx = clamp((x - r.left) / Math.max(1, r.width) * 2 - 1, -1, 1);
-      ty = clamp((y - r.top) / Math.max(1, r.height) * 2 - 1, -1, 1); pointerUntil = performance.now() + (event.pointerType === 'touch' ? 1100 : 2200);
-    };
-    listen(window, 'pointermove', move, { passive: true });
-    listen(window, 'pointerdown', move, { passive: true });
-    listen(document, 'visibilitychange', schedule);
-    listen(document, 'focusin', schedule);
-    listen(document, 'focusout', () => queueMicrotask(schedule));
-    listen(window, 'blur', () => queueMicrotask(schedule));
-    listen(window, 'focus', schedule);
-    listen(canvas, 'webglcontextlost', (event) => { event.preventDefault(); unavailable = true; staticMode(); });
-    listen(canvas, 'webglcontextrestored', () => { if (renderer) renderer.destroy(false); renderer = null; unavailable = false; retheme(); });
-    for (const m of media) {
-      if (m.addEventListener) listen(m, 'change', retheme);
-      else if (m.addListener) { m.addListener(retheme); cleanups.push(() => m.removeListener(retheme)); }
-    }
-    if (window.ResizeObserver) { const observer = new ResizeObserver(() => { resize(); schedule(); }); observer.observe(host); cleanups.push(() => observer.disconnect()); }
-    else listen(window, 'resize', () => { resize(); schedule(); }, { passive: true });
-    if (window.IntersectionObserver) { const observer = new IntersectionObserver((entries) => { inView = entries[0].isIntersecting; schedule(); }, { threshold: .01 }); observer.observe(host); cleanups.push(() => observer.disconnect()); }
+    const handle = Object.freeze({ setRoute,setMotion,retheme,stop,destroy:stop }); mounted.set(host,handle);
+    listen(document,'visibilitychange',updateState);
+    listen(document,'focusin',updateState);
+    listen(document,'focusout',() => queueMicrotask(updateState));
+    // Entering a game frame blurs its parent document without dispatching parent focusin.
+    listen(window,'blur',() => queueMicrotask(updateState)); listen(window,'focus',updateState);
+    [reduced,forced,contrast,dark].filter(Boolean).forEach((media) => {
+      if (media.addEventListener) listen(media,'change',updateState);
+      else if (media.addListener) { media.addListener(updateState); cleanups.push(() => media.removeListener(updateState)); }
+    });
+    if (window.ResizeObserver) { const observer = new ResizeObserver(resize); observer.observe(host); cleanups.push(() => observer.disconnect()); }
+    else listen(window,'resize',resize,{passive:true});
+    if (window.IntersectionObserver) { const observer = new IntersectionObserver((entries) => { visible = !!entries[0].isIntersecting; updateState(); }); observer.observe(host); cleanups.push(() => observer.disconnect()); }
     if (window.MutationObserver) {
       const observer = new MutationObserver((records) => {
+        if (dead) return;
         if (!host.isConnected) { stop(); return; }
-        if (records.some((r) => r.type === 'attributes' && r.target === root)) retheme();
-        else if (records.some((r) => r.type === 'childList')) schedule();
+        // Ignore decorative attribute writes; respond to dialog state and route DOM replacement.
+        if (records.some((record) => record.type === 'childList' || record.target === root || record.attributeName === 'open' || record.attributeName === 'aria-modal' || record.attributeName === 'role')) updateState();
       });
-      observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-gp-theme', 'data-theme', 'data-gp-motion'] });
-      cleanups.push(() => observer.disconnect());
+      observer.observe(root,{subtree:true,childList:true,attributes:true,attributeFilter:['data-gp-theme','data-theme','data-gp-motion','open','aria-modal','role']}); cleanups.push(() => observer.disconnect());
     }
-    readPalette(); schedule();
-    return handle;
+    resize(); return handle;
   }
-
-  function createRenderer(canvas) {
-    let gl;
-    try { gl = canvas.getContext('webgl', { alpha: true, antialias: true, premultipliedAlpha: true, powerPreference: 'low-power', failIfMajorPerformanceCaveat: true, preserveDrawingBuffer: false }); } catch (e) { return null; }
-    if (!gl) return null;
-    const buffers = [], programs = [], matrices = []; let mi = 0;
-    const matrix = () => matrices[mi++] || (matrices[mi - 1] = new Float32Array(16));
-    function transform(x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ax = 0, ay = 0, az = 0) {
-      const m = matrix(), cx = Math.cos(ax), si = Math.sin(ax), cy = Math.cos(ay), sj = Math.sin(ay), cz = Math.cos(az), sk = Math.sin(az);
-      m[0] = cz * cy * sx; m[1] = sk * cy * sx; m[2] = -sj * sx; m[3] = 0;
-      m[4] = (cz * sj * si - sk * cx) * sy; m[5] = (sk * sj * si + cz * cx) * sy; m[6] = cy * si * sy; m[7] = 0;
-      m[8] = (cz * sj * cx + sk * si) * sz; m[9] = (sk * sj * cx - cz * si) * sz; m[10] = cy * cx * sz; m[11] = 0;
-      m[12] = x; m[13] = y; m[14] = z; m[15] = 1; return m;
-    }
-    function multiply(a, b) {
-      const m = matrix();
-      for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) m[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
-      return m;
-    }
-    function view(eye, target) {
-      const z = eye.map((v, i) => v - target[i]), l = Math.hypot(...z); for (let i = 0; i < 3; i++) z[i] /= l;
-      const x = [z[2], 0, -z[0]], n = Math.hypot(...x); for (let i = 0; i < 3; i++) x[i] /= n;
-      const y = [z[1] * x[2], z[2] * x[0] - z[0] * x[2], -z[1] * x[0]], m = matrix();
-      m.set([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -x.reduce((s, v, i) => s + v * eye[i], 0), -y.reduce((s, v, i) => s + v * eye[i], 0), -z.reduce((s, v, i) => s + v * eye[i], 0), 1]);
-      return m;
-    }
-    function perspective(aspect) {
-      const m = matrix(), f = 1 / Math.tan(.56 / 2); m.fill(0); m[0] = f / aspect; m[5] = f; m[10] = -1.004; m[11] = -1; m[14] = -.2004; return m;
-    }
-    function program(vs, fs) {
-      const p = gl.createProgram(); programs.push(p);
-      for (const [kind, source] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
-        const shader = gl.createShader(kind); gl.shaderSource(shader, source); gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { gl.deleteShader(shader); throw new Error('Workshop shader unavailable'); }
-        gl.attachShader(p, shader); gl.deleteShader(shader);
-      }
-      gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('Workshop renderer unavailable');
-      const u = {}, a = {};
-      for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i++) { const key = gl.getActiveUniform(p, i).name; u[key] = gl.getUniformLocation(p, key); }
-      for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES); i++) { const key = gl.getActiveAttrib(p, i).name; a[key] = gl.getAttribLocation(p, key); }
-      return { p, u, a };
-    }
-    function mesh(data) {
-      const b = gl.createBuffer(); buffers.push(b); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW); return { b, n: data.length / 8 };
-    }
-    const triangle = (out, a, b, c, uv = [[0, 0], [1, 0], [1, 1]]) => {
-      const u = b.map((v, i) => v - a[i]), v = c.map((n, i) => n - a[i]);
-      const norm = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], len = Math.hypot(...norm);
-      [a, b, c].forEach((p, i) => out.push(...p, ...norm.map((n) => n / len), ...uv[i]));
-    };
-    const quad = (out, a, b, c, d) => { triangle(out, a, b, c); triangle(out, a, c, d, [[0, 0], [1, 1], [0, 1]]); };
-    let MESH, BOX, ISLAND, RING;
-    try {
-      MESH = program('attribute vec3 aP,aN; uniform mat4 uM,uVP; uniform mat3 uNormal; varying vec3 vN; void main(){ vN=normalize(uNormal*aN); gl_Position=uVP*uM*vec4(aP,1.); }',
-        'precision mediump float; varying vec3 vN; uniform vec3 uColor; void main(){ vec3 n=normalize(vN); float sun=max(0.,dot(n,normalize(vec3(-.45,1.,.65)))); float fill=max(0.,dot(n,normalize(vec3(.8,.3,-.4)))); gl_FragColor=vec4(uColor*(.57+.38*sun+.08*fill),1.); }');
-      const box = [];
-      for (const face of [ [[-.5,-.5,.5],[.5,-.5,.5],[.5,.5,.5],[-.5,.5,.5]], [[.5,-.5,-.5],[-.5,-.5,-.5],[-.5,.5,-.5],[.5,.5,-.5]], [[-.5,-.5,-.5],[-.5,-.5,.5],[-.5,.5,.5],[-.5,.5,-.5]], [[.5,-.5,.5],[.5,-.5,-.5],[.5,.5,-.5],[.5,.5,.5]], [[-.5,.5,.5],[.5,.5,.5],[.5,.5,-.5],[-.5,.5,-.5]], [[-.5,-.5,-.5],[.5,-.5,-.5],[.5,-.5,.5],[-.5,-.5,.5]] ]) quad(box, ...face);
-      BOX = mesh(box);
-      // One small, irregular, tapered mesh is shared by every floating island.
-      const edge = [[-.78,-1],[.66,-1],[1,-.62],[.93,.58],[.60,.95],[-.58,1],[-1,.54],[-1,-.52]], island = [];
-      for (let i=0;i<edge.length;i++) {
-        const j=(i+1)%edge.length, a=[edge[i][0],0,edge[i][1]], b=[edge[j][0],0,edge[j][1]], c=[edge[j][0]*.48,-.66,edge[j][1]*.48], d=[edge[i][0]*.48,-.66,edge[i][1]*.48];
-        triangle(island,[0,0,0],b,a); quad(island,a,b,c,d); triangle(island,[0,-.66,0],d,c);
-      }
-      ISLAND = mesh(island);
-      const ring=[];
-      for(let i=0;i<40;i++) {
-        const a=i/40*TAU,b=(i+1)/40*TAU;
-        quad(ring,[Math.cos(a),0,Math.sin(a)],[Math.cos(a)*.60,0,Math.sin(a)*.60],[Math.cos(b)*.60,0,Math.sin(b)*.60],[Math.cos(b),0,Math.sin(b)]);
-      }
-      RING = mesh(ring);
-      gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.clearColor(0,0,0,0);
-    } catch (e) { destroy(); return null; }
-    const normal = new Float32Array(9);
-    let VP;
-    function paint(shape, model, color) {
-      gl.useProgram(MESH.p); gl.bindBuffer(gl.ARRAY_BUFFER,shape.b);
-      for (const [key,size,offset] of [['aP',3,0],['aN',3,12]]) { gl.enableVertexAttribArray(MESH.a[key]); gl.vertexAttribPointer(MESH.a[key],size,gl.FLOAT,false,32,offset); }
-      gl.uniformMatrix4fv(MESH.u.uM,false,model); gl.uniformMatrix4fv(MESH.u.uVP,false,VP);
-      // Inverse-transpose cofactors keep cube sides correctly shaded at every scale.
-      normal.set([model[5]*model[10]-model[6]*model[9], model[6]*model[8]-model[4]*model[10], model[4]*model[9]-model[5]*model[8], model[9]*model[2]-model[10]*model[1], model[10]*model[0]-model[8]*model[2], model[8]*model[1]-model[9]*model[0], model[1]*model[6]-model[2]*model[5], model[2]*model[4]-model[0]*model[6], model[0]*model[5]-model[1]*model[4]]);
-      gl.uniformMatrix3fv(MESH.u.uNormal,false,normal); gl.uniform3fv(MESH.u.uColor,color); gl.drawArrays(gl.TRIANGLES,0,shape.n);
-    }
-    function piece(parent,shape,color,x,y,z,sx,sy,sz,ax=0,ay=0,az=0) { paint(shape,multiply(parent,transform(x,y,z,sx,sy,sz,ax,ay,az)),color); }
-    function tree(parent,P,x,z,size=1) {
-      const part=(color,x1,y,z1,w,h,d) => piece(parent,BOX,color,x+x1*size,y*size,z+z1*size,w*size,h*size,d*size);
-      part(P.dirt,0,.48,0,.16,.9,.16);
-      part(P.leaf,0,.95,0,.65,.63,.60); part(P.grass,-.08,1.35,.04,.48,.32,.46);
-      part(P.grass,.24,.89,.05,.33,.38,.38);
-    }
-    function cloud(P,x,y,z,size=1) {
-      const parent=transform(x,y,z,size,size,size,0,-.1,0);
-      for(const [cx,cy,cz,w,h,d] of [[0,0,0,1.2,.25,.48],[-.30,.19,0,.45,.28,.48],[.13,.29,-.02,.53,.34,.52],[.55,.08,.01,.34,.23,.40]]) piece(parent,BOX,P.cloud,cx,cy,cz,w,h,d);
-    }
-    function coin(parent,P,x,y,z,angle,size=.20) {
-      piece(parent,BOX,P.gold,x,y,z,size,size,size,0,angle,.15);
-      piece(parent,BOX,P.cream,x,y+size*.14,z+size*.51,size*.18,size*.36,.01,0,angle,.15);
-    }
-    function platformWorld(parent,P,time) {
-      piece(parent,ISLAND,P.dirt,0,-.16,0,1.75,1.15,1.5);
-      piece(parent,ISLAND,P.grass,0,.04,0,1.79,.30,1.54);
-      piece(parent,BOX,P.water,-.65,.055,.27,.58,.035,1.54);
-      // Stepped terrain gives the miniature a clearly playable platformer silhouette.
-      piece(parent,BOX,P.dirt,.56,.16,-.38,1.18,.26,1.14); piece(parent,BOX,P.grass,.56,.30,-.38,1.21,.045,1.17);
-      piece(parent,BOX,P.dirt,1.01,.40,-.55,.67,.25,.79); piece(parent,BOX,P.grass,1.01,.54,-.55,.70,.045,.82);
-      tree(parent,P,.95,-.63,.84); tree(parent,P,-1.08,-.69,.66); tree(parent,P,1.15,.75,.52);
-      for(let j=0;j<3;j++) piece(parent,BOX,P.cream,-.61,.10,-.45+j*.32,.39,.08,.14);
-      // A tiny red player hops across the foreground steps. It remains decoration only.
-      const hop=(Math.sin(time*1.35)+1)*.5, x=-.14+Math.sin(time*.48)*.39;
-      piece(parent,BOX,P.coral,x,.36+hop*.28,.79,.24,.32,.22);
-      piece(parent,BOX,P.cream,x,.59+hop*.28,.79,.20,.15,.20);
-      for(let j=0;j<3;j++) coin(parent,P,-.13+j*.45,.78+j*.12,-.02,time*.62+j*.2,.18);
-    }
-    function raceWorld(parent,P,time) {
-      piece(parent,ISLAND,P.rock,0,-.07,0,1.41,.93,1.15);
-      piece(parent,ISLAND,P.grass,0,.035,0,1.40,.25,1.14);
-      piece(parent,RING,P.cream,0,.046,0,1.24,1,1.0);
-      piece(parent,RING,P.road,0,.050,0,1.18,1,.94);
-      for(let j=0;j<16;j++) { const a=j*TAU/16; piece(parent,BOX,P.cream,Math.cos(a)*.96,.055,Math.sin(a)*.765,.055,.014,.13,0,-a,0); }
-      tree(parent,P,0,0,.50);
-      for(const x of [-.2,.2]) { piece(parent,BOX,P.charcoal,x,.19,.98,.045,.32,.045); piece(parent,BOX,P.cream,x,.38,.98,.17,.10,.014); }
-      const angle=time*.45, car=multiply(parent,transform(Math.cos(angle)*.95,.17,Math.sin(angle)*.75,1,1,1,0,-angle,0));
-      piece(car,BOX,P.coral,0,0,0,.22,.14,.38); piece(car,BOX,P.cream,0,.105,-.015,.18,.08,.18);
-      for(const x of [-.12,.12]) for(const z of [-.12,.12]) piece(car,BOX,P.charcoal,x,-.04,z,.07,.075,.09);
-    }
-    function cityWorld(parent,P,time) {
-      piece(parent,ISLAND,P.rock,0,-.06,0,1.24,.91,1.12);
-      piece(parent,BOX,P.cream,0,.025,0,1.89,.07,1.70);
-      piece(parent,BOX,P.road,0,.068,0,1.94,.02,.30); piece(parent,BOX,P.road,.15,.071,0,.31,.02,1.73);
-      for(const [x,z,h,color] of [[-.60,-.45,.72,P.cobalt],[.60,-.48,1.04,P.coral],[-.61,.48,.49,P.water],[.63,.48,.67,P.cobalt]]) {
-        piece(parent,BOX,color,x,.095+h*.5,z,.42,h,.41); piece(parent,BOX,P.cream,x,.112+h,z,.47,.05,.46);
-        for(let j=0;j<Math.floor(h/.22);j++) for(const wx of [-.1,.1]) piece(parent,BOX,P.cream,x+wx,.24+j*.22,z+.211,.055,.07,.013);
-      }
-      piece(parent,BOX,P.gold,-.68+((time*.17)%1)*1.45,.12,0,.19,.08,.12);
-      tree(parent,P,-.86,.74,.27);
-    }
-    function draw(time,aspect,px,py,P) {
-      mi=0; const narrow=aspect<1.3 ? 1.3/aspect : 1;
-      VP=multiply(perspective(aspect),view([(5.7+px*.55)*narrow,(7.9+py*.35)*narrow,14.3*narrow],[0,1.35,0]));
-      gl.viewport(0,0,canvas.width,canvas.height); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.disable(gl.BLEND); gl.depthMask(true);
-      // Each distinct game world floats on its own gentle cycle, with quiet orbital drift.
-      platformWorld(transform(-.53+Math.sin(time*.18)*.10,1.00+Math.sin(time*.53)*.10,.53,1.05,1.05,1.05,.015,.13+px*.035,.015+py*.01),P,time);
-      raceWorld(transform(3.01+Math.sin(time*.21)*.13,.76+Math.sin(time*.48+2)*.13,-.27,.87,.87,.87,0,-.10+Math.sin(time*.16)*.045,-.035),P,time);
-      cityWorld(transform(-2.83+Math.cos(time*.19)*.10,2.02+Math.sin(time*.43+4)*.12,-1.42,.74,.74,.74,0,.24+Math.sin(time*.14)*.06,.025),P,time);
-      cloud(P,2.35+Math.sin(time*.15)*.25,3.25,-1.24,.82);
-      cloud(P,-3.48+Math.sin(time*.17+1)*.18,.61,1.13,.71);
-      cloud(P,1.58+Math.sin(time*.13+2)*.20,.10,1.58,.46);
-      const identity=transform();
-      coin(identity,P,2.16,2.07+Math.sin(time*.70)*.12,.88,time*.50,.27);
-      coin(identity,P,-1.48,3.32+Math.sin(time*.64+2)*.10,-.84,-time*.47,.22);
-    }
-    function destroy(lose = true) {
-      buffers.forEach((b)=>gl.deleteBuffer(b)); programs.forEach((p)=>gl.deleteProgram(p));
-      if(lose) { const extension=gl.getExtension('WEBGL_lose_context'); if(extension) extension.loseContext(); }
-    }
-    return { draw, labels() {}, destroy };
-  }
-  window.PPWorkshop = Object.freeze({ mount });
+  window.PPWorldBackground = Object.freeze({ mount });
 })();
 
 </script>
@@ -4302,13 +4272,30 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
   /* ---------------- display & assist preferences ---------------- */
   const reducedMotionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
   const calmNow = () => S.prefs.motion === 'reduce' || (S.prefs.motion === 'system' && !!(reducedMotionQuery && reducedMotionQuery.matches));
+  // One decorative world survives page renders; only its camera destination changes.
+  let siteWorld = null;
+  function worldForRoute() {
+    if (!siteWorld && window.PPWorldBackground) {
+      let host = $('#site-world');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'site-world';
+        host.className = 'world-background';
+        host.setAttribute('aria-hidden', 'true');
+        document.body.insertBefore(host, document.body.firstChild);
+      }
+      siteWorld = window.PPWorldBackground.mount(host, { reducedMotion: calmNow() });
+    }
+    if (siteWorld) { siteWorld.setMotion(calmNow()); siteWorld.setRoute(S.route); }
+  }
   function gameOpts() { return { speed: Number(S.prefs.speed) || 1, calm: calmNow(), mute: !S.prefs.sound }; }
   function applyPrefs() {
     const r = document.documentElement, p = S.prefs;
     if (p.theme && p.theme !== 'system') r.setAttribute('data-gp-theme', p.theme); else r.removeAttribute('data-gp-theme');
     if (p.text && p.text !== 'md') r.setAttribute('data-gp-text', p.text); else r.removeAttribute('data-gp-text');
-    if (p.motion === 'reduce') r.setAttribute('data-gp-motion', 'reduce'); else r.removeAttribute('data-gp-motion');
+    if (p.motion === 'reduce' || p.motion === 'full') r.setAttribute('data-gp-motion', p.motion); else r.removeAttribute('data-gp-motion');
     if (p.layout === 'scroll') r.removeAttribute('data-fit'); else r.setAttribute('data-fit', '');
+    if (siteWorld) { siteWorld.setMotion(calmNow()); siteWorld.retheme(); }
     if (typeof fitSoon === 'function') fitSoon();
     const b = $('#a11y-btn');
     if (b) b.classList.toggle('on', Number(p.speed) < 1 || p.theme === 'contrast' || p.text !== 'md' || p.motion === 'reduce' || !p.sound || p.layout === 'scroll');
@@ -4316,7 +4303,7 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
   const PREF_GROUPS = [
     { key: 'theme', label: 'Theme', opts: [['system', 'Match my device'], ['light', 'Light'], ['dark', 'Dark'], ['contrast', 'High contrast']] },
     { key: 'text', label: 'Text size', opts: [['md', 'Default'], ['lg', 'Large'], ['xl', 'Larger']] },
-    { key: 'motion', label: 'Motion', opts: [['system', 'Match my device'], ['reduce', 'Reduce motion']], hint: 'Reduce motion turns off page animations and screen shake in kit games.' },
+    { key: 'motion', label: 'Motion', opts: [['system', 'Match my device'], ['full', 'Full motion'], ['reduce', 'Reduce motion']], hint: 'Full motion enables the moving world and island journeys, overriding your device’s reduced-motion preference. Reduce motion keeps the world still and turns off screen shake in kit games.' },
     { key: 'layout', label: 'Page layout', opts: [['fit', 'One screen'], ['scroll', 'Scrolling pages']], hint: 'One screen keeps every page inside the window and flips between its parts instead of scrolling.' },
     { key: 'speed', label: 'Game speed (assist mode)', opts: [['1', '100%'], ['0.75', '75%'], ['0.5', '50%']], hint: 'Slows every game. Assisted runs are kept as personal results and stay off ranked leaderboards.' },
     { key: 'sound', label: 'Game sound', opts: [['on', 'On'], ['off', 'Off']] },
@@ -4335,7 +4322,6 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
     LS.set(KEY.prefs, S.prefs);
     applyPrefs();
     const after = gameOpts();
-    if (key === 'theme' && bgGame) bgGame.retheme();
     if (before.speed !== after.speed || before.calm !== after.calm || before.mute !== after.mute) renderView(true);
     const g = PREF_GROUPS.find((x) => x.key === key), o = g && g.opts.find(([v]) => v === raw);
     if (g && o) announce(g.label + ': ' + o[1] + '.');
@@ -5229,6 +5215,7 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
   }
   function renderView(full) {
     const v = $('#view');
+    worldForRoute();
     if (full) stopHomeScene();
     const active = document.activeElement;
     const typing = active && v.contains(active) && /INPUT|TEXTAREA|SELECT/.test(active.tagName);
@@ -5488,7 +5475,6 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
     const st = S.studio || {};
     const dim = st.dim || '2d';
     return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy" data-part="Make a game">'
-      + '<div class="play-world-art" aria-hidden="true"></div><div class="workshop-scene" id="home-world" aria-hidden="true"></div>'
       + '<p class="page-kicker">Create · Play · Remix</p>'
       + '<h1 class="hero-title" id="hero-title"><span>Make a</span><span class="hl">game.</span></h1>'
       + '<p class="lede">' + (aiReady() ? 'Your idea is the start button. Describe it, build it with Claude, then jump in and play.' : 'Your next favorite game starts here. Play a free game, remix a starter, or make something new.') + '</p>'
@@ -5509,7 +5495,6 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
   function mountHome() {
     unmountPlayer('home-screen');
     $('#view').innerHTML = homeHTML() + footHTML(true);
-    homeWorld($('#home-world'));
     wakeMascot($('#home-mascot'));
     homeDepthStop = packDepth($('#home-pack'));
     homeShelfStop = revealShelf($('#home-shelf'));
@@ -5569,16 +5554,11 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
     pending.forEach((c) => io.observe(c));
     return () => { io.disconnect(); pending.clear(); };
   }
-  /* The decorative assembly scene has an independent lifecycle from the playable game. */
-  let bgGame = null, homeDepthStop = null, homeShelfStop = null;
+  /* Home interactions stop on navigation; the world background keeps its own lifecycle. */
+  let homeDepthStop = null, homeShelfStop = null;
   function stopHomeScene() {
     if (homeDepthStop) { homeDepthStop(); homeDepthStop = null; }
     if (homeShelfStop) { homeShelfStop(); homeShelfStop = null; }
-    if (bgGame) { bgGame.stop(); bgGame = null; }
-  }
-  function homeWorld(host) {
-    stopHomeScene();
-    if (host && window.PPWorkshop) bgGame = window.PPWorkshop.mount(host, { reducedMotion: calmNow() });
   }
 
   function updateHome() {

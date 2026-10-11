@@ -15,7 +15,8 @@ const SITE = { contact: process.env.GP_CONTACT || '', mascot: 'mascot-wave.webp'
 // its animated loop ships next to the website as its own file and loads after the page.
 const MASCOT_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/mascot.webp')).toString('base64');
 const PLAY_WORLD_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/play-world-v1.webp')).toString('base64');
-const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'qr.js', 'workshop-scene.js', 'app.js'].map((f) => {
+const WORLD_SKY_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/world-sky-v1.webp')).toString('base64');
+const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'qr.js', 'world-background.js', 'app.js'].map((f) => {
   const s = read(f).replace("'MASCOT_STILL'", () => JSON.stringify(MASCOT_STILL));
   for (const bad of ['</script', '<!--', '<script']) if (s.toLowerCase().includes(bad)) throw new Error(f + ' contains ' + bad);
   return s;
@@ -25,7 +26,7 @@ const scripts = (config) => (config ? '<script>window.GP_SITE = ' + JSON.stringi
 
 const template = read('index.html');
 // A replacer function keeps `$` sequences in the scripts from being read as replacement patterns.
-const page = template.replaceAll('PLAY_WORLD_STILL', PLAY_WORLD_STILL).replace('<!--INLINE-SCRIPTS-->', () => scripts(null));
+const page = template.replaceAll('PLAY_WORLD_STILL', PLAY_WORLD_STILL).replaceAll('WORLD_SKY_STILL', WORLD_SKY_STILL).replace('<!--INLINE-SCRIPTS-->', () => scripts(null));
 mkdirSync(here('./dist/site/'), { recursive: true });
 writeFileSync(here('./dist/playpark.html'), page);
 
@@ -33,7 +34,7 @@ const skeleton = '<!doctype html><html><head><meta charset=utf8><meta name=viewp
 writeFileSync(here('./dist/local.html'), skeleton + page + '</body></html>');
 
 // The static website: the same page with a real <head> (description, social card, icon).
-const sitePage = template.replaceAll('PLAY_WORLD_STILL', 'play-world-v1.webp').replace('<!--INLINE-SCRIPTS-->', () => scripts(SITE));
+const sitePage = template.replaceAll('PLAY_WORLD_STILL', 'play-world-v1.webp').replaceAll('WORLD_SKY_STILL', 'world-sky-v1.webp').replace('<!--INLINE-SCRIPTS-->', () => scripts(SITE));
 const cut = sitePage.indexOf('<a class="skip"');
 if (cut < 0) throw new Error('skip link marker not found');
 const desc = 'ClaudePlay is a free game maker. Make, play and share your own browser games: describe an idea or start with a game kit. Free creation has daily limits and a shared funding cap.';
@@ -48,11 +49,13 @@ const site = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\
   + '<meta name="twitter:card" content="summary">\n'
   + '<link rel="icon" href="' + icon + '">\n'
   + '<link rel="preload" as="image" href="play-world-v1.webp">\n'
+  + '<link rel="preload" as="image" href="world-sky-v1.webp">\n'
   + '<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>\n'
   + sitePage.slice(0, cut).trim() + '\n</head>\n<body>\n' + sitePage.slice(cut) + '\n</body>\n</html>\n';
 writeFileSync(here('./dist/site/index.html'), site);
 writeFileSync(here('./dist/site/README.md'), readFileSync(here('./site-README.md'), 'utf8'));
 writeFileSync(here('./dist/site/mascot-wave.webp'), readFileSync(here('./src/assets/mascot-wave.webp')));
 writeFileSync(here('./dist/site/play-world-v1.webp'), readFileSync(here('./src/assets/play-world-v1.webp')));
+writeFileSync(here('./dist/site/world-sky-v1.webp'), readFileSync(here('./src/assets/world-sky-v1.webp')));
 
 console.log('built', (page.length / 1024).toFixed(1) + ' KB page,', (site.length / 1024).toFixed(1) + ' KB website');

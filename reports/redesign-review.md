@@ -1,5 +1,7 @@
 # Pixel-world game portal review
 
+This is the historical review of the first pixel-world interface. The owner accepted its artwork and then requested a persistent animated world with page-specific island zooms. The current motion release is reviewed separately in [world-motion-review.md](world-motion-review.md); the hashes and measurements below belong to the earlier static/per-hero snapshot.
+
 Prepared 2026-10-11 for the user's replacement direction on branch `codex/claudeplay-playground-redesign`. The user rejected the cartridge-workshop visual draft and requested a design that communicates making and playing games, using Google Playground as the reference. This report separates the proposed gates from measured checks of that fresh direction. The parent reviewed the illustrated first preview before validation; final user acceptance and readiness to ship are not established by that preview.
 
 **Current reviewed candidate:** HTML `1b5f9021ca864879850946f18e590c1e8190ab3e8e239e7d0eab8698e42831c3` passed the strengthened **561-state/36-context audit** and the focused six-configuration composed-hero review. No material issue remains in that measured scope. Unreviewed inconclusive families and browser/device/performance limits remain explicit below; this is not WCAG certification or a deployment record.

@@ -2,7 +2,7 @@
 
 The owner's latest direction replaces the kinetic workshop proposal with a game-first pixel-world interface, informed by the official Google Labs Playground reference at https://labs.google/playground. This is a new ClaudePlay design, not a recovered Claude patch or a copy of Google's assets, branding or product.
 
-ClaudePlay should make its purpose immediate: create a game, play a game, remix it and share it. Original floating-world art, pixel display lettering, real game previews and useful creation controls carry that purpose across all ten routes.
+ClaudePlay should make its purpose immediate: create a game, play a game, remix it and share it. Original floating-world art, pixel display lettering, real game previews and useful creation controls carry that purpose across all ten routes. The owner approved the illustrated world and then requested that it become a moving, whole-site background with drifting clouds, flying vehicles, floating islands and a camera journey into individual islands on every route.
 
 ## Visual language
 
@@ -15,11 +15,11 @@ ClaudePlay should make its purpose immediate: create a game, play a game, remix 
 
 ## Home composition
 
-The first pane is a wide floating pixel world using original `src/assets/play-world-v1.webp` artwork. Its open sky supports the Make a game heading and prompt; a controlled pale overlay protects text contrast. Four general ideas cover a runner, tower defense, racing and a cozy puzzle. The home does not lead with crypto-only prompts.
+The first pane opens onto the persistent floating pixel world using original `src/assets/play-world-v1.webp` artwork. The Make a game heading and prompt sit in a bounded cream or navy card on the left, leaving the world open on the right. The world extends behind the header, content and subsequent panes rather than repeating inside an opaque hero rectangle. Four general ideas cover a runner, tower defense, racing and a cozy puzzle. The home does not lead with crypto-only prompts.
 
-`PLAY_WORLD_STILL` is the build placeholder for this decorative art. Website builds use the compressed asset; self-contained builds embed it. Art cannot intercept input and carries no essential information.
+`PLAY_WORLD_STILL` is the build placeholder for this decorative art. Website builds use the compressed asset; self-contained builds embed it. A companion sky plate supports moving the isolated island regions without exposing an empty cutout. Art cannot intercept input and carries no essential information.
 
-A native floating-island scene sits in the decorative visual area. The retained `#home-world.workshop-scene` host and `PPWorkshop` API are compatibility names, not visible workshop branding. The scene is independent of creation and gameplay.
+The decorative `#site-world` host lives outside `#view`, so the page fitter cannot treat it as a content pane. One persistent camera contains the 16:9 world atlas. Each route chooses an island and eases toward it; the home view returns to the wide world. Camera and decorative motion remain independent of creation and gameplay.
 
 The next pane contains a real playable Neon Dash game with readable instructions and a leaderboard link. A direct Play Neon Dash action is also available from the invitation. The following pane opens real starter and community games through larger visual cards. The default fitted layout treats these three home sections as panes at all widths; the Scrolling pages preference presents them in sequence.
 
@@ -39,11 +39,15 @@ The next pane contains a real playable Neon Dash game with readable instructions
 | Business | A real branded game preview, practical offers, process and contact actions in the same playful visual language. |
 | Settings | The existing accessible dialog, complete preference choices, immediate feedback and readable controls. |
 
+The page shell is transparent. Required text sits on solid, bounded theme-aware surfaces: route titles, section labels, creation forms, Studio columns, player controls, financial data and footer notices. Gaps between these surfaces reveal the animated world. Light, dark and high contrast retain their existing readable tokens; high contrast hides decorative imagery. A moving pixel cannot become the background of a required caption or form label.
+
 ## Motion and reliability
 
-The self-contained native scene mounts through `window.PPWorkshop.mount(host, { reducedMotion })`. Its stable decorative host is 360px tall on desktop and 280px on phones. Its canvas is transparent, bounded in resolution and never a fitted content pane.
+The whole-site world uses native CSS transforms and the original illustrated assets. Individual island layers float gently, clouds drift at separate depths, flying vehicles cross the sky, and small local effects bring the island activities to life. The background is fixed to the viewport, ignores pointer input, stays outside the accessibility tree and never participates in fitted content measurements.
 
-The scene pauses when hidden, offscreen, a dialog is open, or an input/select/iframe has focus. In the illustrated home hero, the original world artwork supplies the static fallback and the live canvas stays translucent so the illustration leads. The independent scene retains its CSS fallback for reduced motion, high contrast, missing WebGL and context loss. The scene handle releases observers, listeners and GPU resources; home navigation also cleans up pointer and shelf-reveal decorations before elements are replaced.
+Route changes select a curated view of an individual island. The camera transition uses bounded translate/scale motion rather than scroll hijacking, then settles while the selected island continues its gentle local animation. Match my device honors reduced-motion preferences; Reduce motion always shows the destination immediately and parks decorative movement. Full motion is an explicit opt-in that overrides device reduction for the moving world and page entrances. High contrast and forced colors keep a plain theme background and solid controls even with Full motion selected. Hidden pages, dialogs, game focus and text-input focus pause decoration. Lifecycle cleanup removes the background's owned listeners, observers and animation work.
+
+The retained `src/workshop-scene.js` and `window.PPWorkshop` native 3D scene remain a separate compatibility module. The new full-site background does not depend on WebGL or third-party runtime libraries; its static view remains available if animation is unavailable.
 
 Brief route/dialog entrances, game-card lifts and button feedback support interaction. Calm motion removes decorative travel and entrance effects. Game controls, assist preferences and sound remain independent of decoration. No external runtime library, external script, paid generation service or scroll hijacking is introduced.
 

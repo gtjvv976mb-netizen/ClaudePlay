@@ -148,13 +148,30 @@
   /* ---------------- display & assist preferences ---------------- */
   const reducedMotionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
   const calmNow = () => S.prefs.motion === 'reduce' || (S.prefs.motion === 'system' && !!(reducedMotionQuery && reducedMotionQuery.matches));
+  // One decorative world survives page renders; only its camera destination changes.
+  let siteWorld = null;
+  function worldForRoute() {
+    if (!siteWorld && window.PPWorldBackground) {
+      let host = $('#site-world');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'site-world';
+        host.className = 'world-background';
+        host.setAttribute('aria-hidden', 'true');
+        document.body.insertBefore(host, document.body.firstChild);
+      }
+      siteWorld = window.PPWorldBackground.mount(host, { reducedMotion: calmNow() });
+    }
+    if (siteWorld) { siteWorld.setMotion(calmNow()); siteWorld.setRoute(S.route); }
+  }
   function gameOpts() { return { speed: Number(S.prefs.speed) || 1, calm: calmNow(), mute: !S.prefs.sound }; }
   function applyPrefs() {
     const r = document.documentElement, p = S.prefs;
     if (p.theme && p.theme !== 'system') r.setAttribute('data-gp-theme', p.theme); else r.removeAttribute('data-gp-theme');
     if (p.text && p.text !== 'md') r.setAttribute('data-gp-text', p.text); else r.removeAttribute('data-gp-text');
-    if (p.motion === 'reduce') r.setAttribute('data-gp-motion', 'reduce'); else r.removeAttribute('data-gp-motion');
+    if (p.motion === 'reduce' || p.motion === 'full') r.setAttribute('data-gp-motion', p.motion); else r.removeAttribute('data-gp-motion');
     if (p.layout === 'scroll') r.removeAttribute('data-fit'); else r.setAttribute('data-fit', '');
+    if (siteWorld) { siteWorld.setMotion(calmNow()); siteWorld.retheme(); }
     if (typeof fitSoon === 'function') fitSoon();
     const b = $('#a11y-btn');
     if (b) b.classList.toggle('on', Number(p.speed) < 1 || p.theme === 'contrast' || p.text !== 'md' || p.motion === 'reduce' || !p.sound || p.layout === 'scroll');
@@ -162,7 +179,7 @@
   const PREF_GROUPS = [
     { key: 'theme', label: 'Theme', opts: [['system', 'Match my device'], ['light', 'Light'], ['dark', 'Dark'], ['contrast', 'High contrast']] },
     { key: 'text', label: 'Text size', opts: [['md', 'Default'], ['lg', 'Large'], ['xl', 'Larger']] },
-    { key: 'motion', label: 'Motion', opts: [['system', 'Match my device'], ['reduce', 'Reduce motion']], hint: 'Reduce motion turns off page animations and screen shake in kit games.' },
+    { key: 'motion', label: 'Motion', opts: [['system', 'Match my device'], ['full', 'Full motion'], ['reduce', 'Reduce motion']], hint: 'Full motion enables the moving world and island journeys, overriding your device’s reduced-motion preference. Reduce motion keeps the world still and turns off screen shake in kit games.' },
     { key: 'layout', label: 'Page layout', opts: [['fit', 'One screen'], ['scroll', 'Scrolling pages']], hint: 'One screen keeps every page inside the window and flips between its parts instead of scrolling.' },
     { key: 'speed', label: 'Game speed (assist mode)', opts: [['1', '100%'], ['0.75', '75%'], ['0.5', '50%']], hint: 'Slows every game. Assisted runs are kept as personal results and stay off ranked leaderboards.' },
     { key: 'sound', label: 'Game sound', opts: [['on', 'On'], ['off', 'Off']] },
@@ -181,7 +198,6 @@
     LS.set(KEY.prefs, S.prefs);
     applyPrefs();
     const after = gameOpts();
-    if (key === 'theme' && bgGame) bgGame.retheme();
     if (before.speed !== after.speed || before.calm !== after.calm || before.mute !== after.mute) renderView(true);
     const g = PREF_GROUPS.find((x) => x.key === key), o = g && g.opts.find(([v]) => v === raw);
     if (g && o) announce(g.label + ': ' + o[1] + '.');
@@ -1075,6 +1091,7 @@
   }
   function renderView(full) {
     const v = $('#view');
+    worldForRoute();
     if (full) stopHomeScene();
     const active = document.activeElement;
     const typing = active && v.contains(active) && /INPUT|TEXTAREA|SELECT/.test(active.tagName);
@@ -1334,7 +1351,6 @@
     const st = S.studio || {};
     const dim = st.dim || '2d';
     return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy" data-part="Make a game">'
-      + '<div class="play-world-art" aria-hidden="true"></div><div class="workshop-scene" id="home-world" aria-hidden="true"></div>'
       + '<p class="page-kicker">Create · Play · Remix</p>'
       + '<h1 class="hero-title" id="hero-title"><span>Make a</span><span class="hl">game.</span></h1>'
       + '<p class="lede">' + (aiReady() ? 'Your idea is the start button. Describe it, build it with Claude, then jump in and play.' : 'Your next favorite game starts here. Play a free game, remix a starter, or make something new.') + '</p>'
@@ -1355,7 +1371,6 @@
   function mountHome() {
     unmountPlayer('home-screen');
     $('#view').innerHTML = homeHTML() + footHTML(true);
-    homeWorld($('#home-world'));
     wakeMascot($('#home-mascot'));
     homeDepthStop = packDepth($('#home-pack'));
     homeShelfStop = revealShelf($('#home-shelf'));
@@ -1415,16 +1430,11 @@
     pending.forEach((c) => io.observe(c));
     return () => { io.disconnect(); pending.clear(); };
   }
-  /* The decorative assembly scene has an independent lifecycle from the playable game. */
-  let bgGame = null, homeDepthStop = null, homeShelfStop = null;
+  /* Home interactions stop on navigation; the world background keeps its own lifecycle. */
+  let homeDepthStop = null, homeShelfStop = null;
   function stopHomeScene() {
     if (homeDepthStop) { homeDepthStop(); homeDepthStop = null; }
     if (homeShelfStop) { homeShelfStop(); homeShelfStop = null; }
-    if (bgGame) { bgGame.stop(); bgGame = null; }
-  }
-  function homeWorld(host) {
-    stopHomeScene();
-    if (host && window.PPWorkshop) bgGame = window.PPWorkshop.mount(host, { reducedMotion: calmNow() });
   }
 
   function updateHome() {

@@ -225,7 +225,7 @@ test('workshop: remount, repeated teardown, and static detachment leak no listen
   await page.waitForFunction(() => __workshop.observers === 0); freed(await snapshot(page));
 });
 
-test('workshop: integrated home/explore navigation tears down every previous scene', async (t) => {
+test('workshop: integrated home/explore uses the persistent world without allocating the retired workshop', async (t) => {
   const site = process.env.WORKSHOP_SITE_URL;
   if (!site) { t.skip('Set WORKSHOP_SITE_URL=http://127.0.0.1:8765/local.html after building to run the integrated route lifecycle guard.'); return; }
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }); const page = await context.newPage(), errors = [];
@@ -238,15 +238,15 @@ test('workshop: integrated home/explore navigation tears down every previous sce
     } });
   });
   await page.route('**/*', (route) => /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(route.request().url()) ? route.continue() : route.abort());
-  await page.goto(site); await page.waitForSelector('#home-world .ws-still', { state: 'attached' });
+  await page.goto(site); await page.waitForSelector('#site-world .world-camera', { state: 'attached' });
   for (let i = 0; i < 20; i++) {
-    await page.evaluate(() => { window.previousWorkshop = document.querySelector('#home-world'); });
     await page.locator('[data-nav="explore"]').first().click();
-    await page.waitForFunction(() => document.documentElement.dataset.route === 'explore' && previousWorkshop.childElementCount === 0);
+    await page.waitForFunction(() => document.documentElement.dataset.route === 'explore');
     const state = await snapshot(page); assert.equal(state.listeners, 0); assert.equal(state.observers, 0);
-    for (const [kind, count] of Object.entries(state.created)) assert.equal(state.deleted[kind], count, 'route teardown must delete ' + kind);
-    await page.locator('[data-nav="home"]').first().click(); await page.waitForSelector('#home-world .ws-still', { state: 'attached' });
-    assert.equal(await page.locator('#home-world > canvas').count(), 1);
+    assert.deepEqual(state.created, {}, 'the retired workshop must allocate no GPU resources');
+    await page.locator('[data-nav="home"]').first().click(); await page.waitForFunction(() => document.documentElement.dataset.route === 'home');
+    assert.equal(await page.locator('#site-world .world-camera').count(), 1);
+    assert.equal(await page.locator('#home-world, #home-world > canvas').count(), 0);
   }
   await page.locator('[data-nav="explore"]').first().click();
   await page.waitForFunction(() => __workshop.observers === 0 && __workshop.listeners.every((l) => !l.live));

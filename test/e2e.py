@@ -1361,13 +1361,15 @@ async def scenario_fit(browser):
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real, f'no console/page errors in one-screen layout at {w}x{h} {real[:3]}')
         if not mobile:
-            # A real graphics chip shows the fixed background game; it must never become a part of the page.
+            # The persistent world is decorative and fixed outside the fitted page's panes.
             await page.evaluate('location.hash = "home"'); await page.wait_for_timeout(600)
-            shown = await page.evaluate('''async () => { const w = document.getElementById('home-world'); if (!w) return 'no canvas';
+            shown = await page.evaluate('''async () => { const w = document.getElementById('site-world'); if (!w) return 'no world';
               const parts = () => document.querySelectorAll('#view .pg-dot').length;
-              const before = parts(); w.hidden = false; dispatchEvent(new Event('resize')); await new Promise((r) => setTimeout(r, 300));
-              const ok = parts() === before && document.querySelector('.hero-copy').getBoundingClientRect().height > 0; w.hidden = true; return ok; }''')
-            check(shown is True, f'the front page stays whole with the background game showing at {w}x{h} ({shown})')
+              const before = parts(); dispatchEvent(new Event('resize')); await new Promise((r) => setTimeout(r, 300));
+              const rect = w.getBoundingClientRect(); return parts() === before && !document.getElementById('view').contains(w)
+                && getComputedStyle(w).position === 'fixed' && rect.width === innerWidth && rect.height === innerHeight
+                && document.querySelector('.hero-copy').getBoundingClientRect().height > 0; }''')
+            check(shown is True, f'the front page stays whole with the full-viewport world showing at {w}x{h} ({shown})')
         await ctx.close()
     ctx, page, errs = await new_page(browser, fit=True, viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
     await page.goto(SITE + '#business')

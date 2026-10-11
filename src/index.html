@@ -4,6 +4,7 @@
 <link id="optional-fonts" rel="stylesheet" media="print" onload="this.onload=null;this.media='all'" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"></noscript>
 <style>
+#site-world{--world-art:url('PLAY_WORLD_STILL');--world-sky:url('WORLD_SKY_STILL')}
 /* A playful pixel-world portal. Sky, cream and navy keep games in the foreground;
    readable controls and a complete calm-motion mode keep every tool usable. */
 :root {
@@ -678,7 +679,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 /* One world to create in, one real game to play, then a shelf to explore. Each can be a fitted pane. */
 .pack { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 28px; padding: 0; align-items: start; }
 .pack .hero-copy { grid-column: 1; position: relative; isolation: isolate; min-height: 530px; overflow: hidden; padding: 48px; gap: 20px; border: 1px solid #6fa4c7; border-radius: 24px; background: #a4daf4; color: #14334b; box-shadow: none; translate: none; animation: none; align-content: center; }
-.play-world-art { position: absolute; inset: 0; z-index: -2; background: #a4daf4 url('PLAY_WORLD_STILL') center/cover no-repeat; image-rendering: pixelated; }
+.play-world-art { display: none; }
 .pack .hero-copy::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, rgba(234,249,255,.95), rgba(234,249,255,.84) 32%, rgba(234,249,255,0) 64%); pointer-events: none; }
 .pack .hero-copy > :not(.play-world-art):not(.workshop-scene) { position: relative; width: min(520px, 100%); z-index: 2; }
 .pack .hero-title { font: 700 clamp(2.25rem, 3.7vw, 3.6rem)/1.12 var(--display); letter-spacing: -.065em; color: #14334b; text-wrap: balance; text-shadow: 3px 3px 0 #fffdf0; }
@@ -887,7 +888,71 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
 :root[data-gp-theme="contrast"] .maker-bar .seg button { color: var(--ink); background: var(--panel); }
 :root[data-gp-theme="contrast"] .maker-bar .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 :root[data-gp-motion="reduce"] .cart:hover, :root[data-gp-motion="reduce"] .cart:focus-visible { transform: none; }
-@media (prefers-reduced-motion: reduce) { .cart:hover, .cart:focus-visible { transform: none; } }
+@media (prefers-reduced-motion: reduce) { :root:not([data-gp-motion="full"]) .cart:hover, :root:not([data-gp-motion="full"]) .cart:focus-visible { transform: none; } }
+
+/* ---------- pages within the persistent floating world ---------- */
+/* The decorative world lives outside #view. Opaque, bounded surfaces protect text
+   contrast while the sky, drifting clouds and islands remain visible around them. */
+body { margin: 0; isolation: isolate; }
+.wrap { position: relative; z-index: 1; background: transparent; }
+.top { background: var(--panel); }
+.pack { justify-items: start; }
+.pack .hero-copy { width: min(540px, 53%); min-height: 0; padding: 28px; gap: 16px; background: var(--panel); color: var(--ink); border-color: var(--line); box-shadow: 0 10px 35px var(--shadow); overflow: visible; }
+.pack .hero-copy::after, .pack .play-world-art, .pack .workshop-scene { display: none; }
+.pack .hero-copy > :not(.play-world-art):not(.workshop-scene) { width: 100%; }
+.pack .hero-title, .pack .hero-title .hl { color: var(--ink); text-shadow: none; }
+.pack .lede, .pack .page-kicker, .pack .maker-ideas .fine { color: var(--ink-2); }
+.pack .page-kicker { width: fit-content; padding: 0; background: transparent; }
+:root:not([data-gp-theme="contrast"]) .pack .hero-copy > .page-kicker { padding: 0; background: var(--panel); color: var(--ink-2); }
+.maker-box, .maker-box textarea { background: var(--panel); color: var(--ink); border-color: var(--ink-2); }
+.maker-box textarea::placeholder { color: var(--muted); }
+.maker-bar .btn { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); box-shadow: 0 3px 0 var(--ink-2); }
+.maker-bar .seg { background: var(--sheet); }
+.maker-bar .seg button { color: var(--ink-2); }
+.maker-bar .seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.pack .maker-ideas .chip { background: var(--sheet); color: var(--ink-2); border-color: var(--line); }
+.pack .stage3d { width: min(960px, 100%); background: var(--panel); box-shadow: 0 10px 35px var(--shadow); }
+.pack-shelf { width: 100%; }
+.pack-shelf-head { width: fit-content; max-width: 100%; padding: 13px 18px; gap: 16px 32px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--ink); }
+.pack .cart-title { background: var(--panel); padding: 10px 14px 14px; }
+.page-head, .gp-head { width: min(1040px, 100%); padding: 20px 24px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); color: var(--ink); box-shadow: 0 8px 25px var(--shadow); }
+.studio-heading { width: fit-content; padding-block: 16px; }
+.page-head .facts { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.section-head { justify-self: start; width: fit-content; max-width: 100%; padding: 14px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--ink); box-shadow: 0 6px 20px var(--shadow); }
+.section-head p { color: var(--muted); }
+#view > .facts { width: fit-content; max-width: 100%; padding: 16px 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 6px 20px var(--shadow); }
+#view > p { width: fit-content; max-width: 100%; padding: 16px 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.gp-side, .st-left { padding: 20px; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); box-shadow: 0 10px 35px var(--shadow); }
+.gp-main, .st-right, .panel, .table-wrap, .empty { box-shadow: 0 8px 25px var(--shadow); }
+.biz .hero-copy { padding: 26px; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); box-shadow: 0 10px 35px var(--shadow); }
+.way { padding: 24px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); }
+.ways { gap: 18px; }
+.section > .steps { gap: 18px; }
+.section > .steps li { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.feature-grid { gap: 16px; }
+.feature-grid li { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.section > h2 { justify-self: start; width: fit-content; max-width: 100%; padding: 12px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.foot, .foot-mini { padding: 18px 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+@media (max-width: 960px) {
+  .pack .hero-copy { width: min(560px, 100%); padding: 24px; gap: 16px; min-height: 0; }
+  .pack .hero-copy > .page-kicker { padding: 0; background: transparent; }
+  .page-head, .gp-head { padding: 18px 20px; }
+  .gp-side, .st-left { padding: 18px; }
+}
+@media (max-width: 560px) {
+  .wrap { padding-inline: 14px; }
+  .pack .hero-copy { padding: 18px; gap: 14px; border-radius: 18px; }
+  .pack .hero-title { font-size: 1.875rem; }
+  .page-head, .gp-head { padding: 16px; border-radius: 16px; }
+  .studio-heading { padding-block: 12px; }
+  .section-head, .pack-shelf-head { padding: 12px 14px; gap: 10px 16px; }
+  #view > .facts { padding: 14px 16px; }
+  .gp-side, .st-left { padding: 14px; border-radius: 16px; }
+  .biz .hero-copy, .way, .section > .steps li, .feature-grid li { padding: 18px; }
+  .foot, .foot-mini { padding: 14px 16px; }
+}
+/* A tall creation card scrolls inside the fitted pane rather than spilling into the pager. */
+:root[data-fit] .pack .hero-copy.fit-tall { overflow: auto; min-height: 0; }
 
 /* ---------- contrast, motion, forced colors ---------- */
 :root[data-gp-theme="contrast"] a, :root[data-gp-theme="contrast"] .linkish { text-decoration-color: currentColor; }
@@ -900,7 +965,7 @@ label.opt:has(input:checked) { border-color: var(--accent); background: var(--ac
 /* Calm motion also flattens the tilted console and parks the score pops. */
 :root[data-gp-motion="reduce"] .pack .console { transform: none; }
 @media (prefers-reduced-motion: reduce) { :root:not([data-gp-motion="full"]) .pack .console { transform: none; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+@media (prefers-reduced-motion: reduce) { :root:not([data-gp-motion="full"]) *, :root:not([data-gp-motion="full"]) *::before, :root:not([data-gp-motion="full"]) *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 :root[data-gp-motion="reduce"] *, :root[data-gp-motion="reduce"] *::before, :root[data-gp-motion="reduce"] *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 @media (forced-colors: active) {
   .btn, .chip, .swatch, .hbtn, .wchip, label.opt { border: 1px solid ButtonText; }
