@@ -16,7 +16,7 @@ const SITE = { contact: process.env.GP_CONTACT || '', mascot: 'mascot-wave.webp'
 const MASCOT_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/mascot.webp')).toString('base64');
 const PLAY_WORLD_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/play-world-v1.webp')).toString('base64');
 const WORLD_SKY_STILL = 'data:image/webp;base64,' + readFileSync(here('./src/assets/world-sky-v1.webp')).toString('base64');
-const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'qr.js', 'world-background.js', 'app.js'].map((f) => {
+const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'qr.js', 'world-background.js', 'world-navigation.js', 'app.js'].map((f) => {
   const s = read(f).replace("'MASCOT_STILL'", () => JSON.stringify(MASCOT_STILL));
   for (const bad of ['</script', '<!--', '<script']) if (s.toLowerCase().includes(bad)) throw new Error(f + ' contains ' + bad);
   return s;
@@ -24,7 +24,7 @@ const js = ['core.js', 'kits.js', 'harness.js', 'solana.js', 'qr.js', 'world-bac
 const scripts = (config) => (config ? '<script>window.GP_SITE = ' + JSON.stringify(config).replace(/</g, '\\u003c') + ';</script>\n' : '')
   + js.map((s) => '<script>\n' + s + '\n</script>').join('\n');
 
-const template = read('index.html');
+const template = read('index.html').replace('/* WORLD-INTERFACE-CSS */', () => read('world-interface.css'));
 // A replacer function keeps `$` sequences in the scripts from being read as replacement patterns.
 const page = template.replaceAll('PLAY_WORLD_STILL', PLAY_WORLD_STILL).replaceAll('WORLD_SKY_STILL', WORLD_SKY_STILL).replace('<!--INLINE-SCRIPTS-->', () => scripts(null));
 mkdirSync(here('./dist/site/'), { recursive: true });

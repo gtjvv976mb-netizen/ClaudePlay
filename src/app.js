@@ -149,7 +149,7 @@
   const reducedMotionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
   const calmNow = () => S.prefs.motion === 'reduce' || (S.prefs.motion === 'system' && !!(reducedMotionQuery && reducedMotionQuery.matches));
   // One decorative world survives page renders; only its camera destination changes.
-  let siteWorld = null;
+  let siteWorld = null, siteNavigation = null;
   function worldForRoute() {
     if (!siteWorld && window.PPWorldBackground) {
       let host = $('#site-world');
@@ -163,6 +163,11 @@
       siteWorld = window.PPWorldBackground.mount(host, { reducedMotion: calmNow() });
     }
     if (siteWorld) { siteWorld.setMotion(calmNow()); siteWorld.setRoute(S.route); }
+    if (!siteNavigation && window.PPWorldNavigation) {
+      const host = $('#world-navigation');
+      if (host) siteNavigation = window.PPWorldNavigation.mount(host);
+    }
+    if (siteNavigation) siteNavigation.setRoute(S.route);
   }
   function gameOpts() { return { speed: Number(S.prefs.speed) || 1, calm: calmNow(), mute: !S.prefs.sound }; }
   function applyPrefs() {
@@ -172,6 +177,7 @@
     if (p.motion === 'reduce' || p.motion === 'full') r.setAttribute('data-gp-motion', p.motion); else r.removeAttribute('data-gp-motion');
     if (p.layout === 'scroll') r.removeAttribute('data-fit'); else r.setAttribute('data-fit', '');
     if (siteWorld) { siteWorld.setMotion(calmNow()); siteWorld.retheme(); }
+    if (siteNavigation) siteNavigation.retheme();
     if (typeof fitSoon === 'function') fitSoon();
     const b = $('#a11y-btn');
     if (b) b.classList.toggle('on', Number(p.speed) < 1 || p.theme === 'contrast' || p.text !== 'md' || p.motion === 'reduce' || !p.sound || p.layout === 'scroll');
@@ -1063,7 +1069,7 @@
   /* ---------------- rendering ---------------- */
   function renderHeader() {
     document.documentElement.dataset.route = S.route;
-    $$('.nav a').forEach((a) => { if (a.dataset.nav === S.route || (S.route === 'game' && a.dataset.nav === 'explore')) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+    if (siteNavigation) siteNavigation.setRoute(S.route);
     const chip = $('#wchip');
     if (!S.wallet) { chip.innerHTML = '<span class="dot off"></span><span>Get a wallet</span>'; return; }
     const w = myWallet();
@@ -1125,9 +1131,6 @@
   let fitQueued = false, fitKey = '', flipAt = 0, fitSeen = [];
   const fitRO = window.ResizeObserver ? new ResizeObserver(() => fitSoon()) : null;
   function fitSoon() { if (fitQueued) return; fitQueued = true; requestAnimationFrame(() => { fitQueued = false; fitPanes(); }); }
-  // Late optional fonts and wallet labels can resize the header without changing a capped pane.
-  const fitHeaderRO = window.ResizeObserver ? new ResizeObserver(fitSoon) : null;
-  if (fitHeaderRO && $('.top')) fitHeaderRO.observe($('.top'));
   function paneBlocks(v) {
     const out = [];
     for (const el of v.children) {
@@ -1351,15 +1354,16 @@
     const st = S.studio || {};
     const dim = st.dim || '2d';
     return '<section class="hero hero-home pack" id="home-pack" aria-labelledby="hero-title"><div class="hero-copy" data-part="Make a game">'
+      + '<div class="pack-copy">'
       + '<p class="page-kicker">Create · Play · Remix</p>'
       + '<h1 class="hero-title" id="hero-title"><span>Make a</span><span class="hl">game.</span></h1>'
       + '<p class="lede">' + (aiReady() ? 'Your idea is the start button. Describe it, build it with Claude, then jump in and play.' : 'Your next favorite game starts here. Play a free game, remix a starter, or make something new.') + '</p>'
-      + '<form class="maker" data-form="home-build"><label class="sr" for="home-prompt">Describe your game</label>'
+      + '</div><div class="pack-prompt"><form class="maker" data-form="home-build"><label class="sr" for="home-prompt">Describe your game</label>'
       + '<div class="maker-box"><textarea id="home-prompt" rows="2" maxlength="600" placeholder="A fox hopping between sky islands, collecting stars...">' + esc(st.versions && st.versions.length ? '' : (st.prompt || '')) + '</textarea>'
       + '<div class="maker-bar"><div class="seg" role="group" aria-label="2D or 3D">' + ['2d', '3d'].map((d) => '<button type="button" data-act="dim" data-dim="' + d + '" aria-pressed="' + (dim === d) + '">' + d.toUpperCase() + '</button>').join('') + '</div>'
       + '<button class="btn primary" type="submit">' + I.spark + ' Make a game</button></div></div>'
       + '<div class="maker-ideas" role="group" aria-labelledby="h-crypto"><span class="fine" id="h-crypto">Try an idea</span>' + HOME_IDEAS.map((t) => '<button class="chip" type="button" data-act="home-idea" data-idea="' + esc(t) + '" title="' + esc(t) + '">' + esc(ideaName(t)) + '</button>').join('') + '</div></form>'
-      + '<a class="btn" href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">' + I.play + ' Play Neon Dash</a></div>'
+      + '<a class="btn scene-play" href="#game-kit-neon-dash" data-act="open-game" data-gid="kit-neon-dash">' + I.play + ' Play Neon Dash</a></div></div>'
       + '<div class="stage3d play-stage" data-part="Play Neon Dash"><p class="stage-note">Press play. Neon Dash is ready when you are.</p>'
       + '<figure class="console" id="home-console">'
       + '<div class="screen" id="home-screen" data-gid="kit-neon-dash"' + (hero ? ' style="background:#05070a url(' + K.cover(Object.assign({ creator: C.STARTER }, hero)) + ') center/cover"' : '') + '></div>'
@@ -2771,7 +2775,7 @@
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr[data-act]')) { e.preventDefault(); e.target.click(); }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target.id === 'home-prompt') { e.preventDefault(); e.target.form.requestSubmit(); }
-    if ((e.key === 'PageDown' || e.key === 'PageUp') && S.ui.panes && !$('.modal-back') && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) && flip(S.ui.pane + (e.key === 'PageDown' ? 1 : -1))) e.preventDefault();
+    if ((e.key === 'PageDown' || e.key === 'PageUp') && S.ui.panes && !$('.modal-back') && !e.target.closest('.island-nav-overlay') && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) && flip(S.ui.pane + (e.key === 'PageDown' ? 1 : -1))) e.preventDefault();
   });
   document.addEventListener('submit', (e) => {
     const f = e.target.closest('[data-form]');
@@ -2932,6 +2936,7 @@
   /* ---------------- boot ---------------- */
   async function boot() {
     if (!document.documentElement.lang) document.documentElement.lang = 'en';
+    document.body.classList.add('world-interface');
     applyPrefs();
     if (reducedMotionQuery && reducedMotionQuery.addEventListener) reducedMotionQuery.addEventListener('change', () => { if (S.prefs.motion === 'system') renderView(true); });
     const [r, a, room] = parseHash();

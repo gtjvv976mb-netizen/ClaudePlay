@@ -12,7 +12,8 @@
     "e2e": "python3 test/e2e.py /tmp/gameplay-shots",
     "test:workshop": "node --test test/workshop-scene.test.mjs",
     "audit:design": "node test/design-audit.mjs",
-    "test:world": "node --test test/world-background.test.mjs"
+    "test:world": "node --test test/world-background.test.mjs",
+    "test:world-nav": "node --test test/world-navigation.test.mjs"
   },
   "engines": {
     "node": ">=20"

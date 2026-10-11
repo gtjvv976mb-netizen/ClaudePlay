@@ -314,9 +314,29 @@ test('world: actual Settings UI enables Full motion under OS reduce and restores
   await page.waitForTimeout(350);
   assert.notEqual(await page.locator('#site-world .world-cloud').first().evaluate((el) => getComputedStyle(el).transform), first);
   const start = await page.locator('#site-world .world-camera').evaluate((el) => getComputedStyle(el).transform);
-  await navigate(page, 'explore');
+  // Observe the native journey in the actual click dispatch, after the app's
+  // document handler navigates. A later Playwright sample can miss a completed
+  // 1450ms journey when other browser checks keep the machine busy.
+  await page.evaluate(() => {
+    window.__worldClickJourney = null;
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('.island-nav-marker[data-nav="explore"]')) return;
+      const host = document.querySelector('#site-world');
+      const animations = host.querySelector('.world-camera').getAnimations();
+      window.__worldClickJourney = {
+        route: __pp.route,
+        worldRoute: host.dataset.worldRoute,
+        started: animations.some((animation) => animation.playState === 'running'
+          && Number.isFinite(animation.effect?.getComputedTiming().endTime)),
+      };
+    }, { once: true });
+  });
+  await page.locator('.island-nav-marker[data-nav="explore"]').click();
+  assert.deepEqual(await page.evaluate(() => __worldClickJourney), { route: 'explore', worldRoute: 'explore', started: true },
+    'the real island click must start a native camera journey to Explore');
+  await page.waitForFunction(() => __pp.route === 'explore' && document.querySelector('#view h1')
+    && document.querySelector('#site-world .world-camera').getAnimations().every((animation) => animation.playState !== 'running'));
   assert.notEqual(await page.locator('#site-world .world-camera').evaluate((el) => getComputedStyle(el).transform), start);
-  assert.equal(await page.locator('#site-world .world-camera').evaluate((el) => el.getAnimations().some((animation) => animation.playState === 'running')), true);
   await chooseMotion('reduce'); await worldMode('static');
   await chooseMotion('full'); await worldMode('running');
   await page.locator('#a11y-btn').click();
