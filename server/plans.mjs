@@ -1,4 +1,4 @@
-// Free and Pro plans for the AI studio.
+// Daily AI allowances, plus legacy Free and Pro plans for the AI studio.
 //
 // Free: every visitor gets a few new games a day (GP_MODEL_FREE_NEW, Sonnet 5.5) and more changes on a
 // low-cost model (GP_MODEL_FREE, Haiku 5.5), counted per network address, with site-wide daily caps so a
@@ -17,8 +17,29 @@ const SIG = /^[1-9A-HJ-NP-Za-km-z]{64,90}$/;
 /* kv interface: incr(key, by, ttlSeconds) -> number, get(key), set(key, value), once(key) -> true the first time. */
 export function memoryKv() {
   const m = new Map();
+  const receipts = new Map();
   const live = (k) => { const e = m.get(k); if (e && e.exp && e.exp < Date.now()) { m.delete(k); return null; } return e || null; };
   return {
+    persistent: false,
+    async reserve(k, amount, cap, id) {
+      if (!Number.isSafeInteger(amount) || amount <= 0 || !Number.isSafeInteger(cap) || cap < 0) throw new Error('Bad reservation.');
+      const e = live(k), used = e ? Number(e.v) : 0;
+      if (!Number.isSafeInteger(used) || used < 0) throw new Error('Bad stored reservation.');
+      if (receipts.has(id)) return { ok: false, used };
+      if (amount > cap - used) return { ok: false, used };
+      m.set(k, { v: used + amount, exp: 0 });
+      receipts.set(id, { key: k, amount, settled: null });
+      return { ok: true, used: used + amount };
+    },
+    async settle(k, id, cost) {
+      const receipt = receipts.get(id), e = live(k), used = e ? Number(e.v) : 0;
+      if (!receipt || receipt.key !== k || !Number.isSafeInteger(cost) || cost < 0 || cost > receipt.amount || !Number.isSafeInteger(used) || used < 0) return { ok: false, used };
+      if (receipt.settled != null) return { ok: receipt.settled === cost, used };
+      const next = used - receipt.amount + cost;
+      if (next < 0) throw new Error('Bad stored reservation.');
+      receipt.settled = cost; m.set(k, { v: next, exp: 0 });
+      return { ok: true, used: next };
+    },
     async incr(k, by, ttl) { const e = live(k); const v = (e ? Number(e.v) || 0 : 0) + by; m.set(k, { v, exp: e ? e.exp : ttl ? Date.now() + ttl * 1000 : 0 }); return v; },
     async get(k) { const e = live(k); return e ? e.v : null; },
     async set(k, v) { m.set(k, { v, exp: 0 }); },
@@ -29,8 +50,8 @@ export function memoryKv() {
 /* The memo id that ties a Pro payment to one gallery account. */
 export const proId = (uid) => createHash('sha256').update('gameplay-pro:' + uid).digest('hex').slice(0, 16);
 
-/* Daily build counts (in kv) and how many builds run at once (in memory). Counts are kept per bucket
-   ('new' games and 'edit' changes), each with an optional site-wide cap. */
+/* Daily AI counts (in kv) and how many requests run at once (in memory). Counts are kept per bucket
+   ('new', 'edit', 'screen', 'playtest'), each with an optional site-wide cap and extra identity caps. */
 export function limiter({ maxActive = 4, kv = memoryKv() } = {}) {
   const busy = new Set();
   let active = 0;
@@ -38,32 +59,48 @@ export function limiter({ maxActive = 4, kv = memoryKv() } = {}) {
   const key = (who, bucket) => 'lim:' + today() + ':' + (bucket || 'new') + ':' + who;
   const site = (bucket) => 'lim:' + today() + ':' + (bucket || 'new') + ':*site';
   return {
-    async used(who, bucket) { return Number(await kv.get(key(who, bucket))) || 0; },
-    /* Reserves a build for `who` against `daily`. opts: bucket, total (site-wide cap, 0 = none), limitMessage. */
+    async used(who, bucket) {
+      const v = await kv.get(key(who, bucket));
+      if (v == null) return 0;
+      if (!Number.isSafeInteger(v) || v < 0) throw new Error('Invalid stored daily allowance.');
+      return v;
+    },
+    /* Reserves an AI request for `who` against `daily`. opts: bucket, total (site-wide cap, 0 = none),
+       also (additional identities with their own daily caps), limitMessage. */
     async take(who, daily, opts = {}) {
       const total = opts.total || 0;
-      if (busy.has(who)) return { ok: false, code: 'rate_limited', message: 'You already have a build running. Wait for it to finish.' };
+      if (busy.has(who)) return { ok: false, code: 'rate_limited', message: 'You already have an AI request running. Wait for it to finish.' };
       if (active >= maxActive) return { ok: false, code: 'rate_limited', message: 'The AI studio is busy right now. Try again in a minute.' };
       busy.add(who); active++;
       const release = () => { if (busy.delete(who)) active--; };
       try {
-        const mine = key(who, opts.bucket), all = site(opts.bucket);
-        const n = await kv.incr(mine, 1, 2 * 86400);
-        if (n > daily) {
-          await kv.incr(mine, -1, 2 * 86400); release();
-          return { ok: false, code: 'daily_limit', message: opts.limitMessage || 'You have used today’s ' + daily + ' free AI builds. Come back tomorrow, or tune a kit meanwhile.' };
+        const mine = key(who, opts.bucket), all = site(opts.bucket), entries = [{ key: mine, daily }];
+        for (const value of opts.also || []) {
+          const w = typeof value === 'string' ? { who: value, daily } : value;
+          const k = key(w.who, opts.bucket);
+          if (!entries.some((e) => e.key === k)) entries.push({ key: k, daily: w.daily });
+        }
+        const countedKeys = []; let left = daily;
+        for (const { key: k, daily: ceiling } of entries) {
+          const count = await kv.incr(k, 1, 2 * 86400); countedKeys.push(k); left = Math.min(left, ceiling - count);
+          if (!Number.isSafeInteger(count) || count < 1) throw new Error('Invalid stored daily allowance.');
+          if (count > ceiling) {
+            for (const used of countedKeys) await kv.incr(used, -1, 2 * 86400);
+            release();
+            return { ok: false, code: k === mine ? 'daily_limit' : 'network_limit', message: k === mine ? opts.limitMessage || 'You have used today’s ' + daily + ' free AI builds. Come back tomorrow, or tune a kit meanwhile.' : 'This network has reached today’s AI use allowance. It resets at 00:00 UTC.' };
+          }
         }
         const counted = !!total;
         if (counted && (await kv.incr(all, 1, 2 * 86400)) > total) {
-          await kv.incr(all, -1, 2 * 86400); await kv.incr(mine, -1, 2 * 86400); release();
+          await kv.incr(all, -1, 2 * 86400); for (const used of countedKeys) await kv.incr(used, -1, 2 * 86400); release();
           return { ok: false, code: 'daily_limit', message: 'The AI studio has reached today’s free build limit for this site. Come back tomorrow, or tune a kit meanwhile.' };
         }
         let refunded = false;
         return {
-          ok: true, left: daily - n, release,
+          ok: true, left, release,
           async refund() {
             if (refunded) return; refunded = true;
-            await kv.incr(mine, -1, 2 * 86400);
+            for (const used of countedKeys) await kv.incr(used, -1, 2 * 86400);
             if (counted) await kv.incr(all, -1, 2 * 86400);
           },
         };

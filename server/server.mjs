@@ -12,24 +12,28 @@
 //   GP_ROOT              folder to serve (dist/site)
 //   GP_MODEL_FREE_NEW    free plan: model for new games (claude-sonnet-5-5)
 //   GP_MODEL_FREE        free plan: model for changes and bug fixes (claude-haiku-5-5)
-//   GP_MODEL_NEW         Pro: model for new games and "best" builds (claude-sonnet-5-5)
-//   GP_MODEL_EDIT        Pro: model for changes and bug fixes (claude-haiku-5-5)
+//   GP_MODEL_NEW         sponsored new games and "best" edits (claude-sonnet-5-5)
+//   GP_MODEL_EDIT        sponsored standard changes and fixes (claude-haiku-5-5)
+//   GP_SPONSORED         hosted creation is free (default 1; 0 is legacy compatibility)
+//   GP_AI_BUDGET_USD     total lifetime sponsored AI funding (400 maximum, never resets)
+//   GP_DATA_PERSISTENT=1 attest GP_DATA_DIR is durable before using file-backed AI funding
+//   GP_NETWORK_MULTIPLIER larger daily network ceiling for shared addresses (10; 1..100)
+//   GP_DAILY_SCREENS     safety reviews per account/day (20)
+//   GP_DAILY_PLAYTESTS_USER play-test reviews per account/day (40)
 //   GP_DAILY_BUILDS      free new games per visitor per day (2)
 //   GP_DAILY_TOTAL       free new games per day across the whole site, to cap spend (0 = no cap)
 //   GP_DAILY_EDITS       free AI changes and fixes per visitor per day (20)
 //   GP_DAILY_EDIT_TOTAL  free AI changes per day across the whole site (0 = no cap)
-//   GP_PRO_PRICE_SOL     price of a Pro pass in SOL, paid to GP_TREASURY (0.1; 0 = no Pro). Needs real
-//                        Solana payments (GP_SOLANA_CLUSTER + GP_TREASURY); see plans.mjs
+//   GP_PRO_PRICE_SOL     legacy-only Pro pass price in SOL; ignored when sponsored creation is on
 //   GP_PRO_DAYS          how long a Pro pass lasts (30)
 //   GP_PRO_BUILDS        Pro new games per day (10)
 //   GP_PRO_EDITS         Pro AI changes per day (60)
-//   GP_MAX_ACTIVE        AI builds running at once across all visitors (4)
+//   GP_MAX_ACTIVE        AI requests running at once across all visitors (4)
 //   GP_DAILY_PLAYTESTS   play-test reviews (a small Claude Haiku call after each build) per day across
 //                        the whole site (1000; 0 = no cap). Past it, builds still get the in-page checks
 //   GP_ROOM_PLAYERS      players per multiplayer room (16, at most 32)
-//   GP_ROOM_MB_DAY       megabytes the multiplayer relay may send per day (100; 0 = no limit). Render's
-//                        free plan includes 5 GB of outbound traffic a month, and a full 16-player
-//                        room sends about 0.7 GB an hour
+//   GP_ROOM_MB_DAY       megabytes the multiplayer relay may send per day (100; 0 = no limit).
+//                        A full 16-player room sends about 0.7 GB an hour.
 //   GP_TRUST_PROXY=1     read the visitor address from the first X-Forwarded-For entry (set this
 //                        behind a proxy that overwrites that entry, as Render does)
 //   GP_DATA_DIR          folder for the shared gallery (./data); put it on a persistent disk
@@ -45,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 import { openGallery, fileStore, redisStore, copyGallery } from './gallery.mjs';
 import { chainConfig, makeRpc, openChain } from './chain.mjs';
 import { limiter, memoryKv, openPlans } from './plans.mjs';
+import { openBudget } from './budget.mjs';
 import { openRooms, ROOM_CODE } from './rooms.mjs';
 import { uidOf } from './gallery.mjs';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -97,7 +102,8 @@ function apiError(err) {
 }
 
 /* Creates the server. Options: root, client (an Anthropic client, or null for no AI), models,
-   daily, total, maxActive, trustProxy, log, gallery (from openGallery(), or null for none),
+   sponsored, aiBudgetUsd, daily, dailyEdits, dailyScreens, dailyPlaytests, networkMultiplier,
+   total, totalEdits, maxActive, trustProxy, log, gallery (from openGallery(), or null for none),
    chain (from openChain()), kv (build counts and Pro passes; in memory if omitted),
    pro ({ price (lamports), days, daily }, used when chain is set). */
 export function createServer(opts = {}) {
@@ -107,25 +113,35 @@ export function createServer(opts = {}) {
   const models = Object.assign({ freeNew: 'claude-sonnet-5-5', free: 'claude-haiku-5-5', new: 'claude-sonnet-5-5', edit: 'claude-haiku-5-5' }, pick(opts.models));
   const daily = opts.daily || 2, dailyEdits = opts.dailyEdits || 20;
   const kv = opts.kv || memoryKv();
+  const sponsored = opts.sponsored === true;
+  const funding = sponsored ? openBudget({ kv, limitUsd: opts.aiBudgetUsd }) : null;
   const limits = limiter({ maxActive: opts.maxActive || 4, kv });
   const log = opts.log || (() => {});
   const gallery = opts.gallery || null;
   const chain = opts.chain || null;
   const pro = opts.pro || {};
-  const plans = openPlans({ kv, chain, price: pro.price, days: pro.days, daily: pro.daily, dailyEdits: pro.dailyEdits });
+  const plans = openPlans({ kv, chain, price: sponsored ? 0 : pro.price, days: pro.days, daily: pro.daily, dailyEdits: pro.dailyEdits });
+  const reviewCaps = { screen: opts.dailyScreens === undefined ? 20 : opts.dailyScreens, playtest: opts.dailyPlaytests === undefined ? 40 : opts.dailyPlaytests };
+  const networkMultiplier = Math.min(100, Math.max(1, Math.floor(Number(opts.networkMultiplier) || 10)));
+  if (sponsored && [daily, dailyEdits, ...Object.values(reviewCaps)].some((n) => !Number.isSafeInteger(n) || n < 1)) throw new Error('Sponsored daily allowances must be positive integers.');
   const uidFrom = (req) => { const k = String(req.headers['x-gp-key'] || ''); return KEY_OK.test(k) ? uidOf(k) : null; };
   /* The caller's plan and daily allowances: new games ('new') and changes and fixes ('edit'). */
   async function planInfo(req) {
     const uid = uidFrom(req);
-    const plan = await plans.planOf(uid);
+    const plan = sponsored ? 'sponsored' : await plans.planOf(uid);
     const pro = plan === 'pro';
-    const who = pro ? 'u:' + uid : visitor(req);
-    const caps = pro ? { new: plans.pro.daily, edit: plans.pro.dailyEdits } : { new: daily, edit: dailyEdits };
+    const network = visitor(req), who = pro || (sponsored && uid) ? 'u:' + uid : network;
+    const caps = pro ? { new: plans.pro.daily, edit: plans.pro.dailyEdits } : Object.assign({ new: daily, edit: dailyEdits }, sponsored ? reviewCaps : {});
     const totals = pro ? { new: 0, edit: 0 } : { new: opts.total || 0, edit: opts.totalEdits || 0 };
     const left = {};
-    for (const b of ['new', 'edit']) left[b] = Math.max(0, caps[b] - (await limits.used(who, b)));
-    return { plan, who, uid, caps, totals, left };
+    for (const b of Object.keys(caps)) {
+      const mine = caps[b] - await limits.used(who, b);
+      const networkLeft = sponsored && who !== network ? caps[b] * networkMultiplier - await limits.used(network, b) : mine;
+      left[b] = Math.max(0, Math.min(mine, networkLeft));
+    }
+    return { plan, who, network, uid, caps, totals, left };
   }
+  const fundingStatus = () => funding.status(Object.fromEntries(Object.entries({ new: { model: models.new, max_tokens: MAX_TOKENS }, edit: { model: models.edit, max_tokens: MAX_TOKENS }, bestEdit: { model: models.new, max_tokens: MAX_TOKENS }, screen: { model: models.free, max_tokens: 400 }, playtest: { model: models.free, max_tokens: 500 } }).map(([name, p]) => [name, Object.assign(p, { service_tier: 'standard_only', inference_geo: 'global' })])));
   const chainHits = new Map();
   // Multiplayer rooms need the shared gallery, since friends join through a published game's link.
   const roomMb = opts.roomMbDay === undefined ? 100 : opts.roomMbDay;
@@ -170,7 +186,7 @@ export function createServer(opts = {}) {
     let body = await readFile(file);
     if ((client || gallery || chain) && file === join(root, 'index.html')) {
       // Tell the page where to send AI builds, where the shared gallery lives and which Solana network pays.
-      const extra = Object.assign(client ? { ai: 'api/build', playtest: 'api/playtest' } : {}, client && plans.pro ? { pro: true } : {}, gallery ? { gallery: 'api/db' } : {}, rooms ? { rooms: 'api/rooms' } : {}, gallery ? { screen: 'api/screen' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
+      const extra = Object.assign(client ? { ai: 'api/build', playtest: 'api/playtest' } : {}, sponsored ? { sponsored: true, best: true } : {}, client && plans.pro ? { pro: true } : {}, gallery ? { gallery: 'api/db' } : {}, rooms ? { rooms: 'api/rooms' } : {}, gallery ? { screen: 'api/screen' } : {}, chain ? { chain: Object.assign({ api: 'api/chain' }, chain.site) } : {});
       body = body.toString('utf8').replace(/window\.GP_SITE = (\{.*?\});/, (m, json) => 'window.GP_SITE = ' + JSON.stringify(Object.assign(JSON.parse(json), extra)).replace(/</g, '\\u003c') + ';');
     }
     // A validator lets returning visitors get a 304 instead of the whole page and mascot again (free hosts
@@ -196,6 +212,26 @@ export function createServer(opts = {}) {
     });
   }
 
+  // Every sponsored model call shares the build concurrency gate, account/network daily counts,
+  // and the same permanent dollar allowance. Pattern-only safety rejections never call Claude.
+  async function sponsoredReview(req, res, bucket, params, total = 0) {
+    params.service_tier = 'standard_only'; params.inference_geo = 'global';
+    let slot;
+    try {
+      const info = await planInfo(req), cap = info.caps[bucket];
+      slot = await limits.take(info.who, cap, { bucket, also: [{ who: info.network, daily: cap * networkMultiplier }], total, limitMessage: 'You have used today’s ' + cap + ' free ' + (bucket === 'screen' ? 'safety reviews' : 'play-test reviews') + '. They reset at 00:00 UTC.' });
+      if (!slot.ok) { send(res, 429, { code: slot.code, message: slot.message }); return null; }
+      const funds = await funding.take(params);
+      if (!funds.ok) { await slot.refund(); slot.release(); send(res, 429, funds); return null; }
+      return { slot, funds };
+    } catch (e) {
+      if (slot && slot.ok) { await slot.refund().catch(() => {}); slot.release(); }
+      log({ error: 'review allowance: ' + (e && e.message) });
+      send(res, 503, { code: 'unavailable', message: 'The AI review allowance cannot be checked right now. Try again later.' });
+      return null;
+    }
+  }
+
   async function build(req, res) {
     if (!client) return send(res, 503, { code: 'ai_off', message: 'The AI studio is not switched on for this server.' });
     let body;
@@ -203,39 +239,55 @@ export function createServer(opts = {}) {
     const checked = H.checkRequest(body);
     if (!checked.ok) return send(res, 400, { code: 'bad_request', message: 'The request was not valid: ' + checked.error + '.' });
     const r = checked.req;
-    let info, slot;
+    let info, slot, bucket;
     try {
       info = await planInfo(req);
       if (info.plan !== 'pro' && r.tier === 'complex' && plans.pro) return send(res, 402, { code: 'pro_required', message: 'Best builds use Claude Sonnet 5.5 and are part of Pro. Switch to a standard build, or get Pro.' });
-      const bucket = r.kind === 'new' || (info.plan === 'pro' && r.tier === 'complex') ? 'new' : 'edit';
+      bucket = r.kind === 'new' || (info.plan === 'pro' && r.tier === 'complex') ? 'new' : 'edit';
       const cap = info.caps[bucket], what = bucket === 'new' ? 'new games' : 'AI changes';
       slot = await limits.take(info.who, cap, info.plan === 'pro'
         ? { bucket, limitMessage: 'You have used today’s ' + cap + ' Pro ' + what + '. They reset tomorrow.' }
-        : { bucket, total: info.totals[bucket], limitMessage: 'You have used today’s ' + cap + ' free ' + what + '. Come back tomorrow' + (plans.pro ? ', get Pro for more,' : '') + ' or tune a kit meanwhile.' });
+        : { bucket, total: info.totals[bucket], also: sponsored ? [{ who: info.network, daily: cap * networkMultiplier }] : [], limitMessage: 'You have used today’s ' + cap + ' free ' + what + '. Come back tomorrow' + (plans.pro ? ', get Pro for more,' : '') + ' or tune a kit meanwhile.' });
     } catch (e) {
       log({ error: 'limits: ' + (e && e.message) });
       return send(res, 503, { code: 'unavailable', message: 'The AI studio cannot check your build allowance right now. Try again in a minute.' });
     }
     if (!slot.ok) return send(res, 429, { code: slot.code, message: slot.message });
-    const refund = () => slot.refund().catch((e) => log({ error: 'refund: ' + (e && e.message) }));
-    const model = pickModel(r, models, info.plan);
+    const refund = () => sponsored ? Promise.resolve() : slot.refund().catch((e) => log({ error: 'refund: ' + (e && e.message) }));
+    const model = pickModel(r, models, sponsored ? 'pro' : info.plan);
+    const params = buildParams(r, model);
+    if (sponsored) { delete params.betas; delete params.fallbacks; params.service_tier = 'standard_only'; params.inference_geo = 'global'; }
+    let funds;
+    if (sponsored) {
+      try {
+        funds = await funding.take(params);
+        if (!funds.ok) { await slot.refund(); slot.release(); return send(res, 429, funds); }
+      } catch (e) {
+        await slot.refund().catch(() => {}); slot.release();
+        log({ error: 'funding: ' + (e && e.message) });
+        return send(res, 503, { code: 'unavailable', message: 'The AI funding allowance cannot be checked right now. Try again later.' });
+      }
+    }
     const ctl = new AbortController();
     let finished = false, sentText = false;
     res.on('close', () => { if (!finished) ctl.abort(); });
+    // Durable admission can outlast the caller. Its close event may already have happened.
+    if (res.destroyed) { ctl.abort(); await refund(); slot.release(); return; }
     res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-accel-buffering': 'no' });
     const line = (o) => { if (!res.writableEnded) res.write(JSON.stringify(o) + '\n'); };
     const started = Date.now();
     try {
-      const stream = client.beta.messages.stream(buildParams(r, model), { signal: ctl.signal });
+      const stream = client.beta.messages.stream(params, { signal: ctl.signal, ...(sponsored ? { maxRetries: 0 } : {}) });
       for await (const ev of stream) {
         if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta' && ev.delta.text) { sentText = true; line({ t: 'text', d: ev.delta.text }); }
       }
       const msg = await stream.finalMessage();
+      if (funds && !ctl.signal.aborted) await funds.settle(msg).catch((e) => log({ error: 'funding settlement: ' + (e && e.message) }));
       if (msg.stop_reason === 'refusal') {
         await refund();
         line({ t: 'error', code: 'refused', message: 'Claude declined this request. Rephrase the idea and try again.' });
       } else {
-        line({ t: 'done', truncated: msg.stop_reason === 'max_tokens', model: msg.model || model, plan: info.plan, left: slot.left });
+        line({ t: 'done', truncated: msg.stop_reason === 'max_tokens', model: msg.model || model, plan: info.plan, sponsored, bucket, left: slot.left });
       }
       log({ kind: r.kind, plan: info.plan, model, ms: Date.now() - started, stop: msg.stop_reason, out: msg.usage && msg.usage.output_tokens });
     } catch (err) {
@@ -302,16 +354,23 @@ export function createServer(opts = {}) {
       const content = [];
       for (const p of H.picturesOf(code)) content.push({ type: 'text', text: "Creator's picture '" + p.name + "':" }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: p.data } });
       content.push({ type: 'text', text: 'TITLE: ' + title + '\nDESCRIPTION: ' + desc + '\n\nGAME CODE:\n' + H.stripPictures(code) });
+      const params = { model: models.free, max_tokens: 400, system: [{ type: 'text', text: H.SCREEN_PROMPT, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content }] };
+      const admission = sponsored ? await sponsoredReview(req, res, 'screen', params) : null;
+      if (sponsored && !admission) return;
+      const ctl = new AbortController(); let finished = false;
+      res.on('close', () => { if (!finished) ctl.abort(); });
+      if (res.destroyed) { ctl.abort(); if (admission) admission.slot.release(); return; }
       let text = '';
       try {
-        const stream = client.beta.messages.stream({ model: models.free, max_tokens: 400, system: [{ type: 'text', text: H.SCREEN_PROMPT, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content }] });
+        const stream = client.beta.messages.stream(params, { signal: ctl.signal, ...(sponsored ? { maxRetries: 0 } : {}) });
         for await (const ev of stream) if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') text += ev.delta.text;
         const msg = await stream.finalMessage();
+        if (admission && !ctl.signal.aborted) await admission.funds.settle(msg).catch((e) => log({ error: 'funding settlement: ' + (e && e.message) }));
         if (msg.stop_reason === 'refusal') text = '{"verdict":"block","reasons":["The safety review declined this game."]}';
       } catch (e) {
         log({ screen: 'error', error: e && (e.status || e.message) });
         return send(res, 503, { code: 'unavailable', message: 'The safety check is not available right now. Try publishing again in a minute.' });
-      }
+      } finally { finished = true; if (admission) admission.slot.release(); }
       const v = H.parseScreen(text);
       log({ screen: v.ok ? 'allowed' : 'blocked' });
       if (!v.ok) return send(res, 200, { ok: false, reasons: v.reasons });
@@ -329,23 +388,30 @@ export function createServer(opts = {}) {
     const checked = H.checkPlaytest(body);
     if (!checked.ok) return send(res, 400, { code: 'bad_request', message: 'The request was not valid: ' + checked.error + '.' });
     const today = 'lim:' + new Date().toISOString().slice(0, 10) + ':playtest:*site';
-    if (playtestCap > 0 && (await kv.incr(today, 1, 2 * 86400)) > playtestCap) {
+    if (!sponsored && playtestCap > 0 && (await kv.incr(today, 1, 2 * 86400)) > playtestCap) {
       await kv.incr(today, -1, 2 * 86400);
       return send(res, 429, { code: 'daily_limit', message: 'Play-test reviews have reached today’s limit for this site.' });
     }
     const r = checked.req, content = [];
     r.shots.forEach((data, i) => content.push({ type: 'text', text: ['Title screen:', 'During play:', 'Later in play:'][i] || 'Screenshot:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }));
     content.push({ type: 'text', text: H.playtestTask(r) });
+    const params = { model: models.free, max_tokens: 500, system: [{ type: 'text', text: H.PLAYTEST_PROMPT, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content }] };
+    const admission = sponsored ? await sponsoredReview(req, res, 'playtest', params, playtestCap) : null;
+    if (sponsored && !admission) return;
+    const ctl = new AbortController(); let finished = false;
+    res.on('close', () => { if (!finished) ctl.abort(); });
+    if (res.destroyed) { ctl.abort(); if (admission) admission.slot.release(); return; }
     let text = '';
     try {
-      const stream = client.beta.messages.stream({ model: models.free, max_tokens: 500, system: [{ type: 'text', text: H.PLAYTEST_PROMPT, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content }] });
+      const stream = client.beta.messages.stream(params, { signal: ctl.signal, ...(sponsored ? { maxRetries: 0 } : {}) });
       for await (const ev of stream) if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') text += ev.delta.text;
-      await stream.finalMessage();
+      const msg = await stream.finalMessage();
+      if (admission && !ctl.signal.aborted) await admission.funds.settle(msg).catch((e) => log({ error: 'funding settlement: ' + (e && e.message) }));
     } catch (e) {
       log({ playtest: 'error', error: e && (e.status || e.message) });
-      if (playtestCap > 0) await kv.incr(today, -1, 2 * 86400).catch(() => {});
+      if (!sponsored && playtestCap > 0) await kv.incr(today, -1, 2 * 86400).catch(() => {});
       return send(res, 503, { code: 'unavailable', message: 'The play-test review is not available right now.' });
-    }
+    } finally { finished = true; if (admission) admission.slot.release(); }
     const v = H.parsePlaytest(text);
     log({ playtest: v.ok ? 'pass' : 'fix', problems: v.problems.length });
     return send(res, 200, { ok: v.ok, problems: v.problems });
@@ -388,10 +454,13 @@ export function createServer(opts = {}) {
       if (path === '/api/playtest') return req.method === 'POST' ? await playtest(req, res) : send(res, 405, { code: 'bad_request', message: 'Use POST.' });
       if (path === '/api/status') {
         // Also Render's health check: report the site as up even if the build-count store is briefly unreachable.
-        const info = await planInfo(req).catch((e) => { log({ error: 'limits: ' + (e && e.message) }); return { plan: 'free', caps: { new: daily, edit: dailyEdits }, left: { new: 0, edit: 0 } }; });
-        return send(res, 200, { ai: !!client, gallery: !!gallery, chain: chain ? chain.site.cluster : null, models: client ? models : null, plan: info.plan, daily: info.caps.new, left: info.left.new, edits: { daily: info.caps.edit, left: info.left.edit }, until: info.plan === 'pro' ? await plans.until(info.uid) : 0, pro: client ? await plans.offer(info.uid) : null });
+        const info = await planInfo(req).catch((e) => { log({ error: 'limits: ' + (e && e.message) }); return { unavailable: true, plan: sponsored ? 'sponsored' : 'free', caps: Object.assign({ new: daily, edit: dailyEdits }, sponsored ? reviewCaps : {}), left: { new: 0, edit: 0, screen: 0, playtest: 0 } }; });
+        const budget = sponsored ? await fundingStatus().catch((e) => { log({ error: 'funding: ' + (e && e.message) }); return { capUsd: opts.aiBudgetUsd === undefined ? 400 : opts.aiBudgetUsd, reservedUsd: null, remainingUsd: null, available: false, unavailable: true }; }) : null;
+        const next = new Date(); next.setUTCHours(24, 0, 0, 0);
+        return send(res, 200, { ai: !!client && (!sponsored || (budget.available && !info.unavailable)), gallery: !!gallery, chain: chain ? chain.site.cluster : null, models: client ? models : null, plan: info.plan, sponsored, best: sponsored, daily: info.caps.new, left: info.left.new, edits: { daily: info.caps.edit, left: info.left.edit }, ...(sponsored ? { allowancesUnavailable: !!info.unavailable, resetAt: +next, budget, reviews: { screen: { daily: info.caps.screen, left: info.left.screen }, playtest: { daily: info.caps.playtest, left: info.left.playtest } } } : {}), until: info.plan === 'pro' ? await plans.until(info.uid) : 0, pro: client ? await plans.offer(info.uid) : null });
       }
       if (path === '/api/pro') {
+        if (sponsored) return send(res, 404, { code: 'not_found', message: 'Hosted creation is sponsored and free. Pro passes are not sold on this site.' });
         if (req.method !== 'POST') return send(res, 405, { code: 'bad_request', message: 'Use POST.' });
         let body;
         try { body = JSON.parse(await readBody(req, 4096)); } catch (e) { return send(res, 400, { code: 'bad_request', message: 'The request was not valid JSON.' }); }
@@ -411,10 +480,11 @@ export function createServer(opts = {}) {
 /* Run directly: node server/server.mjs */
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const env = process.env;
+  const sponsored = env.GP_SPONSORED !== '0';
   let client = null;
   if (env.ANTHROPIC_API_KEY) {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    client = new Anthropic();
+    client = new Anthropic({ maxRetries: sponsored ? 0 : 2, ...(sponsored ? { baseURL: 'https://api.anthropic.com' } : {}) });
   } else {
     console.warn('ANTHROPIC_API_KEY is not set, so the AI studio is off. Kits, publishing and scores still work.');
   }
@@ -442,13 +512,21 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (cc) console.log('Payments run on Solana ' + cc.cluster + '; protocol fees go to ' + cc.treasury);
   const proSol = env.GP_PRO_PRICE_SOL === undefined || env.GP_PRO_PRICE_SOL === '' ? 0.1 : Number(env.GP_PRO_PRICE_SOL);
   if (!(proSol >= 0 && proSol <= 1000)) throw new Error('GP_PRO_PRICE_SOL must be a number of SOL, like 0.1 (0 turns Pro off)');
-  if (chain && client && proSol > 0) console.log('Pro passes cost ' + proSol + ' SOL for ' + (Number(env.GP_PRO_DAYS) || 30) + ' days, paid to ' + cc.treasury);
+  if (!sponsored && chain && client && proSol > 0) console.log('Pro passes cost ' + proSol + ' SOL for ' + (Number(env.GP_PRO_DAYS) || 30) + ' days, paid to ' + cc.treasury);
+  // An ephemeral filesystem cannot keep a lifetime spending cap across replacement instances.
+  // A durable data directory is an explicit operator choice on every host; Upstash needs no disk.
+  const aiKv = !(env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN) && !(env.GP_DATA_DIR && env.GP_DATA_PERSISTENT === '1') ? Object.assign({}, store.kv, { persistent: false }) : store.kv;
   const server = createServer({
     gallery,
     chain,
     root: env.GP_ROOT,
     client,
-    kv: store.kv,
+    kv: aiKv,
+    sponsored,
+    aiBudgetUsd: env.GP_AI_BUDGET_USD === undefined ? 400 : Number(env.GP_AI_BUDGET_USD),
+    dailyScreens: env.GP_DAILY_SCREENS === undefined ? undefined : Number(env.GP_DAILY_SCREENS),
+    dailyPlaytests: env.GP_DAILY_PLAYTESTS_USER === undefined ? undefined : Number(env.GP_DAILY_PLAYTESTS_USER),
+    networkMultiplier: Number(env.GP_NETWORK_MULTIPLIER) || undefined,
     pro: { price: Math.round(proSol * 1e9), days: Number(env.GP_PRO_DAYS) || undefined, daily: Number(env.GP_PRO_BUILDS) || undefined, dailyEdits: Number(env.GP_PRO_EDITS) || undefined },
     models: { freeNew: env.GP_MODEL_FREE_NEW || undefined, free: env.GP_MODEL_FREE || undefined, new: env.GP_MODEL_NEW || undefined, edit: env.GP_MODEL_EDIT || undefined },
     daily: Number(env.GP_DAILY_BUILDS) || undefined,

@@ -1,11 +1,12 @@
-# One-click hosting on Render: https://render.com/deploy?repo=https://github.com/gtjvv976mb-netizen/GamePlay
+# One-click hosting on Render: https://render.com/deploy?repo=https://github.com/gtjvv976mb-netizen/ClaudePlay
 # Render asks for ANTHROPIC_API_KEY when you create the service; it is stored in Render, never in this repo.
 services:
   - type: web
     name: gameplay
     runtime: node
     # Free: the instance sleeps after 15 minutes without visitors and takes about a minute to wake.
-    # Published games are kept in a free Upstash Redis database (below), because free instances have no disk.
+    # Upstash Redis is required for the shared gallery, user limits and lifetime AI budget.
+    # The free instance's local files disappear on restarts, deploys and idle spin-down.
     plan: free
     buildCommand: npm ci && node build.mjs
     startCommand: npm start
@@ -18,8 +19,8 @@ services:
         sync: false
       - key: NODE_VERSION
         value: "22"
-      # From your free Upstash Redis database (console.upstash.com → your database → REST API).
-      # Without them, published games are lost whenever the free instance restarts.
+      # From a durable Upstash Redis database (console.upstash.com → your database → REST API).
+      # Keep this database across deploys: the $400 budget counter must never reset.
       - key: UPSTASH_REDIS_REST_URL
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
@@ -30,27 +31,39 @@ services:
       # Render overwrites the first X-Forwarded-For entry with the real visitor address.
       - key: GP_TRUST_PROXY
         value: "1"
-      # Free plan: new games per visitor per day, built by Claude Sonnet 5.5 (about $0.20-0.40 a game).
+      # Everyone gets hosted AI access without a paid pass or their own Claude account.
+      - key: GP_SPONSORED
+        value: "1"
+      # Lifetime USD cap for this platform's Claude requests, not a daily/monthly allowance.
+      # The server reserves a conservative maximum before each call and settles valid usage.
+      - key: GP_AI_BUDGET_USD
+        value: "400"
+      # Do not attest ephemeral Render storage as persistent. Sponsored AI must fail closed
+      # if the durable Upstash budget store is missing or unavailable.
+      - key: GP_DATA_PERSISTENT
+        value: "0"
+      # UTC daily account allowances; a shared network gets 10 times these ceilings.
+      # Anonymous requests without a gallery key retain the per-user allowance.
+      - key: GP_NETWORK_MULTIPLIER
+        value: "10"
       - key: GP_DAILY_BUILDS
         value: "2"
-      # Free new games per day across the whole site, so a public link cannot run up your API bill.
-      - key: GP_DAILY_TOTAL
-        value: "40"
-      # Free plan: changes to a game per visitor per day, on Claude Haiku 5.5 (about $0.02 each), and the site-wide cap.
       - key: GP_DAILY_EDITS
         value: "20"
+      - key: GP_DAILY_SCREENS
+        value: "20"
+      - key: GP_DAILY_PLAYTESTS_USER
+        value: "40"
+      # Additional whole-site daily caps protect capacity; the lifetime budget covers every AI endpoint.
+      - key: GP_DAILY_TOTAL
+        value: "40"
       - key: GP_DAILY_EDIT_TOTAL
         value: "300"
-      # Pro pass: paid in SOL from the player's wallet straight to GP_TREASURY. Unlocks Claude Sonnet 5.5
-      # "best" builds, GP_PRO_BUILDS new games and GP_PRO_EDITS changes a day for GP_PRO_DAYS days. Needs GP_TREASURY; 0 turns Pro off.
+      - key: GP_DAILY_PLAYTESTS
+        value: "1000"
+      # Sponsored mode disables paid Pro. Zero also keeps paid passes off if legacy mode is selected later.
       - key: GP_PRO_PRICE_SOL
-        value: "0.1"
-      - key: GP_PRO_DAYS
-        value: "30"
-      - key: GP_PRO_BUILDS
-        value: "10"
-      - key: GP_PRO_EDITS
-        value: "60"
+        value: "0"
       # Collects and tips are real Solana payments on this network. Devnet uses free test SOL.
       # Mainnet (real money) also needs GP_ALLOW_MAINNET=yes, and only after the checklist in SECURITY.md.
       - key: GP_SOLANA_CLUSTER

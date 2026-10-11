@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "node server/server.mjs",
-    "test": "node test/core.test.mjs && node test/solana.test.mjs && node test/server.test.mjs",
+    "test": "node test/core.test.mjs && node test/solana.test.mjs && node test/server.test.mjs && node test/budget-store.test.mjs && node --test test/sponsored.test.mjs",
     "serve": "cd dist && python3 -m http.server 8765 --bind 127.0.0.1",
     "e2e": "python3 test/e2e.py /tmp/gameplay-shots"
   },

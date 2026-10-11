@@ -18,6 +18,8 @@ web
 
 ClaudePlay is a free, open alternative to Google Labs Playground with an earning layer on Solana. Anyone can play browser games, make one by describing it to Claude or tuning a kit, publish it as a signed, content-addressed cartridge, and earn from collects, tips and remix royalties. Success is a stranger going from the front page to a game they made, playing it, and sending the link to a friend.
 
+The hosted platform offers every creator its full creation tools for free, including best builds, uploaded pictures, edits, fixes, play-tests, remixes and publishing. Sponsored Claude API use has daily allowances per creator and one shared $400 lifetime funding limit. There is no paid Pro or Sparks requirement for hosted creation. Optional collects and tips retain the existing creator earning rules. When AI funding pauses, saved games, kits, downloads and other free features remain available; publishing a changed file still needs its safety check.
+
 ## Positioning
 
 - The game you make is yours: a single signed file you can download, play offline and self-host.

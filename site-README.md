@@ -34,7 +34,7 @@ To use your own domain (for example `gameplay.example`), add it in the host's do
 
 ## What needs more work
 
-- **AI studio.** Describing games in words needs the ClaudePlay server (`server/server.mjs` in the source repository), which holds your Claude API key and limits builds per visitor. On a static host without it, the page tells visitors to tune a kit instead.
+- **AI studio.** Describing games in words needs the ClaudePlay server (`server/server.mjs` in the source repository), which keeps the owner's Claude API key private. Hosted creation is free within daily creator allowances and a shared $400 lifetime API budget, including best builds, edits and reviews. A durable budget database is required; see the source repository's README for setup. On a static host without the server, the page tells visitors to tune a kit instead.
 - **Shared gallery.** On a static host, games published by a visitor stay in that visitor's browser. The ClaudePlay server (`server/server.mjs` in the source repository) keeps a shared gallery so everyone sees every game.
 - **Contact button.** To show a contact button on the Business page, open `index.html`, search for `window.GP_SITE`, and put your email address or an `https://` booking link in `contact`. If you build from source, `GP_CONTACT=hello@example.com node build.mjs` does the same.
 
