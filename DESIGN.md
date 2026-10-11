@@ -1,48 +1,62 @@
-# Design
+# Illustrated floating-world portal
 
-ClaudePlay is calm and professional: soft silver-grey surfaces, one muted slate-blue accent, Geist type, pill controls and quiet depth. A 3D game drives itself behind the front page in muted colors. The owner asked for "visually appealing but not saturated" and "professional" (2026-10-10), after turning down a loud night arcade and a chartreuse sticker pack. Tokens live in `src/index.html`; every colour on the page comes from them.
+The owner's latest direction replaces the kinetic workshop proposal with a game-first illustrated-world interface, informed by the official Google Labs Playground reference at https://labs.google/playground. This is a new ClaudePlay design, not a recovered Claude patch or a copy of Google's assets, branding or product.
 
-## World
+ClaudePlay should make its purpose immediate: create a game, play a game, remix it and share it. Independent high-resolution floating-island art, smooth rounded lettering, real game previews and useful creation controls carry that purpose across all ten routes. The owner approved the illustrated world and its animation, then clarified that the world must be the interface itself: remove the top navigation tabs, place the title and destination lettering in the scene, and integrate translucent tools into the world. The owner subsequently rejected enlarged panorama fragments and pixel lettering. Islands, clouds and flying cars now require complete standalone alpha images, smooth detailed surfaces and responsive framing. This direction supersedes both the deployed panorama composition and the previous pixel-lettered interface preview.
 
-- **Ground** (`--bg`, `--sheet`, `--panel`, `--panel-2`): cool silver-grey and white in light mode, graphite in dark mode. No saturated fields anywhere.
-- **Ink fill** (`--pack`, `--pack-ink`): primary buttons and the logo square are filled with the ink colour (near-black in light, near-white in dark). In the contrast theme it turns yellow on black.
-- **Surfaces over the game** (`--die`, `--die-ink`, `--die-ink-2`): the panels that sit on the background game (the copy card, the console, the game rail labels).
-- **Accent** (`--accent`, `--accent-soft`): a muted slate blue tuned for text contrast in each theme. "Own it.", focus rings, link underlines, the focused prompt, list dots.
-- **World** (`--w-*`): the background game's palette. Pale sky, soft grid, dusty pastels in light mode; a graphite night with muted pastels in dark mode.
+## Visual language
 
-## Type
+- Light mode uses translucent cream glass with navy text. Dark mode uses translucent slate/navy glass and readable pale text. Scene titles use smooth rounded lettering with a thin contrasting edge against the moving art. High contrast keeps its explicit black, white, yellow and cyan choices and opaque surfaces.
+- Outfit provides smooth rounded forms for the logo and major headings, with Trebuchet/Segoe UI sans-serif fallbacks. Space Grotesk keeps forms, instructions and body text readable. Geist Mono identifies genuine addresses, signatures and numeric records. All have local fallbacks.
+- The optional Google Fonts stylesheet begins with a nonmatching media condition, switches on its native load event, and uses font-display swap. Fonts never gate first paint or essential interaction. Loaded-font verification waits for the optional stylesheet before checking font faces.
+- Cyan, orange and lime are gameplay accents. Required small text uses the contrast-tested theme tokens; accent color alone never communicates selection or status.
+- Game cards lead with real game art, readable names and maker information. Mechanical grooves, barcodes, cartridge-shell decoration and condensed editorial typography have been removed.
+- Tools stay plain enough to use: generous inputs, clear tabs, rounded panels, distinct buttons, genuine data and recognizable game previews. Rounded display type does not replace readable body text or reduce caption sizes.
 
-- **Geist** (400 to 700) for everything. Headings are weight 600, sentence case, tight tracking (about -.02em to -.035em). Labels and controls are weight 500. No uppercase display type.
-- **Geist Mono** only for real data: hashes, addresses, signed bytes.
+## Home composition
 
-## Shape and depth
+The first pane opens onto a persistent floating world assembled from four independent alpha images in `src/assets/world-hd/`. The original `src/assets/play-world-v1.webp` is retained as a historical reference, with no live panorama slicing. The brand and Make a game lettering stand in the scene; the large opaque hero card and top navigation strip are removed. A compact translucent creation prompt occupies the left side while destinations are placed at the islands: Make a game on the forest, Play games on the castle, Your wallet on the race/coast and World ledger on the city. Economy and business remain accessible. Four general ideas cover a runner, tower defense, racing and a cozy puzzle. The home does not lead with crypto-only prompts.
 
-- Radii: `--r-s` 8px (inputs, small controls), `--r-m` 12px (tiles), `--r-l` 20px (panels, the console, tables). Buttons, chips, tabs, segmented controls, nav items and the footer bar are pills.
-- Surfaces have a 1px `--line` border and diffuse two-layer shadows (`--shadow` is faint). No glows.
-- The front page's copy card and console use a double bezel: a translucent 6px ring and a hairline outside the panel.
-- The active nav item, tab and segment is a raised white pill with a hairline ring.
-- Game art sits in a hairline frame (`.sticker`, a historical class name). On hover it lifts a few pixels and a faint light sweep crosses the art.
-- The header is translucent with a backdrop blur.
+An accessible navigation layer lives beside the decorative world, outside its `aria-hidden` tree and outside fitted page content. Destination links use the existing routes and trigger the same persistent camera journey. Other pages and narrow/short viewports offer a compact Visit island map and World map return, preserving every destination without a header tab row. Whenever a later Home pane is visible, including alongside the invitation on very large screens, island lettering parks in that map to keep game controls clear. Accessibility and wallet controls remain available as small floating world tools.
 
-## Motion
+Each island is a complete native 1254×1254 alpha render; cloud/car assets are native 1536×1024. Website builds load same-resolution local WebP files and standalone pages embed them. No upscaling is represented as new detail. A smooth CSS sky and independent cloud layers replace the low-resolution panorama sky. Art cannot intercept input and carries no essential information.
 
-- Easing is `cubic-bezier(.32, .72, 0, 1)` or `(.16, 1, .3, 1)`; nothing bounces.
-- **One screen, every page**: the window never scrolls (`:root[data-fit]`, the default Page layout). `fitPanes()` in app.js groups a page's blocks into panes that fit the window and adds a pager (dots, the part's name, up and down buttons); the wheel, a vertical swipe and Page Up/Down flip parts with a short slide. On phones, single-column layouts split into their columns, and game shelves become a sideways swipe row. The game page and the studio stay with their title and let each column hold its own overflow; any other block taller than the window keeps its own scroll box. The Page layout setting ("Scrolling pages") brings back long pages.
-- The front page on wide screens is the header, the copy card and console over the game, the game rail and a one-line footer, sized from the window height (`:root[data-route="home"]`).
-- **The background is a game**: a kart cruises down a track through a city of cartridges, grabbing coins and jumping blocks (`homeWorld()` in app.js, raw WebGL). It is tuned slow (speed 14 to 20), with small bursts and little camera shake. It drives itself; moving the mouse steers it and clicking an empty spot jumps. It holds still while the console game has focus, draws one still frame in calm motion, and is skipped in the contrast theme and on software rendering. Text never sits on it directly.
-- **Depth**: the copy card, the console (a slight 3D tilt) and Cart shift gently with the pointer (`packDepth()`, `--px`/`--py`).
-- **Entrances**: panels and tiles rise and fade in (`@keyframes pop`, `rise`); the console fades in.
-- Calm motion and `prefers-reduced-motion` switch every animation and transition off; content is visible without them.
+The decorative `#site-world` host lives outside `#view`, so the page fitter cannot treat it as a content pane. One persistent viewport-sized camera arranges four whole island images using shared responsive geometry. Each route chooses and fits its complete island within the viewport, preserving towers and terrain undersides; Home returns to the overview. Image layers use contain sizing and normal sampling, with native-resolution limits on large screens. Navigation lettering shares the same island anchors. Clouds and cars move independently of island zoom. Camera and decorative motion remain independent of creation and gameplay.
 
-## Components
+The next pane contains a real playable Neon Dash game with readable instructions and a leaderboard link. A direct Play Neon Dash action is also available from the invitation. The following pane opens real starter and community games through larger visual cards. The default fitted layout treats these three home sections as panes at all widths; the Scrolling pages preference presents them in sequence.
 
-- `.pack`: the front page layout over the background game. `.hero-copy` is the copy card; the open middle column is where the kart drives; `.pack-shelf` is the game rail.
-- `.console`: the playable game in a framed panel.
-- `.mascot`: Cart, with its white die-cut border baked into `src/assets/mascot*.webp`.
-- `.flow-list`, `.ways`: label-and-text rows, used instead of rows of equal cards.
+## Whole-site surfaces
 
-## Rules
+| Surface | Composition |
+| --- | --- |
+| Home | A visual illustrated world, an idea-to-game prompt, a direct play action, a real playable game and an art-led discovery shelf. |
+| Explore | Large game art, readable titles and maker details, genuine tags, all filters and clear empty states. |
+| Player | A large actual player with clear actions, remix tools and the existing leaderboard, game details, splits and lineage tabs. |
+| Studio | Readable guided and direct creation tools, kit controls, drafts, versions, preview and publishing. Dark mode is a restrained navy/slate creation surface. |
+| Maker | A community profile with real identity, follow controls, statistics and games. |
+| Friends board | A readable invite, membership and score surface with the existing group controls. |
+| Wallet | Clear balances, identity, collection and activity. Optional payments remain separate from free creation. |
+| Ledger | Compact, selectable transaction data and the existing verification details. |
+| Economy | Readable actual values, the accessible horizontally scrollable emission chart, existing reward explanations and optional collect/tip rules. |
+| Business | A real branded game preview, practical offers, process and contact actions in the same playful visual language. |
+| Settings | The existing accessible dialog, complete preference choices, immediate feedback and readable controls. |
 
-- No eyebrow labels above page headings, no numbered steps, no rows of three equal cards.
-- No em dashes in copy.
-- Every theme (light, dark, contrast) must pass the e2e contrast audit, and nothing may scroll sideways at 390px with the largest text.
+The page shell and title wrappers are transparent. Creation forms, Studio columns, player controls, financial data and footer notices use bounded translucent glass with backdrop filtering and strengthened small-text colors. The moving world remains visible through and around those surfaces. Required text contrast must be reviewed against the composite glass, including extreme light/dark backdrops; blur alone is not a contrast guarantee. Scene lettering uses complete opaque outlines, while dialog lettering keeps ordinary theme colors. High contrast, forced colors and reduced-transparency preferences use opaque surfaces and clear controls.
+
+## Motion and reliability
+
+The whole-site world uses native CSS transforms and the standalone illustrated assets. Individual island layers float gently, clouds drift at separate depths and flying vehicles cross the sky. Waterfalls and island details are part of each native image; they are not separately animated layers. The background is fixed to the viewport, ignores pointer input, stays outside the accessibility tree and never participates in fitted content measurements.
+
+Route changes select a curated view of an individual island. The camera transition uses bounded translate/scale motion rather than scroll hijacking, then settles while the selected island continues its gentle local animation. Match my device honors reduced-motion preferences; Reduce motion always shows the destination immediately and parks decorative movement. Full motion is an explicit opt-in that overrides device reduction for the moving world and page entrances. High contrast and forced colors keep a plain theme background and solid controls even with Full motion selected. Hidden pages, dialogs, game focus and text-input focus pause decoration. Lifecycle cleanup removes the background's owned listeners, observers and animation work.
+
+The retained `src/workshop-scene.js` and `window.PPWorkshop` native 3D scene remain a separate compatibility module. The new full-site background does not depend on WebGL or third-party runtime libraries; its static view remains available if animation is unavailable.
+
+Brief route/dialog entrances, game-card lifts and button feedback support interaction. Calm motion removes decorative travel and entrance effects. Game controls, assist preferences and sound remain independent of decoration. No external runtime library, external script, paid generation service or scroll hijacking is introduced.
+
+## Compatibility and acceptance
+
+Preserve every route, selector, form, action, test hook, feature, unofficial-project notice and accessibility setting. The emitted SDK/game documents, starter hashes, signing domains, storage keys, Solana handling, server screening and permanent $400 sponsored funding cap are outside this visual change.
+
+Fitted panes and inner scrolling must keep all controls reachable at 390px, including the largest text size. World navigation and floating tools must not cover form, game or pager hit targets. Hidden labels remain contained by the Studio scroll area. Tall static panes and chart scroll regions retain keyboard access. The floating Accessibility button has a permanent accessible name even when its visible text is hidden; the logo's natural accessible name includes whichever badge is visible.
+
+Before release, review the first built desktop and phone screenshots with the owner for the requested visual direction. Then run all ten routes, both layouts, all themes, largest phone text, loaded and blocked fonts, native scene failure/reduced-motion/lifecycle checks, sponsored-funded/exhausted/offline creation, draft recovery and existing signing/game checks. Earlier workshop audit passes do not establish acceptance for this replacement design. No deployment is authorized by this file.

@@ -1,0 +1,305 @@
+/* Illustrated-world interface. The world carries the headings; only working surfaces
+   add glass. Existing route, form and fitter selectors remain unchanged. */
+body.world-interface {
+  --wi-glass: color-mix(in srgb, var(--panel) 80%, transparent);
+  --wi-glass-top: color-mix(in srgb, var(--panel) 88%, transparent);
+  --wi-glass-line: color-mix(in srgb, var(--ink) 22%, transparent);
+  --wi-glass-shadow: 0 12px 32px -22px rgba(12, 32, 48, .6);
+  --wi-letter: #fffdf0;
+  --wi-edge: #14334b;
+  --wi-type-shadow: -1px -1px 0 var(--wi-edge), 0 -1px 0 var(--wi-edge), 1px -1px 0 var(--wi-edge), -1px 0 0 var(--wi-edge), 1px 0 0 var(--wi-edge), -1px 1px 0 var(--wi-edge), 0 1px 0 var(--wi-edge), 1px 1px 0 var(--wi-edge), 0 3px 0 var(--wi-edge), 0 6px 12px rgba(12,32,48,.18);
+  --muted: var(--ink-2);
+  --wi-top: 96px;
+  --wi-bottom: 86px;
+  background: var(--bg);
+}
+.world-interface .wrap {
+  max-width: 1440px;
+  width: 100%;
+  padding: calc(var(--wi-top) + env(safe-area-inset-top, 0px)) 36px calc(var(--wi-bottom) + env(safe-area-inset-bottom, 0px));
+}
+:root[data-fit] .world-interface .wrap {
+  padding-block: calc(var(--wi-top) + env(safe-area-inset-top, 0px)) calc(var(--wi-bottom) + env(safe-area-inset-bottom, 0px));
+}
+.world-interface .world-brand {
+  position: fixed;
+  inset: calc(24px + env(safe-area-inset-top, 0px)) auto auto 36px;
+  z-index: 25;
+  width: fit-content;
+  max-width: calc(100% - 72px);
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.world-interface .world-brand .mark {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  min-height: 0;
+  pointer-events: auto;
+  color: var(--wi-letter);
+}
+.world-interface .world-brand .mark b {
+  font: 800 clamp(1.25rem, 2.2vw, 1.85rem)/1.15 var(--display);
+  letter-spacing: -.025em;
+  color: var(--wi-letter);
+  text-shadow: var(--wi-type-shadow);
+}
+.world-interface .world-brand .mark b::before { display: none; }
+.world-interface .world-brand .mark span {
+  display: block;
+  width: auto;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: 600 .65rem/1.3 var(--mono);
+  color: var(--wi-letter);
+  text-shadow: var(--wi-type-shadow);
+}
+.world-interface .world-tools {
+  position: fixed;
+  inset: auto 28px calc(22px + env(safe-area-inset-bottom, 0px)) auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  max-width: min(480px, calc(100% - 56px));
+  z-index: 25;
+}
+.world-interface .world-tools .hbtn,
+.world-interface .world-tools .wchip {
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 13px;
+  border-radius: 14px;
+  background: linear-gradient(140deg, var(--wi-glass-top), var(--wi-glass));
+  border: 1px solid var(--wi-glass-line);
+  box-shadow: var(--wi-glass-shadow), inset 0 1px 0 color-mix(in srgb, var(--panel) 70%, transparent);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+}
+.world-interface .world-tools .hbtn:hover,
+.world-interface .world-tools .wchip:hover { background: color-mix(in srgb, var(--panel) 94%, transparent); }
+
+/* Lettering belongs to the landscape rather than a title card. */
+.world-interface :is(.page-head, .gp-head, .section-head, .pack-shelf-head) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  color: var(--wi-letter);
+}
+.world-interface :is(.page-head h1, .gp-head h1, .page-title, .section-head h2, .pack-shelf-head h2, .section > h2) {
+  color: var(--wi-letter);
+  letter-spacing: -.025em;
+  text-shadow: var(--wi-type-shadow);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+.world-interface :is(.page-head, .gp-head) { width: 100%; gap: 12px; }
+.world-interface .gp-head { margin-bottom: 22px; }
+.world-interface .studio-heading { width: fit-content; }
+.world-interface .section-head { align-items: start; gap: 10px 20px; }
+.world-interface :where(#view) .page-kicker {
+  color: var(--wi-letter);
+  text-shadow: var(--wi-type-shadow);
+}
+.world-interface :is(.page-head > p, .gp-head > p, .page-head > .stack > p, .section-head > p, .pack-copy > .lede):not(.page-kicker) {
+  width: fit-content;
+  max-width: 58ch;
+  padding: 9px 13px;
+  border: 1px solid var(--wi-glass-line);
+  border-radius: 10px;
+  background: linear-gradient(145deg, var(--wi-glass-top), var(--wi-glass));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--ink-2);
+  text-shadow: none;
+}
+.world-interface :is(.page-head .facts, #view > .facts) {
+  width: fit-content;
+  max-width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--wi-glass-line);
+  border-radius: 14px;
+  background: linear-gradient(145deg, var(--wi-glass-top), var(--wi-glass));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--ink);
+}
+.world-interface :is(.section-head > a, .pack-shelf-head > a, .section-head > .row) {
+  border-radius: 10px;
+  padding: 8px 11px;
+  background: var(--wi-glass-top);
+  color: var(--ink);
+  text-shadow: none;
+}
+.world-interface :is(.gp-head > a, .page-head > .stack > a) {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--wi-glass-line);
+  border-radius: 10px;
+  background: linear-gradient(145deg, var(--wi-glass-top), var(--wi-glass));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--ink);
+  font-size: .875rem;
+  font-weight: 600;
+  text-shadow: none;
+}
+
+/* Local glass lets clouds and island colors show through around useful content. */
+.world-interface :is(.panel, .gp-side, .gp-main, .st-left, .st-right, .table-wrap, .spec, .empty, .way, .feature-grid li, .section > .steps li, .foot, .foot-mini, .biz .hero-copy, .biz .console, .pack .stage3d, .pack .console, .cart, :where(#view) > p, .remix-box) {
+  background: linear-gradient(145deg, var(--wi-glass-top), var(--wi-glass));
+  border-color: var(--wi-glass-line);
+  box-shadow: var(--wi-glass-shadow), inset 0 1px 0 color-mix(in srgb, var(--panel) 70%, transparent);
+  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
+  color: var(--ink);
+}
+.world-interface :is(.st-left > .panel, .gp-side > .panel, .closing .panel, .cart-title, .cart-body) {
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.world-interface .banner { background: linear-gradient(145deg, var(--wi-glass-top), var(--wi-glass)); }
+.world-interface :is(.st-left .chat, #st-publish, .msg.me, .st-left .banner) { background: color-mix(in srgb, var(--panel) 68%, transparent); }
+.world-interface :is(.table-wrap, .spec) { background: color-mix(in srgb, var(--panel) 88%, transparent); }
+.world-interface table.data tbody tr:nth-child(even):not(.detail) { background: color-mix(in srgb, var(--panel-2) 55%, transparent); }
+.world-interface .foot { border-radius: 14px; font-size: .8rem; }
+.world-interface .foot-mini { font-size: .7rem; }
+.world-interface .cart { box-shadow: var(--wi-glass-shadow); }
+.world-interface .cart:hover { box-shadow: 0 16px 32px -16px var(--shadow); }
+.world-interface .pack .cart-title { padding: 10px 14px 14px; }
+.world-interface .pager {
+  flex-shrink: 0;
+  background: linear-gradient(145deg, var(--wi-glass-top), var(--wi-glass));
+  border-color: var(--wi-glass-line);
+  box-shadow: var(--wi-glass-shadow);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* An open invitation in the sky, with a compact prompt dock at its feet. */
+.world-interface .pack { width: 100%; background: transparent; border: 0; box-shadow: none; }
+.world-interface .pack .hero-copy {
+  width: 100%;
+  min-height: min(610px, calc(100svh - 220px));
+  padding: 0 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--wi-letter);
+  isolation: auto;
+  overflow: visible;
+}
+.world-interface .pack .hero-copy::after { display: none; }
+.world-interface .pack .hero-copy > :is(.pack-copy, .pack-prompt) { width: min(420px, 100%); }
+.world-interface .pack-copy { display: grid; gap: 10px; background: transparent; border: 0; box-shadow: none; }
+.world-interface .pack .hero-title,
+.world-interface .pack .hero-title .hl {
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  line-height: 1.04;
+  color: var(--wi-letter);
+  letter-spacing: -.025em;
+  font-weight: 800;
+  text-shadow: var(--wi-type-shadow);
+}
+.world-interface .pack-copy .lede { font-size: .9rem; padding: 9px 12px; }
+.world-interface .pack .pack-copy .page-kicker { padding: 0; background: transparent; color: var(--wi-letter); font-size: .72rem; }
+.world-interface .pack-prompt {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  padding: 14px;
+  border: 1px solid var(--wi-glass-line);
+  border-radius: 18px;
+  background: linear-gradient(145deg, var(--wi-glass-top), var(--wi-glass));
+  box-shadow: var(--wi-glass-shadow), inset 0 1px 0 color-mix(in srgb, var(--panel) 75%, transparent);
+  backdrop-filter: blur(10px) saturate(1.08);
+  -webkit-backdrop-filter: blur(10px) saturate(1.08);
+  color: var(--ink);
+}
+.world-interface .pack .maker { width: 100%; gap: 8px; }
+.world-interface .pack .maker-box { padding: 8px; border: 1px solid var(--wi-glass-line); background: color-mix(in srgb, var(--panel) 70%, transparent); box-shadow: none; }
+.world-interface .pack .maker-box textarea { min-height: 64px; padding: 7px 6px; background: transparent; border: 0; font-size: .9rem; }
+.world-interface .pack .maker-bar { gap: 7px; }
+.world-interface .pack .maker-bar .btn { min-height: 40px; padding: 9px 12px; font-size: .82rem; }
+.world-interface .pack .maker-bar .seg { background: color-mix(in srgb, var(--sheet) 74%, transparent); }
+.world-interface .pack .maker-bar .seg button { padding: 8px 10px; font-size: .75rem; }
+.world-interface .pack .maker-ideas { display: flex; gap: 6px; padding: 0; margin: 0; }
+.world-interface .pack .maker-ideas .fine { flex-basis: 100%; color: var(--ink-2); font-size: .7rem; }
+.world-interface .pack .maker-ideas .chip { padding: 7px 8px; background: color-mix(in srgb, var(--panel) 74%, transparent); color: var(--ink-2); border-color: var(--wi-glass-line); font-size: .68rem; }
+.world-interface .pack-prompt > .btn { justify-self: start; min-height: 36px; font-size: .78rem; padding: 8px 12px; }
+:root[data-fit] .world-interface .pack .hero-copy.fit-tall { min-height: 0; height: var(--fit-h); overflow: auto; padding-right: 9px; padding-bottom: 4px; }
+.world-interface .pack .pack-shelf-head { background: transparent; border: 0; box-shadow: none; padding: 0; }
+
+@media (max-width: 960px) {
+  .world-interface .wrap { padding-inline: 22px; }
+  .world-interface .world-brand { left: 22px; }
+  .world-interface .pack .hero-copy { min-height: min(560px, calc(100svh - 224px)); }
+  .world-interface .pack .hero-copy > :is(.pack-copy, .pack-prompt) { width: min(400px, 100%); }
+}
+@media (max-width: 560px) {
+  body.world-interface { --wi-top: 96px; --wi-bottom: 122px; }
+  .world-interface .wrap { padding-inline: 16px; }
+  .world-interface .world-brand { top: calc(18px + env(safe-area-inset-top, 0px)); left: 16px; max-width: calc(100% - 168px); }
+  .world-interface .world-brand .mark b { font-size: .98rem; letter-spacing: -.025em; }
+  .world-interface .world-brand .mark span { font-size: .52rem; }
+  .world-interface .world-tools { top: calc(16px + env(safe-area-inset-top, 0px)); right: 14px; bottom: auto; max-width: 142px; gap: 6px; flex-wrap: nowrap; }
+  .world-interface .world-tools .hbtn { padding: 9px; min-width: 42px; }
+  .world-interface .world-tools .hbtn span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .world-interface .world-tools .wchip { min-height: 42px; padding: 8px; font-size: .66rem; gap: 5px; }
+  .world-interface .world-tools .wchip .bal { display: none; }
+  .world-interface .world-tools .wchip .addr { font-size: .6rem; }
+  .world-interface .pack .hero-copy { min-height: min(560px, calc(100svh - 256px)); padding-inline: 0; gap: 16px; }
+  .world-interface .pack .hero-title, .world-interface .pack .hero-title .hl { font-size: 2.5rem; }
+  .world-interface .pack-copy { gap: 8px; }
+  .world-interface .pack-copy .lede { max-width: 36ch; font-size: .85rem; }
+  .world-interface .pack-prompt { padding: 12px; border-radius: 15px; }
+  .world-interface .pack .maker-ideas .chip { font-size: .66rem; padding: 6px 7px; }
+  .world-interface .pack .hero-copy > :is(.pack-copy, .pack-prompt) { width: 100%; }
+  .world-interface :is(.page-head h1, .gp-head h1, .page-title) { font-size: 1.65rem; }
+  .world-interface .section-head { gap: 10px; }
+  .world-interface :is(.gp-head, .page-head) { gap: 10px; }
+  .world-interface .world-brand .mark { gap: 6px; }
+}
+
+/* Transparent decoration never wins over an explicit readability preference. */
+:root[data-gp-theme="contrast"] .world-interface {
+  --wi-glass: var(--panel);
+  --wi-glass-top: var(--panel);
+  --wi-glass-line: var(--line);
+  --wi-letter: var(--ink);
+  --wi-edge: var(--bg);
+  --wi-type-shadow: none;
+}
+:root[data-gp-theme="contrast"] .world-interface :is(.hero-title, .hero-title .hl) { text-shadow: none; }
+:root[data-gp-theme="contrast"] .world-interface :is(.st-left .chat, #st-publish, .msg.me, .banner, .maker-box, .maker-ideas .chip, .table-wrap, .spec, .section-head > a, .pack-shelf-head > a) { background: var(--panel); }
+@media (prefers-reduced-transparency: reduce) {
+  body.world-interface { --wi-glass: var(--panel); --wi-glass-top: var(--panel); --wi-glass-line: var(--line); }
+  .world-interface :is(.st-left .chat, #st-publish, .msg.me, .banner, .maker-box, .maker-ideas .chip, .table-wrap, .spec) { background: var(--panel); }
+}
+@media (forced-colors: active) {
+  body.world-interface { --wi-glass: Canvas; --wi-glass-top: Canvas; --wi-glass-line: CanvasText; --wi-letter: CanvasText; --wi-edge: Canvas; --wi-type-shadow: none; }
+  .world-interface :is(.world-brand .mark b, .world-brand .mark span, .hero-title, .hero-title .hl, .page-kicker, .page-head h1, .gp-head h1, .page-title, .section-head h2, .pack-shelf-head h2, .section > h2) { color: CanvasText; text-shadow: none; }
+  .world-interface :is(.pack-prompt, .panel, .gp-side, .gp-main, .st-left, .st-right, .table-wrap, .spec, .empty, .way, .foot, .foot-mini, .world-tools .hbtn, .world-tools .wchip, .pager) { background: Canvas; border: 1px solid CanvasText; box-shadow: none; }
+}

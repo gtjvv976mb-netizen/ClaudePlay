@@ -49,10 +49,20 @@ async def skip_guide(page, timeout=15000):
     if await page.locator('button[data-act="guide-skip"]').count(): await page.click('button[data-act="guide-skip"]')
     await page.wait_for_selector('#st-prompt', timeout=5000)
 
+async def scene_nav(page, route):
+    # Wide Home has island markers; other views disclose the same destinations in the world map.
+    await page.wait_for_selector('.island-nav', state='attached', timeout=15000)
+    target = page.locator('.island-nav a[data-nav="%s"]:visible' % route)
+    if not await target.count():
+        await page.get_by_role('button', name='Visit island', exact=True).click()
+    await target.first.click()
+    await page.wait_for_function('(route) => window.__pp?.route === route', arg=route)
+
 async def toast_text(page):
     return ' | '.join(await page.locator('.toast').all_inner_texts())
 
 async def play_until_over(page, frame_sel, timeout=12000):
+    await page.locator(frame_sel).scroll_into_view_if_needed()
     box = await page.locator(frame_sel).bounding_box()
     await page.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
 
@@ -123,7 +133,7 @@ async def scenario_local(browser):
     await page.click('button[data-act="tab"][data-tab="splits"]')
     await page.screenshot(path=f'{OUT}/04-game-splits.png', full_page=True)
     # economy settle
-    await page.click('.nav a[data-nav="economy"]')
+    await scene_nav(page, 'economy')
     await page.wait_for_selector('button[data-act="settle"]', timeout=5000)
     await page.screenshot(path=f'{OUT}/05-economy.png', full_page=True)
     await page.click('button[data-act="settle"]')
@@ -136,13 +146,13 @@ async def scenario_local(browser):
     await page.go_back()
     await page.wait_for_timeout(500)
     if not await page.locator('button[data-act="boost"]').count():
-        await page.click('.nav a[data-nav="explore"]'); await page.locator('.cart', has_text='Neon Dash Remix').first.click()
+        await scene_nav(page, 'explore'); await page.locator('.cart', has_text='Neon Dash Remix').first.click()
     await page.click('button[data-act="boost"]')
     await page.click('button[data-act="confirm-boost"][data-amt="10"]')
     await page.wait_for_selector('.toast:has-text("Burned 10 GPLY")', timeout=6000)
     check(True, 'boost burned PARK')
     # wallet page
-    await page.click('.nav a[data-nav="wallet"]')
+    await scene_nav(page, 'wallet')
     await page.wait_for_selector('.balance', timeout=5000)
     await page.fill('#handle-in', 'pixelpilot')
     await page.click('form[data-form="handle"] button')
@@ -150,7 +160,7 @@ async def scenario_local(browser):
     check(True, 'handle saved and shown')
     await page.screenshot(path=f'{OUT}/06-wallet.png', full_page=True)
     # ledger
-    await page.click('.nav a[data-nav="ledger"]')
+    await scene_nav(page, 'ledger')
     await page.wait_for_selector('table.data tbody tr', timeout=5000)
     nrows = await page.locator('table.data tbody tr').count()
     check(nrows >= 8, f'ledger rows: {nrows}')
@@ -162,7 +172,7 @@ async def scenario_local(browser):
     check(bad == 0, f'no rejected txs ({bad})')
     await page.screenshot(path=f'{OUT}/07-ledger.png', full_page=True)
     # explore shows community cart
-    await page.click('.nav a[data-nav="explore"]')
+    await scene_nav(page, 'explore')
     await page.wait_for_selector('.cart:has-text("Neon Dash Remix")', timeout=4000)
     await page.screenshot(path=f'{OUT}/08-explore-after.png', full_page=True)
     # reload persists (local storage)
@@ -256,7 +266,7 @@ async def scenario_mock(browser):
     acc = await page.evaluate('window.__mockStore.get("accounts/u_test_owner")')
     check(any(v['n'] >= 1 for v in acc['plays'].values()), 'play recorded in account doc')
     # settle as owner
-    await page.click('.nav a[data-nav="economy"]')
+    await scene_nav(page, 'economy')
     await page.wait_for_selector('button[data-act="settle"]', timeout=5000)
     disabled = await page.locator('button[data-act="settle"]').is_disabled()
     print('     settle disabled?', disabled, '(creator plays by self do not count; expected podium points only)')
@@ -267,7 +277,7 @@ async def scenario_mock(browser):
         check('protocol/e1' in keys and 'protocol/config' in keys, 'epoch + config written to protocol/')
     # mobile + dark screenshots in this context
     await page.set_viewport_size({'width': 390, 'height': 844})
-    await page.click('.nav a[data-nav="explore"]')
+    await scene_nav(page, 'explore')
     await page.wait_for_timeout(500)
     await page.screenshot(path=f'{OUT}/11-mobile-explore.png', full_page=True)
     ow = await page.evaluate('document.documentElement.scrollWidth > window.innerWidth')
@@ -396,7 +406,7 @@ async def scenario_studio_recovery(browser):
     check(await page.evaluate('__pp.studio.editing') == gid and await page.locator('button[data-act="publish"]').inner_text() == 'Sign & republish', 'reopening an editing draft keeps its original game identity')
     await page.click('button[data-act="publish"]')
     await page.wait_for_selector('button[data-act="edit-game"]', timeout=10000)
-    await page.click('.nav a[data-nav="create"]')
+    await scene_nav(page, 'create')
     async with page.expect_file_chooser() as fc:
         await page.click('button[data-act="pic-add"]')
     await (await fc.value).set_files(picture)
@@ -417,7 +427,7 @@ async def scenario_studio_recovery(browser):
     older = await page.evaluate('__pp.studio.versions[0]')
     await page.click('button[data-act="publish"]')
     await page.wait_for_selector('button[data-act="edit-game"]', timeout=10000)
-    await page.click('.nav a[data-nav="create"]')
+    await scene_nav(page, 'create')
     await page.wait_for_selector('button[data-act="version"][data-i="0"]', timeout=5000)
     await page.click('button[data-act="version"][data-i="0"]')
     await page.click('button[data-act="new-game"]')
@@ -466,6 +476,22 @@ AUDIT = r'''() => {
   const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
   const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
   const over = (t, b) => ({ r: t.r * t.a + b.r * (1 - t.a), g: t.g * t.a + b.g * (1 - t.a), b: t.b * t.a + b.b * (1 - t.a), a: 1 });
+  const outlineBg = (cs) => {
+    // G18 permits a contrasting outline around lettering over varied images. Only a complete,
+    // opaque hard ring at one radius qualifies; ordinary shadows still use the background audit.
+    const rings = new Map();
+    const shadows = cs.textShadow.matchAll(/(rgba?\([^)]+\))\s+(-?\d+(?:\.\d+)?)px\s+(-?\d+(?:\.\d+)?)px(?:\s+(-?\d+(?:\.\d+)?)px)?/g);
+    for (const s of shadows) {
+      const color = parse(s[1]), x = +s[2], y = +s[3], blur = +(s[4] || 0), radius = Math.max(Math.abs(x), Math.abs(y));
+      if (!color || color.a !== 1 || blur !== 0 || radius < 1) continue;
+      if ((x !== 0 && Math.abs(x) !== radius) || (y !== 0 && Math.abs(y) !== radius)) continue;
+      const key = [color.r, color.g, color.b, radius].join(',');
+      if (!rings.has(key)) rings.set(key, { color, directions: new Set() });
+      rings.get(key).directions.add([Math.sign(x), Math.sign(y)].join(','));
+    }
+    for (const { color, directions } of rings.values()) if (directions.size === 8) return color;
+    return null;
+  };
   const bgOf = (el) => {
     const layers = [];
     for (let e = el; e && e.nodeType === 1; e = e.parentElement) {
@@ -491,7 +517,7 @@ AUDIT = r'''() => {
     if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) continue;
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) continue;
-    const fg0 = parse(cs.color), bg = bgOf(el);
+    const fg0 = parse(cs.color), bg = outlineBg(cs) || bgOf(el);
     if (!fg0 || !bg) continue;
     const fg = fg0.a < 1 ? over(fg0, bg) : fg0;
     const L1 = lum(fg), L2 = lum(bg);
@@ -537,6 +563,23 @@ async def frame_of(page, host):
     el = await page.query_selector(host + ' iframe')
     return await el.content_frame() if el else None
 
+async def audit_outline_fixture(browser):
+    ctx, page, _ = await new_page(browser)
+    directions = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+    ring = lambda color='#000', blur=0, radius=1: ','.join(f'{color} {x * radius}px {y * radius}px {blur}px' for x, y in directions)
+    partial = ','.join(f'#000 {x}px {y}px 0px' for x, y in directions if x and y)
+    mixed = ring().rsplit(',', 1)[0] + ',#fff 1px 1px 0px'
+    fixtures = [('complete', ring(), False), ('partial', partial, True), ('blurred', ring(blur=1), True),
+                ('translucent', ring(color='rgba(0,0,0,.8)'), True), ('subpixel', ring(radius=.75), True),
+                ('mixed', mixed, True), ('lowcontrast', ring(color='#ddd'), True)]
+    await page.set_content('<html lang="en"><body style="background:#fff;color:#fff;font:20px sans-serif">' + ''.join(
+        f'<p style="text-shadow:{shadow}">{name}</p>' for name, shadow, _ in fixtures) + '</body></html>')
+    contrast = (await page.evaluate(AUDIT))['contrast']
+    for name, _, fails_contrast in fixtures:
+        found = any('"' + name + '"' in finding for finding in contrast)
+        check(found == fails_contrast, 'contrast fixture ' + name + (' rejects an incomplete or inadequate outline' if fails_contrast else ' accepts a complete opaque 1px outline'))
+    await ctx.close()
+
 async def scenario_site(browser):
     ctx, page, errs = await new_page(browser, viewport={'width': 1280, 'height': 900}, accept_downloads=True)
     await page.goto(SITE)
@@ -576,8 +619,8 @@ async def scenario_site(browser):
     gain = await fr.evaluate('() => { const c = new AudioContext(); const g = c.destination.gain; return g ? g.value : -1; }')
     check(gain == 0, 'sound off routes game audio through a silent gain')
     check(await page.evaluate('document.documentElement.dataset.gpMotion') == 'reduce', 'reduce motion applies to the page')
-    box = await page.locator('#home-screen iframe').bounding_box()
-    await page.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
+    # Target the actual canvas so actionability waits for the below-fold player's scrolling to settle.
+    await fr.locator('canvas').click()
     await page.wait_for_selector('.toast:has-text("Assist mode is on")', timeout=20000)
     check(True, 'assisted run is reported and kept off the leaderboard')
     check(await page.evaluate('!window.__pp.wallet'), 'assisted run does not sign a score or create a wallet')
@@ -590,7 +633,7 @@ async def scenario_site(browser):
     src = await page.eval_on_selector('#home-screen iframe', 'f => f.srcdoc')
     check('"speed":1' in src and '"mute":false' in src, 'reset restores full speed and sound')
     # business page and the branded demo
-    await page.click('.nav a[data-nav="business"]')
+    await scene_nav(page, 'business')
     await page.wait_for_selector('#biz-screen iframe', timeout=8000)
     check(await page.locator('.ways .way').count() == 3, 'business page lists three offers')
     check(await page.locator('.contact').count() == 0, 'no contact block until a contact is configured')
@@ -633,7 +676,7 @@ async def scenario_site(browser):
     await ctx.close()
 
 async def scenario_server(browser):
-    # The plain website served by server/server.mjs (with a fake Claude): anyone can describe a crypto game.
+    # The plain website served by server/server.mjs (with a fake Claude): a home idea carries into creation.
     proc = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'fake_ai_server.mjs'), '8766'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         for _ in range(50):
@@ -643,11 +686,11 @@ async def scenario_server(browser):
         await page.goto(AI_SITE)
         await page.wait_for_selector('#h-crypto', timeout=15000)
         n = await page.locator('button[data-act="home-idea"]').count()
-        check(n == 6, f'front page offers crypto game ideas ({n})')
-        await page.locator('button[data-act="home-idea"]', has_text='Block Miner').click()
+        check(n == 4, f'front page offers four game genre ideas ({n})')
+        await page.locator('button[data-act="home-idea"]', has_text='Sky Runner').click()
         await page.wait_for_selector('#st-prompt', timeout=8000)
         prompt = await page.input_value('#st-prompt')
-        check(prompt.startswith('Block Miner:'), 'idea fills the AI studio prompt: ' + prompt[:40])
+        check(prompt == 'Sky Runner: A fox jumps between floating islands and collects stars.', 'idea fills the AI studio prompt: ' + prompt[:40])
         seg = await page.locator('button[data-act="studio-mode"][aria-pressed="true"]').inner_text()
         check(seg.startswith('Describe'), 'AI studio is on for a website with a ClaudePlay server')
         check(await page.locator('button[data-act="idea"][data-idea^="Rug Pull"]').count() == 1, 'studio lists crypto ideas')
@@ -660,7 +703,7 @@ async def scenario_server(browser):
         check(len(tests) == 1 and tests[0]['images'] == 3 and tests[0]['model'] == 'claude-haiku-5-5' and 'errors: none' in tests[0]['log'], 'Claude reviews three play-test screenshots and the run log: ' + json.dumps(tests)[:200])
         check('Claude played it and found nothing to fix' in await page.locator('#st-chat').inner_text(), 'the play-test result shows in the chat')
         calls = json.loads(urllib.request.urlopen(AI_SITE + '__calls').read())
-        check(len(calls) == 1 and calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nBlock Miner'), 'free plan sent the new game idea to Sonnet 5.5: ' + json.dumps(calls)[:160])
+        check(len(calls) == 1 and calls[0]['model'] == 'claude-sonnet-5-5' and calls[0]['task'].startswith('GAME IDEA FROM THE CREATOR:\nSky Runner'), 'free plan sent the selected game idea to Sonnet 5.5: ' + json.dumps(calls)[:160])
         plan = await page.locator('#st-plan').inner_text()
         check('Free plan' in plan and 'Claude Sonnet 5.5' in plan and 'Get Pro' not in plan, 'studio shows the free plan, with no Pro offer without Solana payments: ' + plan)
         await page.screenshot(path=f'{OUT}/30-server-ai.png', full_page=True)
@@ -939,7 +982,7 @@ async def scenario_sponsored(browser):
         check(funding['capUsd'] == 400 and 0 < funding['reservedUsd'] < 1, 'validated fake usage releases unused reservations within the permanent $400 funding cap')
         check(await page.evaluate('g => __pp.world.games.get(g).hash', original_gid) == original_hash, 'remixing preserves the original published file')
         await page.screenshot(path=f'{OUT}/45-sponsored-remix.png', full_page=True)
-        await page.click('.nav a[data-nav="wallet"]')
+        await scene_nav(page, 'wallet')
         check(await page.locator('button[data-act="buy-sparks"], button[data-act="convert"], button[data-act="get-pro"]').count() == 0, 'the sponsored wallet offers no purchase or conversion for creation')
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real, 'no console/page errors during sponsored creation ' + str(real[:5]))
@@ -975,7 +1018,7 @@ async def scenario_sponsored(browser):
         await page4.click('button[data-act="publish"]')
         await page4.wait_for_selector('.gp-head h1:has-text("Free kit without AI")', timeout=10000)
         check(True, 'a sponsored site without AI can still sign and publish a kit for free')
-        await page4.click('.nav a[data-nav="wallet"]')
+        await scene_nav(page4, 'wallet')
         check(await page4.locator('button[data-act="buy-sparks"], button[data-act="convert"], button[data-act="claim"], button[data-act="get-pro"]').count() == 0, 'AI-off sponsored hosting offers no legacy credit purchases or claims')
         await ctx4.close()
         # A partial funding balance can cover Haiku edits/reviews without covering Sonnet builds.
@@ -1329,11 +1372,13 @@ async def scenario_engines(browser):
     await ctx.close()
 
 async def scenario_a11y(browser):
+    await audit_outline_fixture(browser)
     for scheme, theme in (('light', None), ('dark', None), ('light', 'contrast')):
         ctx, page, errs = await new_page(browser, fit=True, viewport={'width': 1280, 'height': 900}, color_scheme=scheme)
         if theme: await ctx.add_init_script("localStorage.setItem('gp.prefs.v1', JSON.stringify({theme: '%s'}))" % theme)
         await page.goto(SITE)
-        await page.wait_for_selector('#home-screen iframe', timeout=15000)
+        await page.wait_for_selector('#home-screen iframe', state='attached', timeout=15000)
+        await page.wait_for_selector('#hero-title', timeout=15000)
         label = scheme + ('/' + theme if theme else '')
         for r in ['home', 'explore', 'game-kit-neon-dash', 'create', 'business', 'wallet', 'ledger', 'economy']:
             await page.evaluate(f'location.hash = "{r}"'); await page.wait_for_timeout(500)
@@ -1359,13 +1404,15 @@ async def scenario_fit(browser):
         real = [e for e in errs if 'fonts.g' not in e and 'ERR_FAILED' not in e]
         check(not real, f'no console/page errors in one-screen layout at {w}x{h} {real[:3]}')
         if not mobile:
-            # A real graphics chip shows the fixed background game; it must never become a part of the page.
+            # The persistent world is decorative and fixed outside the fitted page's panes.
             await page.evaluate('location.hash = "home"'); await page.wait_for_timeout(600)
-            shown = await page.evaluate('''async () => { const w = document.getElementById('home-world'); if (!w) return 'no canvas';
+            shown = await page.evaluate('''async () => { const w = document.getElementById('site-world'); if (!w) return 'no world';
               const parts = () => document.querySelectorAll('#view .pg-dot').length;
-              const before = parts(); w.hidden = false; dispatchEvent(new Event('resize')); await new Promise((r) => setTimeout(r, 300));
-              const ok = parts() === before && document.querySelector('.hero-copy').getBoundingClientRect().height > 0; w.hidden = true; return ok; }''')
-            check(shown is True, f'the front page stays whole with the background game showing at {w}x{h} ({shown})')
+              const before = parts(); dispatchEvent(new Event('resize')); await new Promise((r) => setTimeout(r, 300));
+              const rect = w.getBoundingClientRect(); return parts() === before && !document.getElementById('view').contains(w)
+                && getComputedStyle(w).position === 'fixed' && rect.width === innerWidth && rect.height === innerHeight
+                && document.querySelector('.hero-copy').getBoundingClientRect().height > 0; }''')
+            check(shown is True, f'the front page stays whole with the full-viewport world showing at {w}x{h} ({shown})')
         await ctx.close()
     ctx, page, errs = await new_page(browser, fit=True, viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
     await page.goto(SITE + '#business')

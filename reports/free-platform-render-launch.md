@@ -1,8 +1,21 @@
-# Free platform: Render launch preparation
+# Free platform: verified Render launch
 
-Findings and launch progress recorded on 2026-10-11. The owner has explicitly approved deploying the reviewed [PR 17](https://github.com/gtjvv976mb-netizen/ClaudePlay/pull/17) release at **`fcfa4dc9ade51acb6fc2b23db1b670049b0ab1aa`**. Keep this approved SHA fixed even if subsequent documentation commits advance the PR head. **The guarded release has not been deployed yet.** No pending PRs have been merged.
+Findings and launch progress recorded on 2026-10-11. The owner has explicitly approved deploying the reviewed [PR 17](https://github.com/gtjvv976mb-netizen/ClaudePlay/pull/17) release at **`fcfa4dc9ade51acb6fc2b23db1b670049b0ab1aa`**. Keep this approved SHA fixed even if subsequent documentation commits advance the PR head. **The guarded release is live with AI enabled.** See the verified launch evidence below. No pending PRs have been merged.
 
-## Confirmed existing service
+## Verified launch evidence
+
+On October 11, the owner confirmed sign-in to the dedicated in-app Render Dashboard. Blueprint `exs-db53jq2jnfac7394bbf0` was confirmed to track main, and **Auto Sync → No** was saved and visibly verified. The root agent selected exactly `fcfa4dc9ade51acb6fc2b23db1b670049b0ab1aa` through **Manual Deploy → Deploy a specific commit**.
+
+Deployment **`dep-db5pikvlk1mc73aqdud0`** became live at **14:13:17 UTC / 22:13:17 Manila**. MCP deployment details confirm the full approved SHA; the Dashboard confirms Live and service auto-deploy disabled. A screenshot of the overview was saved locally in ignored `reports/render-shots/guard-live.jpg`, with no private log content.
+
+A public status read after that deployment reports AI off, models null, shared gallery on devnet, sponsored plan, no Pro offer and available allowances. Its durable budget reports **400 USD cap, 0 USD reserved, 400 USD remaining, available true**; new/edit/bestEdit/screen/playtest actions are available. Daily limits are 2 builds, 20 edits, 20 screens and 40 play-tests. No real API call was made.
+
+The owner has been asked to privately enter `ANTHROPIC_API_KEY` using **Save only**, then confirm. Key entry was subsequently confirmed and activation verified below. Redeploy the same exact approved SHA after confirmation; preserve the retained store and disabled auto-deploy/Auto Sync. The newly requested game-world redesign is separate local work and is not included in this deployment.
+
+
+The owner confirmed private key entry with **Save only**. The root redeployed the **same exact approved SHA**, producing `dep-db5pk1id0e5s7389dl9g`, live at **2026-10-11 14:16:18 UTC (22:16:18 Manila)**. Public status reports `ai: true`, sponsored plan, no Pro offer, devnet and the approved Sonnet/Haiku model routing. A single private, minimal safety-review smoke call returned HTTP 200 with `ok: true` and `reviewed: true`; no game was published. Its durable reservation settled to **0.000061 USD**, leaving **399.999939 USD**. No API key or screening token was printed or stored in Git. The approved free-platform launch is complete; the redesigned release is separate pending local review. Final Dashboard overview proof is saved in ignored `reports/render-shots/ai-live.jpg`.
+
+## Original service inspection
 
 - Workspace: **My Workspace**, `tea-d8m6m00js32c73drnobg`.
 - Service: **gameplay**, `srv-db53jro473hc739om89g`; [Render dashboard](https://dashboard.render.com/web/srv-db53jro473hc739om89g).
@@ -19,7 +32,7 @@ After approval, the root agent applied **18 nonsecret sponsorship, model and lim
 
 Despite merge semantics, that MCP update **unexpectedly triggered a production redeploy of existing `main`**: `dep-db5pclnavr4c739k2u50`, trigger `api`, became live at old commit `7c68b8c1452d05ab5a734d9764d8a547928645ac` on October 11 at **14:00:31 UTC (22:00:31 Manila)**. This is not the guarded release. Treat this tool as capable of triggering a redeploy; do not use it as an environment-read probe or assume it saves without deployment.
 
-The dedicated in-app Render browser is signed out, and the owner has been asked to sign in there. An authenticated native Brave tab exists, but the owner is actively using Brave and its UI state diverged from the captured screenshot. Continue through the dedicated in-app browser after sign-in. The exposed MCP deploy tool cannot pin the approved commit. No further environment changes or key activation should precede the guarded deployment and budget verification below.
+At this earlier preparation stage, the dedicated in-app browser was signed out; this blocker is resolved by the verified launch above. An authenticated native Brave tab exists, but the owner is actively using Brave and its UI state diverged from the captured screenshot. Continue through the dedicated in-app browser after sign-in. The exposed MCP deploy tool cannot pin the approved commit. No further environment changes or key activation should precede the guarded deployment and budget verification below.
 
 Use the **exact approved SHA above**, not an earlier local commit, a later documentation-only PR head or latest `main`. This record covers that reviewed release.
 
@@ -37,4 +50,4 @@ Keep service auto-deploy and any applicable Blueprint Auto Sync disabled while t
 
 The exposed Render MCP deploy tool cannot select a commit SHA. The official [CLI](https://render.com/docs/cli) supports `deploys create --commit`, and the API supports `commitId`, but neither automatically disables service auto-deploy. The CLI is not installed here; the Dashboard route avoids an additional installation or credential setup.
 
-**Private durable-store configuration and API-key readiness remain unverified.** No environment-read tool is exposed, and no private values were read. The nonsecret merge update preserved existing secrets but also caused the old-main redeploy recorded above. This progress record does not establish successful deployment or durable-budget readiness.
+**The durable budget is now verified through the live guarded service; private API-key entry was confirmed, and the activated guarded release passed the live smoke check above.** No environment-read tool is exposed, and no private values were read. The nonsecret merge update preserved existing secrets but also caused the old-main redeploy recorded above. The original environment update alone did not establish guarded readiness; the exact-SHA Dashboard deployments and public budget checks above provide the later verification.

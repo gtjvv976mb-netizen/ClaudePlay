@@ -12,6 +12,10 @@ node test/core.test.mjs        # protocol unit tests (RFC 8032 vectors, splits, 
 node test/solana.test.mjs      # Solana payments: transactions vs @solana/web3.js, the relay filter, ledger payment checks
 node test/server.test.mjs      # AI server tests with a fake Claude client (no key needed)
 node test/budget-store.test.mjs # Permanent budget receipts, concurrent stores and process restarts
+WORLD_SITE_URL=http://127.0.0.1:8765/site/index.html npm run test:world # Persistent world motion, route cameras, pause/cleanup and fitted integration
+WORLD_SITE_URL=http://127.0.0.1:8765/site/index.html npm run test:world-nav # Scene island links, keyboard/map navigation, responsive control reach and cleanup
+WORKSHOP_SITE_URL=http://127.0.0.1:8765/local.html npm run test:workshop # Legacy isolated scene + no retired GPU allocations in the current site
+npm run audit:design          # All ten routes: themes/fonts/layouts, every fitted pane (serve after build)
 ANTHROPIC_API_KEY=... npm start   # serve dist/site with the AI studio on (npm install first)
 cd dist && python3 -m http.server 8765 --bind 127.0.0.1   # serve for the browser tests
 python3 test/e2e.py /tmp/gameplay-shots   # end-to-end + accessibility tests (needs the server above)
@@ -20,6 +24,8 @@ python3 test/e2e.py /tmp/gameplay-shots   # end-to-end + accessibility tests (ne
 Run `node build.mjs` before committing so `dist/site/index.html` (kept in the repo as the ready-to-host website) matches the source. The deploy workflow rebuilds it anyway.
 
 Hosted creation defaults to free sponsored access (`GP_SPONSORED=1`): no new Spark debit or Pro payment, including best builds and edits. All billable endpoints share a permanent $400 maximum allowance. Configure durable Upstash storage, or an explicitly attested persistent `GP_DATA_DIR` with `GP_DATA_PERSISTENT=1`, before enabling hosted AI. Read the README's launch settings; an API key alone does not enable sponsored requests safely.
+
+The optional Lighthouse audit tool requires Node 22.19 or newer. Node Playwright scene/design checks use the installed Chrome via `CHROME_PATH`, or its separately installed Chromium.
 
 The browser tests need Python Playwright (`pip install playwright && playwright install chromium`). Set `CHROME_PATH` to use a different Chrome. Screenshots land in the folder you pass.
 
@@ -34,6 +40,10 @@ The browser tests need Python Playwright (`pip install playwright && playwright 
 | `src/solana.js` | Builds and reads ClaudePlay's one Solana transaction shape (System transfers + a `gameplay:<ledger id>` memo) by hand, and the relay filter `parsePayment()`. Exposed as `window.PPSolana`; shared with the server. |
 | `server/chain.mjs` | Real-network settings (`GP_SOLANA_CLUSTER`, `GP_TREASURY`, `GP_SOLANA_RPC`, the `GP_ALLOW_MAINNET` gate) and the narrow `/api/chain/*` RPC proxy: blockhash, balance, status, payment lookups, relaying ClaudePlay payments only, and a devnet faucet. Holds no keys. |
 | `SECURITY.md` | Security review of everything that moves value, open items, and the owner's checklist before mainnet. |
+| `src/workshop-scene.js` | Retained legacy decorative WebGL module and isolated lifecycle tests. Current routes do not mount it or allocate its GPU resources. |
+| `src/world-background.js` | Persistent full-viewport illustrated world: independent HD alpha island/cloud/car assets, smooth CSS sky, native floating/drifting/flight motion, shared responsive geometry and ten whole-island route cameras, device/calm/contrast and focus/visibility/dialog guards, complete owned-resource cleanup. Mounted outside the replaceable route view. |
+| `src/world-navigation.js` | Accessible scene destination lettering and compact island map, mounted outside the decorative world's hidden subtree and fitted content. Existing routes trigger the persistent camera; native keyboard/disclosure behavior and cleanup. |
+| `src/world-interface.css` | Smooth rounded scene lettering, floating brand/tools, translucent bounded working surfaces and responsive fitted spacing. Inlined by the build; high contrast, forced colors and reduced transparency retain opaque fallbacks. |
 | `src/app.js` | The app: routes (`home`, `explore`, `game-<id>`, `maker-<pk>`, `group-<id>`, `create`, `wallet`, `ledger`, `economy`, `business`), wallet, storage, sandboxed game players, AI studio (`aiBuild()` picks Claude's `sample` or the server; guided start, drafts in `pp.drafts.v1`, patch edits with Undo / Before and after / What changed, checklists, and `runPlaytest()`, which plays every build in an invisible frame and, on the website, sends the screenshots for review, then asks for one automatic fix), one-tap remix, accessibility settings. |
 | `server/server.mjs` | Node server: serves `dist/site`, injects hosted configuration and serves the shared gallery, builds, safety reviews, play-test reviews and multiplayer. Sponsored mode makes all creator tools free, disables paid Pro, and enforces daily account limits with a higher network ceiling, shared concurrency and durable funding reservations. New games and best edits use Sonnet 5.5; standard edits and reviews use Haiku 5.5. Legacy Free/Pro behavior is available only with `GP_SPONSORED=0`. |
 | `server/budget.mjs` | Permanent $400 maximum sponsored API allowance, in integer microdollars. Reserve the supported model's full context and maximum output before every call, settle valid completed usage once, and retain uncertain reservations. Unknown pricing and nonpersistent/unavailable storage fail closed. Sponsored calls disable SDK retries and model fallback and use standard global first-party inference. |
